@@ -50,7 +50,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **DeepSeek 联网搜索（Responses API + web_search）耗时 8~10 分钟是常态**（多步搜索），
   后台任务超时需留足（≥10 分钟）；前端「停止分析」可随时中断；长超时在此环境
   （Node 24 + tsx watch）偶发不触发（任务最终 done/TTL 清理兜底），属已知现象
-- **逆回购余额（reverse-repo）存量部分用权威种子数据**（`features/reverseRepo/monthlyData.ts`）：
+- **逆回购余额（reverse-repo）存量部分用默认种子 + KV seed**（`features/reverseRepo/monthlyData.ts`
+  默认值 → `seedMonthlyData()` 幂等 seed 进 `reverseRepo:monthly`，运行时从 KV 读）：
   页面仅关注「买断式逆回购」；数据结构 = 逐笔操作流水（精确到年月日，41 笔）+ 月度汇总
   （投放/净投放/累计净投放，每日经济新闻口径推算补充）；**存量余额 = 累计净投放**
   （2026-03 锚点 7.2 万亿元，与对话中存量 6.3 万亿口径一致）；数据经用户多轮修订
@@ -74,6 +75,20 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   `fixJsonQuotes` 为两遍扫描：定位所有"内容引号/结束候选"，最后一个结束候选作字符串结束，
   其余全部转义（内容引号成对 + 与结束重叠的 LLM 畸形模式如 `"高"}` 也能恢复合法 JSON）。
   注意 extractOuterJson 遇裸引号会因栈不平衡返回 null，故 fix 后须对整体再试 parse。
+
+## 4.4 本地数据治理原则（禁止硬编码）
+
+- **业务数据一律进「本地数据管理」**（SQLite KV/表，`core/kvStore`/`tableStore`），
+  运行时从库里读取；**禁止在代码中硬编码运行时数据**（表格、流水、配置、分析/探查结果等）
+- **代码内常量只允许作为「工厂默认值」**，通过**幂等 seed** 写入（KV 已有该 key 则跳过，
+  绝不覆盖用户编辑）；用户可在「本地数据管理」页查看/编辑/删除，删除后下次访问自动重新 seed
+  （= 重置为默认）
+- 现有落点：提示词默认值（`core/prompts.ts` seed `settings:prompt.*`）、逆回购存量数据
+  （`features/reverseRepo/monthlyData.ts` 默认值 → `seedMonthlyData()` seed `reverseRepo:monthly`）、
+  LLM 设置（`settings:llm.*`）、分析/探查结果缓存（`cbRate:`/`treasuryFx:`/`reverseRepo:daily`，TTL 2 年）
+- **不属于本地数据的例外**：UI 文案、菜单结构（MENU_GROUPS）、功能元信息（tools meta）、
+  纯计算参数/公式（gridPlan compute）
+- 新功能落地检查：数据是否可被用户编辑？可编辑即应入库；入库后立即 `registerDataSource` 打页面 tag
 
 ## 4.5 数据可信度（cb-rate 等 LLM 结构化输出）
 

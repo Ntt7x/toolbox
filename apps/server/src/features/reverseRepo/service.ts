@@ -1,6 +1,7 @@
 // ============================================================
 // 业务模块：逆回购余额跟踪（reverse-repo）
-// 存量：月度操作/余额表（权威数据种子 monthlyData.ts，可直接读取）
+// 存量：月度操作/余额表（默认种子 monthlyData.ts → 幂等 seed 进本地数据管理 KV，
+//       运行时从 KV 读取；用户可在「本地数据管理」页编辑/删除，删除后自动重新 seed）
 // 增量：每日变动探查（LLM 搜索）+ 当月变动量说明
 // 提示词存于本地设置数据（prompts 注册表），LLM JSON 用 core/jsonParse 容错。
 // ============================================================
@@ -8,6 +9,7 @@
 import { chat } from "../../core/llm.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
+import { kvGet, kvHas, kvSet } from "../../core/kvStore.js";
 import type {
   ReverseRepoDailyResult,
   ReverseRepoMonthlyResponse,
@@ -19,17 +21,43 @@ function todayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+/** 存量数据 KV key（本地数据管理：可查看/编辑/删除；删除后下次访问自动重新 seed） */
+export const MONTHLY_KEY = "reverseRepo:monthly";
+
+interface MonthlyPayload {
+  source: string;
+  operations: ReverseRepoMonthlyResponse["operations"];
+  rows: ReverseRepoMonthlyResponse["rows"];
+  seededAt: string;
+}
+
+/** 幂等 seed：仅当 KV 无该 key 时写入默认数据，绝不覆盖用户编辑 */
+export function seedMonthlyData(): void {
+  if (!kvHas(MONTHLY_KEY)) {
+    kvSet(MONTHLY_KEY, {
+      source: REVERSE_REPO_SOURCE,
+      operations: REVERSE_REPO_OPERATIONS,
+      rows: REVERSE_REPO_MONTHLY,
+      seededAt: new Date().toISOString(),
+    } satisfies MonthlyPayload);
+  }
+}
+
 /** 存量数据：逐笔流水 + 月度汇总（投放/净投放/累计净投放）+ 余额曲线（累计净投放 = 存量余额） */
 export function getMonthlyData(): ReverseRepoMonthlyResponse {
-  const series = REVERSE_REPO_MONTHLY
+  seedMonthlyData();
+  const saved = kvGet<MonthlyPayload>(MONTHLY_KEY);
+  const rows = saved?.rows && saved.rows.length > 0 ? saved.rows : REVERSE_REPO_MONTHLY;
+  const operations = saved?.operations && saved.operations.length > 0 ? saved.operations : REVERSE_REPO_OPERATIONS;
+  const series = rows
     .filter((r) => r.cumulativeNet !== null && r.cumulativeNet !== undefined)
     .map((r) => ({ month: r.month, balance: r.cumulativeNet as number }));
-  const last = REVERSE_REPO_MONTHLY[REVERSE_REPO_MONTHLY.length - 1];
+  const last = rows[rows.length - 1];
   return {
     ok: true,
-    source: REVERSE_REPO_SOURCE,
-    operations: REVERSE_REPO_OPERATIONS,
-    rows: REVERSE_REPO_MONTHLY,
+    source: saved?.source ?? REVERSE_REPO_SOURCE,
+    operations,
+    rows,
     series,
     asOf: last?.month ?? todayStr(),
   };

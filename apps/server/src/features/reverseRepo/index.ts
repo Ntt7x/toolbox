@@ -19,10 +19,17 @@ import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getMonthlyData, probeDaily } from "./service.js";
 
-// 注册数据源：买断式逆回购探查结果缓存（本地数据管理页展示 tag 用）
+// 注册数据源：买断式逆回购（本地数据管理页展示 tag 用）
 registerDataSource({
   kind: "kv",
-  name: "reverseRepo:",
+  name: "reverseRepo:monthly",
+  page: "买断式逆回购余额",
+  tag: "存量数据",
+  description: "买断式逆回购存量数据（逐笔流水+月度汇总，默认种子 seed，可编辑/删除重置）",
+});
+registerDataSource({
+  kind: "kv",
+  name: "reverseRepo:daily",
   page: "买断式逆回购余额",
   tag: "分析数据",
   description: "买断式逆回购每日变动探查缓存（Key-结构化 Value）",
@@ -43,7 +50,7 @@ export function register(app: Hono): void {
   });
 
   /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查） */
-const DAILY_CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+  const DAILY_CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
   app.post(`${API_PREFIX}/tools/reverse-repo/daily`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { force?: unknown } | null;
     const force = raw?.force === true;
