@@ -21,6 +21,7 @@ import { registerTaskRoutes } from "./core/sse.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
 import * as treasuryFxFeature from "./features/treasuryFx/index.js";
+import * as reverseRepoFeature from "./features/reverseRepo/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
 import * as localDataFeature from "./features/localData/index.js";
 
@@ -43,6 +44,7 @@ const tools: ToolMeta[] = [
   gridPlanFeature.meta,
   cbRateFeature.meta,
   treasuryFxFeature.meta,
+  reverseRepoFeature.meta,
   deepseekShareFeature.meta,
 ];
 
@@ -60,6 +62,7 @@ registerTaskRoutes(app);
 gridPlanFeature.register(app);
 cbRateFeature.register(app);
 treasuryFxFeature.register(app);
+reverseRepoFeature.register(app);
 deepseekShareFeature.register(app);
 // 设置页模块（本地数据管理，非工具）
 localDataFeature.register(app);

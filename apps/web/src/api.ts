@@ -17,6 +17,8 @@
   type PromptDetailResult,
   type PromptsListResult,
   type QuoteResult,
+  type ReverseRepoDailyResponse,
+  type ReverseRepoMonthlyResult,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -66,6 +68,12 @@ export const api = {
     request<AsyncTaskResult<TreasuryFxResponse>>("/tools/treasury-fx", jsonInit("POST", req)),
   treasuryFxTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<TreasuryFxResponse>>(`/tools/treasury-fx/task/${encodeURIComponent(taskId)}`),
+  // 逆回购余额跟踪（存量月度数据 + 增量每日探查）
+  reverseRepoMonthly: () => request<ReverseRepoMonthlyResult>("/tools/reverse-repo/monthly"),
+  reverseRepoDaily: (force = false) =>
+    request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
+  reverseRepoDailyTaskStatus: (taskId: string) =>
+    request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）
   cancelTask: (taskId: string) =>
     request<{ ok: true; taskId: string; status: string } | { ok: false; message: string }>(

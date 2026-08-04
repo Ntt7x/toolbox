@@ -483,6 +483,83 @@ export interface TreasuryFxErrorResponse {
 export type TreasuryFxResult = TreasuryFxResponse | TreasuryFxErrorResponse;
 
 // ============================================================
+// 逆回购余额跟踪（reverse-repo）
+// 存量：买断式逆回购（2024.10 启用）月度操作/余额表（权威数据种子）
+// 增量：每日变动探查（LLM）+ 当月变动量说明
+// ============================================================
+
+/** 单月买断式逆回购操作与余额（金额单位：亿元） */
+export interface ReverseRepoMonthlyRow {
+  /** 月份 YYYY-MM */
+  month: string;
+  /** 当月操作总量 */
+  operationTotal: number;
+  /** 其中 3 个月期 */
+  m3: number;
+  /** 其中 6 个月期 */
+  m6: number;
+  /** 月末存量余额（暂缺为 null） */
+  monthEndBalance: number | null;
+  /** 备注 */
+  note?: string;
+}
+
+/** 月度存量响应 */
+export interface ReverseRepoMonthlyResponse {
+  ok: true;
+  /** 数据来源说明 */
+  source: string;
+  /** 月度操作/余额表 */
+  rows: ReverseRepoMonthlyRow[];
+  /** 余额序列（仅含余额非空月份） */
+  series: { month: string; balance: number }[];
+  /** 数据截至月份 */
+  asOf: string;
+}
+
+/** 每日变动探查请求 */
+export interface ReverseRepoDailyRequest {
+  /** 是否强制重新探查（忽略缓存；默认 false） */
+  force?: boolean;
+}
+
+/** 单日变动记录 */
+export interface ReverseRepoDailyChange {
+  date: string;
+  /** 买断式逆回购 / 7天期逆回购 */
+  type: string;
+  kind: string;
+  /** 3M / 6M / 7D */
+  term?: string;
+  /** 金额（亿元） */
+  amount: number;
+  desc: string;
+}
+
+/** 每日变动探查响应 */
+export interface ReverseRepoDailyResponse {
+  ok: true;
+  asOf: string;
+  dailyChanges: ReverseRepoDailyChange[];
+  /** 当月买断式逆回购变动量说明 */
+  monthSummary: string;
+  /** 买断式逆回购当前存量余额（亿元；无则省略） */
+  currentBalance?: number;
+  /** 结果是否来自缓存 */
+  fromCache?: boolean;
+  model: string;
+  raw?: string;
+}
+
+export interface ReverseRepoErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type ReverseRepoMonthlyResult = ReverseRepoMonthlyResponse | ReverseRepoErrorResponse;
+export type ReverseRepoDailyResult = ReverseRepoDailyResponse | ReverseRepoErrorResponse;
+
+// ============================================================
 // 通用异步任务（服务端后台执行 + SSE 推送 / 轮询）
 // ============================================================
 

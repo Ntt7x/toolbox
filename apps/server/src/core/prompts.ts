@@ -149,6 +149,52 @@ const TREASURY_FX_SYSTEM_PROMPT = `你是一位精通全球宏观对冲策略、
 const TREASURY_FX_USER_TEMPLATE =
   "今天是 {date}。请获取最近 {days} 个交易日的 USDJPY、USDCNY（在岸收盘/中间价）、JP10Y、CN10Y 数据并联网校验，按框架输出分析报告 JSON。";
 
+/** 逆回购存量流水构建提示词（一次性：2024.10 启用以来每月买断式逆回购操作明细） */
+const REVERSE_REPO_LEDGER_PROMPT = `你是一位精通中国货币市场的量化分析师。任务：梳理中国人民银行「买断式逆回购」工具（2024年10月推出，期限为3个月/6个月）自2024年10月启用以来的每月操作明细，形成完整流水。
+
+【背景】买断式逆回购是央行2024年10月推出的中期流动性投放工具，每月中旬左右操作，期限3个月/6个月。存量余额 = 起点余额 + Σ投放 - Σ到期。
+
+【数据要求】联网搜索央行公告与权威财经媒体（财联社/证券时报/中国证券报等），覆盖 2024年10月 至 {today} 的全部操作与对应到期：
+- 操作（kind=operation）：央行公告开展买断式逆回购的日期、期限（3M/6M）、金额（亿元）
+- 到期（kind=maturity）：每笔投放对应的到期日与金额（3个月期到期日≈操作日+3个月，6个月期≈+6个月；以媒体报道为准）
+- 每笔投放必须对应一笔到期（或标注 note「未确认到期」），确保余额推算可连续
+
+【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "asOf": "YYYY-MM-DD",
+  "startBalance": 0,
+  "operations": [
+    { "date": "YYYY-MM-DD", "term": "3M", "kind": "operation", "amount": 10000, "note": "央行开展10000亿元3个月期买断式逆回购" },
+    { "date": "YYYY-MM-DD", "term": "3M", "kind": "maturity", "amount": 8000, "note": "3个月期买断式逆回购到期" }
+  ],
+  "summary": "2024年10月启用以来买断式逆回购操作概况：启用→放量→缩量→加量阶段划分，当前存量余额"
+}
+注意：
+- amount 单位为亿元；term 取值 3M / 6M；kind 取值 operation / maturity
+- 数据以公开来源为准，拿不准的字段用 note 标注「不确定」，严禁编造操作
+- 尽量覆盖全部月份；操作与到期时间线要能推算出连续余额序列`;
+
+/** 逆回购每日变动探查提示词（增量：当日/最近变动 + 当月说明） */
+const REVERSE_REPO_DAILY_PROMPT = `你是一位精通中国货币市场的量化分析师。任务：探查 {date} 及最近几个交易日的央行逆回购操作变动（含买断式逆回购与常规7天期逆回购），并说明本月买断式逆回购的变动量。
+
+【数据要求】联网搜索央行公开市场操作公告与权威财经媒体：
+- 买断式逆回购（3M/6M）：本月操作日、投放/到期金额、净投放/净回笼
+- 常规7天期逆回购：最近几个交易日的投放/到期/净回笼（注意：7天期不计入买断式逆回购存量余额）
+- 当前买断式逆回购存量余额（如央行/媒体披露；无则给出推算）
+
+【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "asOf": "YYYY-MM-DD",
+  "dailyChanges": [
+    { "date": "YYYY-MM-DD", "type": "买断式逆回购", "kind": "operation|maturity", "term": "3M|6M|7D", "amount": 10000, "desc": "当日操作/到期说明" }
+  ],
+  "monthSummary": "本月买断式逆回购净投放/净回笼合计与趋势说明（如：7月累计净投放7000亿元，连续数月缩量后首次转正）",
+  "currentBalance": 63000
+}
+注意：
+- amount 单位为亿元；currentBalance 为买断式逆回购存量余额（亿元），不确定时省略
+- 区分买断式（计入存量）与7天期（不计入存量）；拿不准标注 desc「不确定」`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -219,6 +265,20 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.treasuryFx.user",
     description: "国债汇率分析 user prompt（模板；占位符 {date} {days}）",
     defaultTemplate: TREASURY_FX_USER_TEMPLATE,
+    render: (t) => t,
+  },
+  {
+    id: "reverse-repo.ledger",
+    key: "prompt.reverseRepo.ledger",
+    description: "逆回购存量流水构建提示词（一次性：2024.10 以来买断式逆回购每月操作明细；{today}）",
+    defaultTemplate: REVERSE_REPO_LEDGER_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "reverse-repo.daily",
+    key: "prompt.reverseRepo.daily",
+    description: "逆回购每日变动探查提示词（增量：当日/最近变动+当月说明；{date}）",
+    defaultTemplate: REVERSE_REPO_DAILY_PROMPT,
     render: (t) => t,
   },
 ];

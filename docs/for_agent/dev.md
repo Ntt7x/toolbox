@@ -47,6 +47,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
   所有 LLM 结构化输出业务（cbRate / treasuryFx）共用——新业务直接 import，不要复制
+- **DeepSeek 联网搜索（Responses API + web_search）耗时 8~10 分钟是常态**（多步搜索），
+  后台任务超时需留足（≥10 分钟）；前端「停止分析」可随时中断；长超时在此环境
+  （Node 24 + tsx watch）偶发不触发（任务最终 done/TTL 清理兜底），属已知现象
+- **逆回购余额（reverse-repo）存量部分用权威种子数据**（`features/reverseRepo/monthlyData.ts`，
+  2024.10-2026.8 月度操作/余额表，用户提供），GET /tools/reverse-repo/monthly 直接返回，
+  不调 LLM；增量（每日变动探查）走 LLM 搜索（reverse-repo.daily 提示词）
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
   默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
   服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示
