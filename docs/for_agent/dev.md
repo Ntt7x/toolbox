@@ -51,7 +51,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   走**同一条链路**（`GET /api/prompts/:id` 返回 template + rendered）——改提示词
   改数据库即生效（或 API/本地数据管理页编辑），页面与实发永不失步；占位符式模板
   （如 cb-rate.system 的 {banksText}/{calendarJson}/{searchNote}/{calendarRule}）
-  支持 search/日历组合，grid-plan 为无占位符全文
+  支持 search/日历组合，grid-plan 为无占位符全文；
+  **注记也可编辑**：cb-rate.note.search / cb-rate.note.knowledge 是独立设置项，
+  service 与渲染预览均从库读取 {searchNote} 替换文本——服务端对 LLM 的使用 100% 走同一链路
 - API key 存服务端本地设置库（`settings:llm.apiKey`，SQLite `.file/`，已 gitignore）；旧 `.env` 仅一次性迁移
 - 结构化工具（如 cb-rate）用 search 默认开 + JSON 输出 + 提示词给出严格 JSON schema，
   解析容忍杂质包裹；失败时保留 raw 兜底展示

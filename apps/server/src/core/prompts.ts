@@ -15,12 +15,12 @@ const CB_RATE_BANKS_TEXT =
   "fed 美联储 | ecb 欧洲央行 | boj 日本央行 | boe 英国央行 | boc 加拿大央行 | " +
   "rba 澳大利亚央行 | rbnz 新西兰央行 | snb 瑞士央行 | norges 挪威央行";
 
-/** 联网搜索模式注记（{searchNote}；供 prompts 渲染与 service 模板替换共用） */
-export const CB_RATE_SEARCH_NOTE_DEFAULT =
+/** 联网搜索模式注记（cb-rate.note.search 默认值，{searchNote} 替换用） */
+const CB_RATE_SEARCH_NOTE_DEFAULT =
   "**联网搜索说明**\n4. 本次调用已启用联网搜索：优先采用搜索结果中的最新信息；回答中若引用搜索来源，保留类似 [reference:N] 的引用标记。\n5. 必须明确标注数据截至日期 asOf（YYYY-MM-DD），即搜索结果中最新的信息日期。";
 
-/** 知识模式注记（防幻觉；{searchNote}） */
-export const CB_RATE_SEARCH_NOTE_KNOWLEDGE =
+/** 知识模式注记（cb-rate.note.knowledge 默认值，防幻觉；{searchNote} 替换用） */
+const CB_RATE_SEARCH_NOTE_KNOWLEDGE =
   "**知识模式说明（防幻觉）**\n4. 本次调用未启用联网搜索，只能基于你的训练知识作答。\n5. 你的训练知识截止于约 2025 年中，而今天已到 2026 年：**严禁编造今天之后或超出你知识范围的会议与决策**（尤其不得虚构某年某月某日的加息/降息）；拿不准的信息一律省略或用 \"不确定\" 标注。\n6. 必须明确标注 asOf 为你知识的最新日期（YYYY-MM-DD，通常接近 2025 年中），并在 summary 中注明\"数据基于训练知识、时效有限，建议开启联网搜索获取实时数据\"。\n7. 额外输出字段 knowledgeCutoff（YYYY-MM）表示你知识覆盖的最新月份。";
 
 /** 央行利率分析 system prompt 默认模板（占位符：{banksText} {calendarJson} {searchNote} {calendarRule}） */
@@ -79,7 +79,7 @@ function renderCbRateSystem(template: string): string {
   return template
     .replace("{banksText}", CB_RATE_BANKS_TEXT)
     .replace("{calendarJson}", ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]')
-    .replace("{searchNote}", CB_RATE_SEARCH_NOTE_DEFAULT)
+    .replace("{searchNote}", getPromptTemplate("cb-rate.note.search"))
     .replace("{calendarRule}", "calendar 列出近期（未来 2 个月内）各央行议息会议日历。");
 }
 
@@ -96,6 +96,20 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.cbRate.user",
     description: "央行利率分析 user prompt（模板；占位符 {date} {timeNote} {scope}）",
     defaultTemplate: CB_RATE_USER_TEMPLATE,
+    render: (t) => t,
+  },
+  {
+    id: "cb-rate.note.search",
+    key: "prompt.cbRate.note.search",
+    description: "央行利率分析「联网搜索」模式注记（system prompt 的 {searchNote} 替换文本）",
+    defaultTemplate: CB_RATE_SEARCH_NOTE_DEFAULT,
+    render: (t) => t,
+  },
+  {
+    id: "cb-rate.note.knowledge",
+    key: "prompt.cbRate.note.knowledge",
+    description: "央行利率分析「知识模式」注记（防幻觉；system prompt 的 {searchNote} 替换文本）",
+    defaultTemplate: CB_RATE_SEARCH_NOTE_KNOWLEDGE,
     render: (t) => t,
   },
   {

@@ -5,11 +5,7 @@
 // ============================================================
 
 import { chat, DEFAULT_MODEL } from "../../core/llm.js";
-import {
-  CB_RATE_SEARCH_NOTE_DEFAULT,
-  CB_RATE_SEARCH_NOTE_KNOWLEDGE,
-  getPromptTemplate,
-} from "../../core/prompts.js";
+import { getPromptTemplate } from "../../core/prompts.js";
 import type {
   CbAction,
   CbRateBank,
@@ -42,7 +38,10 @@ function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
       "{calendarJson}",
       withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : "",
     )
-    .replace("{searchNote}", withSearch ? CB_RATE_SEARCH_NOTE_DEFAULT : CB_RATE_SEARCH_NOTE_KNOWLEDGE)
+    .replace(
+      "{searchNote}",
+      withSearch ? getPromptTemplate("cb-rate.note.search") : getPromptTemplate("cb-rate.note.knowledge"),
+    )
     .replace(
       "{calendarRule}",
       withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。",
