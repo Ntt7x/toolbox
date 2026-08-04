@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { api } from "../api";
+import { GRID_PLAN_PROMPT } from "./gridPrompt";
 import type {
   GridPlanRequest,
   GridPlanResponse,
@@ -7,6 +8,7 @@ import type {
   GridStyleKey,
   GridStyleResult,
   GridTrendType,
+  QuoteResponse,
 } from "@toolbox/shared";
 
 // ---------- 趋势类型选项 ----------
@@ -82,14 +84,57 @@ export default function GridPlanTool() {
   const [type, setType] = useState<GridTrendType>(3);
   const [inputs, setInputs] = useState<string[]>(["", "", ""]);
   const [maxAmountInput, setMaxAmountInput] = useState("");
+  const [codeInput, setCodeInput] = useState("");
+  const [quoteInfo, setQuoteInfo] = useState<QuoteResponse | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GridPlanResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const submit = async () => {
+  /** 复制原始提示词到剪贴板 */
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(GRID_PLAN_PROMPT);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setErr("复制失败，请手动选择文本复制");
+    }
+  };
+
+  /** 输入股票代码 → 自动获取月线 BOLL → 填充输入框并自动生成计划 */
+  const fetchQuote = async () => {
+    const code = codeInput.trim();
+    if (!code) {
+      setErr("请先输入股票代码，如 600519 / hk00700。");
+      return;
+    }
     setErr(null);
-    const nums = inputs.map((s) => Number(s.trim()));
-    if (nums.some((n) => !Number.isFinite(n) || n <= 0)) {
+    setQuoteLoading(true);
+    setQuoteInfo(null);
+    try {
+      const q = await api.quote(code);
+      if (q.ok) {
+        const bolls = [q.U, q.M, q.L];
+        setInputs(bolls.map(String));
+        setQuoteInfo(q);
+        await runPlan(bolls); // 自动生成计划
+      } else {
+        setErr(q.message);
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setQuoteLoading(false);
+    }
+  };
+
+  /** 用给定 BOLL 生成计划（含可选最大仓位金额） */
+  const runPlan = async (bolls: number[]) => {
+    setErr(null);
+    if (bolls.some((n) => !Number.isFinite(n) || n <= 0)) {
       setErr("请填写三个正数的布林带数值（上轨/中轨/下轨，顺序任意）。");
       return;
     }
@@ -103,7 +148,7 @@ export default function GridPlanTool() {
     try {
       const req: GridPlanRequest = {
         type,
-        boll: [nums[0], nums[1], nums[2]],
+        boll: [bolls[0], bolls[1], bolls[2]],
         ...(amt !== "" ? { maxAmount: Number(amt) } : {}),
       };
       setResult(await api.gridPlan(req));
@@ -113,6 +158,8 @@ export default function GridPlanTool() {
       setLoading(false);
     }
   };
+
+  const submit = () => runPlan(inputs.map((s) => Number(s.trim())));
 
   return (
     <div>
@@ -155,7 +202,47 @@ export default function GridPlanTool() {
           ))}
         </div>
 
-        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>② 月线布林带数值（顺序任意，可附带文字备注）</div>
+        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>② 股票代码自动补全（可选）</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          <input
+            style={{ ...input, width: 180 }}
+            placeholder="如 600519 / hk00700 / 00700"
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") fetchQuote(); }}
+          />
+          {quoteInfo && quoteInfo.name && (
+            <span
+              style={{
+                background: "#ecfdf5",
+                color: "#047857",
+                borderRadius: 6,
+                padding: "0.32rem 0.6rem",
+                fontWeight: 600,
+                fontSize: "0.9rem",
+                border: "1px solid #a7f3d0",
+              }}
+            >
+              🏷️ {quoteInfo.name}
+            </span>
+          )}
+          <button
+            style={{ ...btn, background: "#0891b2" }}
+            onClick={fetchQuote}
+            disabled={quoteLoading}
+            type="button"
+          >
+            {quoteLoading ? "获取中…" : "📡 获取月 BOLL 并生成"}
+          </button>
+          {quoteInfo && (
+            <span style={{ color: "#16a34a", fontSize: "0.85rem" }}>
+              {quoteInfo.name || quoteInfo.code}：BOLL 已填入（{quoteInfo.bars} 根完整月K，截至 {quoteInfo.lastDate}
+              {quoteInfo.warning ? `；⚠️ ${quoteInfo.warning}` : ""}）
+            </span>
+          )}
+        </div>
+
+        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>③ 月线布林带数值（可手动填写/修改，顺序任意，可附带文字备注）</div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
           {inputs.map((v, i) => (
             <input
@@ -181,7 +268,7 @@ export default function GridPlanTool() {
           示例：`1 1.073 1.290 0.856 慢牛初期`（程序自动提取编号与三个数值，其余忽略）
         </div>
 
-        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>③ 最大仓位金额（可选，控制仓位数量）</div>
+        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>④ 最大仓位金额（可选，控制仓位数量）</div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <input
             style={input}
@@ -193,6 +280,46 @@ export default function GridPlanTool() {
             留空 = 默认 K=1000 份基准；填写后按各档总成本（Q_max × C_avg）缩放，份数与金额同时展示
           </span>
         </div>
+      </div>
+
+      {/* 原始提示词展示/复制 */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+          <button
+            style={{ ...btn, background: "#7c3aed" }}
+            onClick={() => setShowPrompt((v) => !v)}
+            type="button"
+          >
+            {showPrompt ? "🙈 收起原始提示词" : "📜 查看原始提示词"}
+          </button>
+          {showPrompt && (
+            <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
+              {copied ? "✅ 已复制" : "📋 复制"}
+            </button>
+          )}
+          <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
+            本工具即由该 LLM 提示词固化而来，保留原文供对照 / 复用于其它 LLM
+          </span>
+        </div>
+        {showPrompt && (
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              background: "#0f172a",
+              color: "#e2e8f0",
+              padding: "1rem 1.25rem",
+              borderRadius: 10,
+              fontSize: "0.8rem",
+              lineHeight: 1.65,
+              maxHeight: "24rem",
+              overflowY: "auto",
+              marginTop: "0.8rem",
+            }}
+          >
+            {GRID_PLAN_PROMPT}
+          </pre>
+        )}
       </div>
 
       {/* 错误提示 */}

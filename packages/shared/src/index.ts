@@ -135,5 +135,224 @@ export interface GridPlanErrorResponse {
 
 export type GridPlanResult = GridPlanResponse | GridPlanErrorResponse;
 
+/** 股票行情查询响应（自动补全月线 BOLL） */
+export interface QuoteResponse {
+  ok: true;
+  /** 归一化代码，如 sh600519 / hk00700 */
+  code: string;
+  /** 证券名称，如 贵州茅台 */
+  name: string;
+  /** 月线布林带上/中/下轨（由最近 20 根完整月 K 收盘价计算） */
+  U: number;
+  M: number;
+  L: number;
+  /** 参与计算的完整月 K 根数（不足 20 时按实际根数） */
+  bars: number;
+  /** 最后一根参与计算的月 K 日期（YYYY-MM-DD） */
+  lastDate: string;
+  warning?: string;
+}
+
+export interface QuoteErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type QuoteResult = QuoteResponse | QuoteErrorResponse;
+
+// ============================================================
+// LLM 能力模块（DeepSeek）
+// ============================================================
+
+/** LLM 状态响应 */
+export interface LlmStatusResponse {
+  ok: true;
+  /** 是否已配置 API key */
+  configured: boolean;
+  /** 已保存的模型名（配置时才有） */
+  model?: string;
+}
+
+/** 保存/清除 LLM 设置请求 */
+export interface LlmSettingsRequest {
+  /** DeepSeek API key；传空字符串表示清除 */
+  apiKey: string;
+}
+
+export interface LlmSettingsResponse {
+  ok: true;
+  configured: boolean;
+}
+
+/** 测试连接响应 */
+export interface LlmTestResponse {
+  ok: true;
+  /** 测试结果说明 */
+  message: string;
+  /** 响应耗时（ms） */
+  latencyMs: number;
+  /** 返回的模型名 */
+  model: string;
+}
+
+export interface LlmTestErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type LlmTestResult = LlmTestResponse | LlmTestErrorResponse;
+
+/** 对话消息 */
+export interface LlmChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** 通用对话请求 */
+export interface LlmChatRequest {
+  messages: LlmChatMessage[];
+  /** 默认 deepseek-chat */
+  model?: string;
+  temperature?: number;
+  /** 启用流式（SSE），默认 false */
+  stream?: boolean;
+  /** 启用联网搜索（Responses API + web_search 工具，服务端执行） */
+  search?: boolean;
+}
+
+export interface LlmChatResponse {
+  ok: true;
+  content: string;
+  model: string;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  /** 联网搜索实际执行的查询词（search 模式） */
+  searchQueries?: string[];
+}
+
+export interface LlmChatErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
+
+// ============================================================
+// DeepSeek 分享链接对话提取（deepseek-share）
+// ============================================================
+
+/** 提取出的单条对话消息 */
+export interface ShareMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  /** 思考链（DeepSeek 推理模式时存在） */
+  thinking?: string;
+  /** ISO 时间 */
+  time?: string;
+  /** token 用量 */
+  tokenUsage?: number;
+}
+
+/** 分享对话提取请求 */
+export interface ShareExtractRequest {
+  /** DeepSeek 分享链接或 share id，如 https://chat.deepseek.com/share/u5myqtvktzo5gal4qi */
+  url: string;
+}
+
+/** 分享对话提取成功响应 */
+export interface ShareExtractResponse {
+  ok: true;
+  /** 分享标题 */
+  title: string;
+  shareId: string;
+  /** 规范化后的原始链接 */
+  url: string;
+  messages: ShareMessage[];
+  /** 对话总 token 用量 */
+  totalTokens: number;
+  /** 消息总数 */
+  count: number;
+}
+
+export interface ShareExtractErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type ShareExtractResult = ShareExtractResponse | ShareExtractErrorResponse;
+
+// ============================================================
+// 央行利率分析（cb-rate，LLM 驱动）
+// ============================================================
+
+/** 分析时间范围 */
+export type CbRatePeriod = "month" | "year";
+
+/** 央行动作类型 */
+export type CbAction = "hike" | "cut" | "hold" | "mixed";
+
+/** 单家央行分析结果 */
+export interface CbRateBank {
+  /** 稳定 id：fed/ecb/boj/boe/boc/rba/rbnz/snb/norges */
+  id: string;
+  name: string;
+  /** 最新利率描述，如 3.50%–3.75% */
+  latestRate: string;
+  action: CbAction;
+  /** 决策描述，如 7月8日加息25个基点 */
+  actionDesc: string;
+  /** 决议详情（投票/内部分歧/行长表态等） */
+  details?: string;
+  /** 下次会议 */
+  nextMeeting?: string;
+  /** 前瞻指引 / 市场预期 */
+  outlook?: string;
+  /** 最新一次利率变动日期（YYYY-MM-DD） */
+  updatedAt?: string;
+}
+
+/** 央行利率分析请求 */
+export interface CbRateRequest {
+  /** month=本月以来 year=今年以来 */
+  period: CbRatePeriod;
+  /**
+   * 具体查询月份（YYYY-MM，过去 24 个月内）。
+   * 传此字段时分析该自然月的利率政策时间线（period 仍为 month）。
+   */
+  month?: string;
+  /** 央行 id 白名单；空数组/省略 = 全部九大 */
+  banks?: string[];
+  /** 是否生成会议日历 */
+  withCalendar?: boolean;
+  /** 启用 LLM 联网搜索获取实时数据（默认 true；传 false 关闭，回退模型知识） */
+  search?: boolean;
+}
+
+/** 央行利率分析成功响应 */
+export interface CbRateResponse {
+  ok: true;
+  /** 数据截至日期（LLM 标注） */
+  asOf: string;
+  period: CbRatePeriod;
+  /** 政策取向小结 */
+  summary: string;
+  banks: CbRateBank[];
+  /** 近期会议日历 */
+  calendar?: { date: string; bank: string; desc: string }[];
+  /** 联网搜索实际执行的查询词（search 模式） */
+  searchQueries?: string[];
+  /** 模型来源 */
+  model: string;
+  /** 原始 LLM 文本（JSON 解析失败时兜底展示） */
+  raw?: string;
+}
+
+export interface CbRateErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type CbRateResult = CbRateResponse | CbRateErrorResponse;
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";

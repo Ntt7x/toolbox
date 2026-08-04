@@ -5,13 +5,47 @@ import type { HealthResponse, ToolMeta } from "@toolbox/shared";
 import Overview from "./pages/Overview";
 import ToolPlaceholder from "./pages/ToolPlaceholder";
 import GridPlanTool from "./tools/GridPlanTool";
+import DeepSeekShareTool from "./tools/DeepSeekShareTool";
+import CbRateTool from "./tools/CbRateTool";
+import LlmSettings from "./settings/LlmSettings";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
   "grid-plan": GridPlanTool,
+  "deepseek-share": DeepSeekShareTool,
+  "cb-rate": CbRateTool,
 };
 
 const createPage = (C: ComponentType) => createElement(C);
+
+/** 侧边栏菜单分组：静态项 + 按工具 id 归组的工具 */
+interface MenuGroup {
+  label: string;
+  staticItems?: { name: string; path: string; icon: string }[];
+  toolIds?: string[];
+}
+
+const MENU_GROUPS: MenuGroup[] = [
+  { label: "设置", staticItems: [{ name: "LLM 设置", path: "/settings/llm", icon: "🤖" }] },
+  { label: "交易", toolIds: ["grid-plan", "cb-rate"] },
+  { label: "小工具", toolIds: ["deepseek-share"] },
+];
+
+const groupLabelStyle: CSSProperties = {
+  padding: "0.9rem 0.9rem 0.3rem",
+  fontSize: "0.72rem",
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  color: "#64748b",
+  textTransform: "uppercase",
+};
+
+interface MenuEntry {
+  key: string;
+  name: string;
+  path: string;
+  icon: string;
+}
 
 /** 侧边栏菜单项样式（active 高亮） */
 const menuItemStyle = (isActive: boolean): CSSProperties => ({
@@ -62,11 +96,40 @@ export default function App() {
             <NavLink to="/" end style={({ isActive }) => menuItemStyle(isActive)}>
               📊 工作台
             </NavLink>
-            {tools.map((t) => (
-              <NavLink key={t.id} to={t.path} style={({ isActive }) => menuItemStyle(isActive)}>
-                🧰 {t.name}
-              </NavLink>
-            ))}
+            {MENU_GROUPS.map((g) => {
+              const entries: MenuEntry[] = [
+                ...(g.staticItems ?? []).map((s) => ({ key: s.path, name: s.name, path: s.path, icon: s.icon })),
+                ...tools
+                  .filter((t) => g.toolIds?.includes(t.id))
+                  .map((t) => ({ key: t.id, name: t.name, path: t.path, icon: "🧰" })),
+              ];
+              if (entries.length === 0) return null;
+              return (
+                <div key={g.label}>
+                  <div style={groupLabelStyle}>{g.label}</div>
+                  {entries.map((it) => (
+                    <NavLink key={it.key} to={it.path} style={({ isActive }) => menuItemStyle(isActive)}>
+                      {it.icon} {it.name}
+                    </NavLink>
+                  ))}
+                </div>
+              );
+            })}
+            {(() => {
+              const grouped = new Set(MENU_GROUPS.flatMap((g) => g.toolIds ?? []));
+              const rest = tools.filter((t) => !grouped.has(t.id));
+              if (rest.length === 0) return null;
+              return (
+                <div>
+                  <div style={groupLabelStyle}>其他</div>
+                  {rest.map((t) => (
+                    <NavLink key={t.id} to={t.path} style={({ isActive }) => menuItemStyle(isActive)}>
+                      🧰 {t.name}
+                    </NavLink>
+                  ))}
+                </div>
+              );
+            })()}
           </nav>
         </aside>
 
@@ -74,6 +137,7 @@ export default function App() {
         <main style={{ flex: 1, minWidth: 0, padding: "1.5rem 2rem", background: "#f5f6f8" }}>
           <Routes>
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
+            <Route path="/settings/llm" element={<LlmSettings />} />
             {tools.map((t) => (
               <Route
                 key={t.id}

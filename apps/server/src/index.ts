@@ -1,21 +1,30 @@
-﻿import { serve } from "@hono/node-server";
+﻿// ============================================================
+// 服务端入口（装配层）
+// 职责：创建 app、挂载中间件、注册各 feature 路由与公共路由、启动。
+// 分层约定：
+//   core/     下层公共模块（能力：LLM / 行情 / 分享提取，不依赖业务）
+//   features/ 上层业务模块（每个工具：meta 注册信息 + register 路由）
+// 依赖方向：features → core（业务编排公共能力）
+// ============================================================
+
+import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
   API_PREFIX,
-  type GridPlanRequest,
-  type GridPlanResult,
-  type GridTrendType,
   type HealthResponse,
   type ToolListResponse,
   type ToolMeta,
 } from "@toolbox/shared";
-import { generateGridPlan } from "./gridPlan.js";
+import { registerLlmRoutes } from "./core/routes.js";
+import * as gridPlanFeature from "./features/gridPlan/index.js";
+import * as cbRateFeature from "./features/cbRate/index.js";
+import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
 
-// 健康检查：vibe coding 阶段用于验证前后端联通
+// 健康检查：验证前后端联通
 app.get(`${API_PREFIX}/health`, (c) => {
   const body: HealthResponse = {
     ok: true,
@@ -26,14 +35,11 @@ app.get(`${API_PREFIX}/health`, (c) => {
   return c.json(body);
 });
 
-// 小工具注册表（实际工具由 vibe coding 逐步添加）
+// 工具注册表：由各业务 feature 提供 meta（前端菜单 /tools 数据源）
 const tools: ToolMeta[] = [
-  {
-    id: "grid-plan",
-    name: "交易网格计划",
-    description: "仓位中性趋势优势网格计划生成（月线布林带 + 趋势类型）",
-    path: "/tools/grid-plan",
-  },
+  gridPlanFeature.meta,
+  cbRateFeature.meta,
+  deepseekShareFeature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -41,31 +47,13 @@ app.get(`${API_PREFIX}/tools`, (c) => {
   return c.json(body);
 });
 
-// 交易网格计划生成
-app.post(`${API_PREFIX}/tools/grid-plan`, async (c) => {
-  const raw = await c.req.json().catch(() => null) as Partial<GridPlanRequest> | null;
-  if (!raw || typeof raw !== "object") {
-    const body: GridPlanResult = { ok: false, error: "format", message: "请求体必须是 JSON" };
-    return c.json(body, 400);
-  }
-  const { type, boll, maxAmount } = raw;
-  if (
-    typeof type !== "number" || !Number.isInteger(type) || type < 1 || type > 7 ||
-    !Array.isArray(boll) || boll.length !== 3 ||
-    !boll.every((v) => typeof v === "number" && Number.isFinite(v) && v > 0) ||
-    (maxAmount !== undefined && (typeof maxAmount !== "number" || !Number.isFinite(maxAmount) || maxAmount <= 0))
-  ) {
-    const body: GridPlanResult = {
-      ok: false,
-      error: "format",
-      message: "格式错误，请按 `编号 数值1 数值2 数值3` 发送。示例：`1 1.073 1.290 0.856`",
-    };
-    return c.json(body, 400);
-  }
-  const result = generateGridPlan(type as GridTrendType, boll as [number, number, number], maxAmount);
-  const status = result.ok ? 200 : result.error === "format" ? 400 : 422;
-  return c.json(result, status);
-});
+// 下层公共能力路由（LLM 设置）
+registerLlmRoutes(app);
+
+// 上层业务路由
+gridPlanFeature.register(app);
+cbRateFeature.register(app);
+deepseekShareFeature.register(app);
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {
