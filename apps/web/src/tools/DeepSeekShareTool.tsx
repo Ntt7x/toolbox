@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
 import type { ShareExtractResult, ShareMessage } from "@toolbox/shared";
@@ -33,6 +33,16 @@ const input: CSSProperties = {
 
 const EXAMPLE = "https://chat.deepseek.com/share/u5myqtvktzo5gal4qi";
 
+/** 判断剪贴板文本是否符合 DeepSeek 分享链接 / share id 格式 */
+function isShareInput(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  // 完整链接：https://chat.deepseek.com/share/<id>
+  if (/^https?:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]{8,64}$/.test(t)) return true;
+  // 裸 share id
+  return /^[A-Za-z0-9_-]{8,64}$/.test(t);
+}
+
 function fmtTime(iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -46,6 +56,27 @@ export default function DeepSeekShareTool() {
   const [err, setErr] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [clipHint, setClipHint] = useState(false);
+
+  /** 从剪贴板读取并自动填入（仅当符合链接格式且输入框为空） */
+  const readClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (isShareInput(text) && !urlInput.trim()) {
+        setUrlInput(text.trim());
+        setClipHint(true);
+        setTimeout(() => setClipHint(false), 6000);
+      }
+    } catch {
+      // 剪贴板无权限/不可用（非 https 或未授权）：静默，可手动粘贴
+    }
+  };
+
+  // 挂载时自动读取剪贴板：符合链接则自动填入
+  useEffect(() => {
+    void readClipboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const extract = async () => {
     const url = urlInput.trim();
@@ -109,10 +140,18 @@ export default function DeepSeekShareTool() {
           <button style={{ ...btn, background: "#64748b" }} onClick={() => setUrlInput(EXAMPLE)} type="button">
             填入示例
           </button>
+          <button style={{ ...btn, background: "#0891b2" }} onClick={() => void readClipboard()} type="button">
+            📋 从剪贴板读取
+          </button>
           <button style={btn} onClick={extract} disabled={loading} type="button">
             {loading ? "提取中…" : "📥 提取对话"}
           </button>
         </div>
+        {clipHint && (
+          <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+            📋 已检测到剪贴板中的 DeepSeek 分享链接并自动填入，点击「提取对话」即可。
+          </div>
+        )}
       </div>
 
       {/* 错误 */}
