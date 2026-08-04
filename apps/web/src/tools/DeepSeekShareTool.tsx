@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
-import { api } from "../api";
+import { api, errMsg } from "../api";
+import { ErrorCard, PageHeader } from "../ui";
 import type { ShareExtractResult, ShareMessage } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -59,7 +60,7 @@ export default function DeepSeekShareTool() {
     try {
       setResult(await api.shareExtract(url));
     } catch (e) {
-      setErr(String(e));
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -90,10 +91,10 @@ export default function DeepSeekShareTool() {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>🔗 DeepSeek Share 提取</h1>
-      <p style={{ color: "#666", marginTop: "-0.4rem" }}>
-        输入 DeepSeek 公开分享链接（或 share id），提取完整对话内容（含思考链、时间与 token 用量）。
-      </p>
+      <PageHeader
+        title="🔗 DeepSeek Share 提取"
+        desc="输入 DeepSeek 公开分享链接（或 share id），提取完整对话内容（含思考链、时间与 token 用量）。"
+      />
 
       {/* 输入区 */}
       <div style={card}>
@@ -115,18 +116,10 @@ export default function DeepSeekShareTool() {
       </div>
 
       {/* 错误 */}
-      {err && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {err}
-        </div>
-      )}
+      {err && <ErrorCard>❌ {err}</ErrorCard>}
 
       {/* 结果 */}
-      {result && !result.ok && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {result.message}
-        </div>
-      )}
+      {result && !result.ok && <ErrorCard>❌ {result.message}</ErrorCard>}
 
       {result && result.ok && (
         <div>

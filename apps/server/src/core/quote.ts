@@ -22,7 +22,7 @@ interface ParsedCode {
 }
 
 /** 解析用户输入的代码 → 腾讯 param 结构，无法识别时返回 null */
-export function parseSecCode(input: string): ParsedCode | null {
+function parseSecCode(input: string): ParsedCode | null {
   const s = input.trim().toUpperCase();
   if (!/^[0-9HKSHZ]{2,9}$/.test(s)) return null;
 

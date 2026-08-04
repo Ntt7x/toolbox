@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
-import { api } from "../api";
+import { api, errMsg } from "../api";
+import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { GRID_PLAN_PROMPT } from "./gridPrompt";
 import type {
   GridPlanRequest,
@@ -125,7 +126,7 @@ export default function GridPlanTool() {
         setErr(q.message);
       }
     } catch (e) {
-      setErr(String(e));
+      setErr(errMsg(e));
     } finally {
       setQuoteLoading(false);
     }
@@ -153,7 +154,7 @@ export default function GridPlanTool() {
       };
       setResult(await api.gridPlan(req));
     } catch (e) {
-      setErr(String(e));
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -163,10 +164,10 @@ export default function GridPlanTool() {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>📈 交易网格计划</h1>
-      <p style={{ color: "#666", marginTop: "-0.4rem" }}>
-        仓位中性趋势优势网格计划生成：输入趋势类型 + 月线布林带数值，输出三档风格（激进/均衡/保守）完整网格参数。
-      </p>
+      <PageHeader
+        title="📈 交易网格计划"
+        desc="仓位中性趋势优势网格计划生成：输入趋势类型 + 月线布林带数值，输出三档风格（激进/均衡/保守）完整网格参数。"
+      />
 
       {/* 表单 */}
       <div style={card}>
@@ -265,7 +266,7 @@ export default function GridPlanTool() {
           </button>
         </div>
         <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.5rem" }}>
-          示例：`1 1.073 1.290 0.856 慢牛初期`（程序自动提取编号与三个数值，其余忽略）
+          示例数值：1.073（上轨）1.290（中轨）0.856（下轨）——请直接填写三个数字，顺序任意。
         </div>
 
         <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>④ 最大仓位金额（可选，控制仓位数量）</div>
@@ -302,39 +303,15 @@ export default function GridPlanTool() {
           </span>
         </div>
         {showPrompt && (
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              background: "#0f172a",
-              color: "#e2e8f0",
-              padding: "1rem 1.25rem",
-              borderRadius: 10,
-              fontSize: "0.8rem",
-              lineHeight: 1.65,
-              maxHeight: "24rem",
-              overflowY: "auto",
-              marginTop: "0.8rem",
-            }}
-          >
-            {GRID_PLAN_PROMPT}
-          </pre>
+          <CodeBlock maxHeight="24rem">{GRID_PLAN_PROMPT}</CodeBlock>
         )}
       </div>
 
       {/* 错误提示 */}
-      {err && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {err}
-        </div>
-      )}
+      {err && <ErrorCard>❌ {err}</ErrorCard>}
 
       {/* 后端错误 */}
-      {result && !result.ok && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {result.message}
-        </div>
-      )}
+      {result && !result.ok && <ErrorCard>❌ {result.message}</ErrorCard>}
 
       {/* 结果 */}
       {result && result.ok && <ResultView r={result} />}
@@ -436,22 +413,7 @@ function ResultView({ r }: { r: GridPlanResponse }) {
       {/* 完整计划文本 */}
       <div style={card}>
         <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>📄 完整计划文本（可复制）</div>
-        <pre
-          style={{
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            background: "#0f172a",
-            color: "#e2e8f0",
-            padding: "1rem 1.25rem",
-            borderRadius: 10,
-            fontSize: "0.85rem",
-            lineHeight: 1.7,
-            maxHeight: "32rem",
-            overflowY: "auto",
-          }}
-        >
-          {r.markdown}
-        </pre>
+        <CodeBlock>{r.markdown}</CodeBlock>
       </div>
     </div>
   );

@@ -17,9 +17,11 @@ import {
   type ToolMeta,
 } from "@toolbox/shared";
 import { registerLlmRoutes } from "./core/routes.js";
+import { registerTaskRoutes } from "./core/sse.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
+import * as localDataFeature from "./features/localData/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -47,13 +49,16 @@ app.get(`${API_PREFIX}/tools`, (c) => {
   return c.json(body);
 });
 
-// 下层公共能力路由（LLM 设置）
+// 下层公共能力路由（LLM 设置 + 任务 SSE/取消）
 registerLlmRoutes(app);
+registerTaskRoutes(app);
 
 // 上层业务路由
 gridPlanFeature.register(app);
 cbRateFeature.register(app);
 deepseekShareFeature.register(app);
+// 设置页模块（本地数据管理，非工具）
+localDataFeature.register(app);
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {

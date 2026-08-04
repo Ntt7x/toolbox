@@ -55,7 +55,7 @@ export interface GridStyleResult {
   key: GridStyleKey;
   /** 方案是否不可用（极端安全重算仍超限时跳过） */
   unavailable: boolean;
-  /** 附加标记：如「不对称」「偏差过大」「盈利约束不满足」等 */
+  /** 附加标记：如「偏差过大」「极端安全超限」「盈利约束不满足」等（数据可信度提示） */
   flags: string[];
   /** 止损（百分数） */
   L_stop: number;
@@ -169,7 +169,7 @@ export interface LlmStatusResponse {
   ok: true;
   /** 是否已配置 API key */
   configured: boolean;
-  /** 已保存的模型名（配置时才有） */
+  /** 默认使用的模型名（仅展示，无模型配置机制） */
   model?: string;
 }
 
@@ -214,7 +214,7 @@ export interface LlmChatRequest {
   /** 默认 deepseek-chat */
   model?: string;
   temperature?: number;
-  /** 启用流式（SSE），默认 false */
+  /** 预留：流式输出（SSE）当前未实现，勿传 */
   stream?: boolean;
   /** 启用联网搜索（Responses API + web_search 工具，服务端执行） */
   search?: boolean;
@@ -309,6 +309,8 @@ export interface CbRateBank {
   outlook?: string;
   /** 最新一次利率变动日期（YYYY-MM-DD） */
   updatedAt?: string;
+  /** 数据可信度提示（如 action 无法识别被降级展示、数据存疑） */
+  flags?: string[];
 }
 
 /** 央行利率分析请求 */
@@ -324,8 +326,16 @@ export interface CbRateRequest {
   banks?: string[];
   /** 是否生成会议日历 */
   withCalendar?: boolean;
-  /** 启用 LLM 联网搜索获取实时数据（默认 true；传 false 关闭，回退模型知识） */
+  /**
+   * 启用 LLM 联网搜索获取实时数据（默认 true；传 false 关闭，回退模型知识，
+   * 响应 dataMode 相应为 knowledge 并标注 knowledgeCutoff）。
+   */
   search?: boolean;
+  /**
+   * 启用缓存（默认 true）：命中缓存直接返回（fromCache:true），
+   * 未命中则查询后写入缓存（Key-结构化 Value 持久化），TTL 24h 过期自动重查。
+   */
+  useCache?: boolean;
 }
 
 /** 央行利率分析成功响应 */
@@ -341,9 +351,22 @@ export interface CbRateResponse {
   calendar?: { date: string; bank: string; desc: string }[];
   /** 联网搜索实际执行的查询词（search 模式） */
   searchQueries?: string[];
+  /** 结果是否来自缓存（未调 LLM） */
+  fromCache?: boolean;
+  /** 缓存写入时间（ISO） */
+  cachedAt?: string;
   /** 模型来源 */
   model: string;
-  /** 原始 LLM 文本（JSON 解析失败时兜底展示） */
+  /**
+   * 数据模式：search=联网搜索实时数据；knowledge=模型训练知识（可能过时，勿用于实盘决策）。
+   * 与请求 search 对应，缓存/解析全程保留。
+   */
+  dataMode: "search" | "knowledge";
+  /** 知识模式下的模型知识截止日期（YYYY-MM，如 2025-06）；search 模式无此字段 */
+  knowledgeCutoff?: string;
+  /** 请求了但 LLM 未返回的央行 id（完整性提示） */
+  missingBanks?: string[];
+  /** 原始 LLM 文本（无条件附带，供排障/核对） */
   raw?: string;
 }
 
@@ -353,6 +376,102 @@ export interface CbRateErrorResponse {
 }
 
 export type CbRateResult = CbRateResponse | CbRateErrorResponse;
+
+// ============================================================
+// 通用异步任务（服务端后台执行 + SSE 推送 / 轮询）
+// ============================================================
+
+/** 异步任务状态 */
+export type AsyncTaskStatus = "pending" | "running" | "done" | "error" | "cancelled";
+
+/** 异步任务响应（result 类型由业务方指定） */
+export interface AsyncTaskResponse<T = unknown> {
+  ok: true;
+  taskId: string;
+  status: AsyncTaskStatus;
+  /** done 时的任务结果 */
+  result?: T;
+  /** error 时的错误信息 */
+  message?: string;
+  /** 任务创建时间（ISO） */
+  createdAt: string;
+}
+
+export interface AsyncTaskErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type AsyncTaskResult<T = unknown> = AsyncTaskResponse<T> | AsyncTaskErrorResponse;
+
+// ============================================================
+// 本地数据管理（local-data）：查询/删改本地表与 KV 数据
+// ============================================================
+
+/** 数据源（KV 前缀或表）的注册元信息 + 实时条目数 */
+export interface LocalDataSource {
+  kind: "kv" | "table";
+  /** kv: key 前缀；table: 表名 */
+  name: string;
+  /** 来源页面（如 央行利率分析） */
+  page: string;
+  /** 使用场景标签（如 分析缓存） */
+  tag: string;
+  /** 场景说明 */
+  description: string;
+  /** 当前条目数 */
+  count: number;
+}
+
+export interface LocalDataSourcesResponse {
+  ok: true;
+  sources: LocalDataSource[];
+}
+
+/** 数据条目（列表用，含值预览） */
+export interface LocalDataEntry {
+  key: string;
+  updatedAt?: string;
+  /** value 的 JSON 预览（截断） */
+  preview: string;
+  /** 表数据行：行字段（table 类型时存在） */
+  row?: Record<string, unknown>;
+}
+
+export interface LocalDataListResponse {
+  ok: true;
+  source: { kind: "kv" | "table"; name: string };
+  entries: LocalDataEntry[];
+  total: number;
+}
+
+/** 详情（KV：完整 value；表：整行） */
+export interface LocalDataDetailResponse {
+  ok: true;
+  source: { kind: "kv" | "table"; name: string };
+  key: string;
+  value: unknown;
+  updatedAt?: string;
+}
+
+/** 编辑 KV 值请求 */
+export interface LocalDataUpdateRequest {
+  source: string;
+  key: string;
+  /** 新的任意 JSON 值 */
+  value: unknown;
+}
+
+export interface LocalDataErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type LocalDataResult =
+  | LocalDataSourcesResponse
+  | LocalDataListResponse
+  | LocalDataDetailResponse
+  | LocalDataErrorResponse;
 
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";

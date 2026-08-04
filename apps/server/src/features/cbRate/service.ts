@@ -32,7 +32,7 @@ function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
   const banksText = BANKS.map((b) => `${b.id} ${b.name}`).join(" | ");
   const searchNote = withSearch
     ? "4. 本次调用已启用联网搜索：优先采用搜索结果中的最新信息；回答中若引用搜索来源，保留类似 [reference:N] 的引用标记。\n5. 必须明确标注数据截至日期 asOf（YYYY-MM-DD），即搜索结果中最新的信息日期。"
-    : "4. 数据基于你的训练知识，必须明确标注数据截至日期 asOf（YYYY-MM-DD，即你知识的最新日期）。\n5. 数据时效有限，若不确定最新情况，在 summary 中注明。";
+    : "4. 本次调用未启用联网搜索，只能基于你的训练知识作答。\n5. 你的训练知识截止于约 2025 年中，而今天已到 2026 年：**严禁编造今天之后或超出你知识范围的会议与决策**（尤其不得虚构某年某月某日的加息/降息）；拿不准的信息一律省略或用 \"不确定\" 标注。\n6. 必须明确标注 asOf 为你知识的最新日期（YYYY-MM-DD，通常接近 2025 年中），并在 summary 中注明\"数据基于训练知识、时效有限，建议开启联网搜索获取实时数据\"。\n7. 额外输出字段 knowledgeCutoff（YYYY-MM）表示你知识覆盖的最新月份。";
   return `你是一个央行利率政策分析助手，专精于全球主要央行的利率政策时间线。
 九大央行固定清单（必须全部覆盖，除非用户指定部分）：${banksText}
 
@@ -58,9 +58,9 @@ function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
   ]${withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : ""}
 }
 ${searchNote}
-6. action 取值：hike=加息，cut=降息，hold=按兵不动，mixed=方向混合（如既有加息又有降息）。
-7. ${withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。"}
-8. banks 至少覆盖用户要求的所有央行（默认全部九家）。`;
+8. action 取值：hike=加息，cut=降息，hold=按兵不动，mixed=方向混合（如既有加息又有降息）。
+9. ${withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。"}
+10. banks 至少覆盖用户要求的所有央行（默认全部九家）。`;
 }
 
 function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string): string {
@@ -82,8 +82,8 @@ function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string)
   return `今天是 ${today}。分析${timeNote}${scope}的关键利率政策时间线（加息、降息），输出 JSON。`;
 }
 
-/** 规范化 LLM 返回的银行列表：过滤未知 id、校验 action、补齐名称 */
-function normalizeBanks(raw: unknown, allowedIds: string[]): CbRateBank[] {
+/** 规范化 LLM 返回的银行列表：过滤未知 id、校验 action（不静默篡改，异常加 flags）、补齐名称 */
+export function normalizeBanks(raw: unknown, allowedIds: string[]): CbRateBank[] {
   if (!Array.isArray(raw)) return [];
   const allowed = new Set(allowedIds);
   const seen = new Set<string>();
@@ -94,20 +94,37 @@ function normalizeBanks(raw: unknown, allowedIds: string[]): CbRateBank[] {
     const id = typeof b.id === "string" ? b.id : "";
     if (!allowed.has(id) || seen.has(id)) continue;
     seen.add(id);
-    const action = VALID_ACTIONS.includes(b.action as CbAction) ? (b.action as CbAction) : "hold";
-    out.push({
+    const action = b.action;
+    const flags: string[] = [];
+    let finalAction: CbAction;
+    if (VALID_ACTIONS.includes(action as CbAction)) {
+      finalAction = action as CbAction;
+    } else {
+      // 不静默篡改：降级为 hold 展示，但明确标记数据异常
+      finalAction = "hold";
+      flags.push(`action「${String(action ?? "空")}」无法识别，已按 hold 展示`);
+    }
+    const bank: CbRateBank = {
       id,
       name: typeof b.name === "string" ? b.name : BANKS.find((x) => x.id === id)?.name ?? id,
       latestRate: typeof b.latestRate === "string" ? b.latestRate : "",
-      action,
+      action: finalAction,
       actionDesc: typeof b.actionDesc === "string" ? b.actionDesc : "",
       ...(typeof b.details === "string" && b.details ? { details: b.details } : {}),
       ...(typeof b.nextMeeting === "string" && b.nextMeeting ? { nextMeeting: b.nextMeeting } : {}),
       ...(typeof b.outlook === "string" && b.outlook ? { outlook: b.outlook } : {}),
       ...(typeof b.updatedAt === "string" && b.updatedAt ? { updatedAt: b.updatedAt } : {}),
-    });
+    };
+    if (flags.length > 0) bank.flags = flags;
+    out.push(bank);
   }
   return out;
+}
+
+/** 计算请求了但 LLM 未返回的央行 id */
+export function missingBanks(returned: CbRateBank[], allowedIds: string[]): string[] {
+  const got = new Set(returned.map((b) => b.id));
+  return allowedIds.filter((id) => !got.has(id));
 }
 
 /** 校验月份格式：YYYY-MM（过去 24 个月内） */
@@ -121,8 +138,140 @@ export function isValidMonth(v: string): boolean {
   return target <= cur && target > cur - 24;
 }
 
+// ============================================================
+// LLM JSON 输出容错解析
+// 逐级降级：直接 parse → 栈匹配提取最外层 JSON → 修复值内裸引号后 parse。
+// LLM 常在字符串值内插入未转义的半角引号（如 "摘要"xxx"yyy"），
+// 直接 JSON.parse 必然失败，需启发式修复。
+// ============================================================
+
+/** 提取从首个 { 到最外层配对的 } 的子串（跳过字符串内的 { }） */
+export function extractOuterJson(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') {
+      inStr = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * 修复字符串值内未转义的半角引号。
+ * 两遍扫描：
+ * 1) 第一遍定位字符串状态内所有裸引号，按后随字符分为"内容引号"与"结束候选"；
+ * 2) 最后一个结束候选作为真正的字符串结束引号，其余（含全部内容引号）一律转义。
+ * 覆盖 LLM 最常见的畸形模式：内容引号成对出现且与字符串结束挤在一起（如 "高"}"）。
+ */
+export function fixJsonQuotes(s: string): string {
+  // 第一遍：标记
+  const marks: { pos: number; kind: "content" | "end-cand" }[] = [];
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') {
+        const rest = s.slice(i + 1).replace(/^\s+/, "");
+        const isEnd =
+          rest.startsWith(",") || rest.startsWith("}") || rest.startsWith("]") || rest.startsWith(":");
+        marks.push({ pos: i, kind: isEnd ? "end-cand" : "content" });
+      }
+    } else if (ch === '"') {
+      inStr = true;
+    }
+  }
+  const ends = marks.filter((m) => m.kind === "end-cand");
+  const endPos = ends.length > 0 ? ends[ends.length - 1].pos : -1;
+  const contentPos = new Set(marks.filter((m) => m.kind === "content").map((m) => m.pos));
+
+  // 第二遍：重写（只转义 content 引号；键名闭合等合法结构引号保持原样）
+  let out = "";
+  inStr = false;
+  esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) {
+        out += ch;
+        esc = false;
+      } else if (ch === "\\") {
+        out += ch;
+        esc = true;
+      } else if (ch === '"') {
+        if (i === endPos) {
+          out += ch;
+          inStr = false;
+        } else if (contentPos.has(i)) {
+          out += '\\"';
+        } else {
+          out += ch;
+          inStr = false;
+        }
+      } else {
+        out += ch;
+      }
+    } else {
+      out += ch;
+      if (ch === '"') inStr = true;
+    }
+  }
+  return out;
+}
+
+/** 多层容错解析：成功返回对象，失败返回 null */
+export function robustJsonParse(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  const tryParse = (s: string): Record<string, unknown> | null => {
+    try {
+      const v = JSON.parse(s);
+      return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  // 1. 直接解析
+  let v = tryParse(trimmed);
+  if (v) return v;
+  // 2. 栈匹配提取最外层 JSON（容忍前后杂质/代码块；假设结构合法）
+  const outer = extractOuterJson(trimmed);
+  if (outer) {
+    v = tryParse(outer);
+    if (v) return v;
+  }
+  // 3. 修复值内裸引号后整体解析（fix 使引号恢复平衡）
+  const fixed = fixJsonQuotes(trimmed);
+  v = tryParse(fixed);
+  if (v) return v;
+  // 4. 修复后重新提取最外层再解析
+  if (outer) {
+    v = tryParse(fixJsonQuotes(outer));
+    if (v) return v;
+  }
+  return null;
+}
+
 /** 央行利率分析（入口） */
-export async function analyzeCentralBankRates(req: CbRateRequest): Promise<CbRateResult> {
+export async function analyzeCentralBankRates(
+  req: CbRateRequest,
+  signal?: AbortSignal,
+): Promise<CbRateResult> {
   const period = req.period ?? "month";
   const month = req.month && isValidMonth(req.month) ? req.month : undefined;
   if (req.month && !month) {
@@ -136,6 +285,7 @@ export async function analyzeCentralBankRates(req: CbRateRequest): Promise<CbRat
   }
 
   const useSearch = req.search !== false; // 默认开启联网搜索
+  const dataMode = useSearch ? "search" : "knowledge";
 
   const messages = [
     { role: "system" as const, content: buildSystemPrompt(req.withCalendar === true, useSearch) },
@@ -145,28 +295,17 @@ export async function analyzeCentralBankRates(req: CbRateRequest): Promise<CbRat
     model: DEFAULT_MODEL,
     json: true,
     ...(useSearch ? { search: true } : {}),
+    ...(signal ? { signal } : {}),
   });
 
   if (!result.ok) {
     return { ok: false, message: result.message };
   }
 
-  // 解析 JSON（容忍 LLM 偶尔包裹代码块/前后杂质）
-  let parsed: unknown = null;
+  // 解析 JSON（多层容错：直接 parse → 提取最外层 → 修复值内裸引号）
   const content = result.content.trim();
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    const m = content.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        parsed = JSON.parse(m[0]);
-      } catch {
-        parsed = null;
-      }
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
+  const parsed = robustJsonParse(content);
+  if (!parsed) {
     return {
       ok: false,
       message: `LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${content.slice(0, 200)}`,
@@ -178,8 +317,11 @@ export async function analyzeCentralBankRates(req: CbRateRequest): Promise<CbRat
   if (banks.length === 0) {
     return { ok: false, message: "LLM 未返回有效的央行数据，请重试" };
   }
+  const missing = missingBanks(banks, allowedIds);
 
   const asOf = typeof p.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.asOf) ? p.asOf : "";
+  const knowledgeCutoff =
+    typeof p.knowledgeCutoff === "string" && /^\d{4}-\d{2}$/.test(p.knowledgeCutoff) ? p.knowledgeCutoff : undefined;
   const calendar = Array.isArray(p.calendar)
     ? p.calendar
         .filter((c) => c && typeof c === "object")
@@ -202,6 +344,9 @@ export async function analyzeCentralBankRates(req: CbRateRequest): Promise<CbRat
     banks,
     ...(calendar && calendar.length > 0 ? { calendar } : {}),
     model: result.model,
+    dataMode,
+    ...(dataMode === "knowledge" && knowledgeCutoff ? { knowledgeCutoff } : {}),
+    ...(missing.length > 0 ? { missingBanks: missing } : {}),
     ...(result.searchQueries && result.searchQueries.length > 0 ? { searchQueries: result.searchQueries } : {}),
     raw: content,
   };

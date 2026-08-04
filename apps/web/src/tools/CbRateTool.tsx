@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from "react";
-import { api } from "../api";
-import type { CbAction, CbRatePeriod, CbRateResult, CbRateBank } from "@toolbox/shared";
+import { api, errMsg } from "../api";
+import { useAsyncTask } from "../hooks/useAsyncTask";
+import { CodeBlock, ErrorCard, PageHeader } from "../ui";
+import type { CbAction, CbRatePeriod, CbRateBank, CbRateResponse } from "@toolbox/shared";
 
 // ---------- 九大央行选项 ----------
 
@@ -95,10 +97,17 @@ export default function CbRateTool() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withCalendar, setWithCalendar] = useState(true);
   const [withSearch, setWithSearch] = useState(true);
+  const [withCache, setWithCache] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<CbRateResult | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  // 后台异步任务（SSE 推送 + 轮询兜底 + sessionStorage 恢复 + 停止按钮）
+  const task = useAsyncTask<CbRateResponse>("cbRateTaskId", api.cbRateTaskStatus, api.cancelTask);
+  const [localErr, setLocalErr] = useState<string | null>(null); // 本地一次性错误（非任务错误）
+  // result 恒为 CbRateResponse（ok:true）——错误统一走 task.error/localErr，不再断言联合类型
+  const result = task.result;
+  const err = task.error ?? localErr;
+  const taskRunning = task.running;
+  const taskId = task.taskId;
 
   const toggleBank = (id: string) => {
     setSelected((prev) => {
@@ -110,10 +119,8 @@ export default function CbRateTool() {
   };
 
   const run = async () => {
-    setErr(null);
-    setLoading(true);
-    setResult(null);
     setShowRaw(false);
+    setLoading(true);
     try {
       const req = {
         period,
@@ -121,10 +128,18 @@ export default function CbRateTool() {
         ...(selected.size > 0 ? { banks: [...selected] } : {}),
         withCalendar,
         search: withSearch,
+        useCache: withCache,
       };
-      setResult(await api.cbRate(req));
+      const t = await api.cbRate(req); // 立即返回 taskId，后台执行
+      if (!t.ok) {
+        // 提交失败：仅提示错误，保留已展示的历史结果（不得 reset 清掉）
+        setLocalErr(t.message);
+        return;
+      }
+      // 缓存命中（t 已是 done + 完整 result）直接落地；否则 SSE 监听，切页/刷新后自动恢复
+      task.watch(t.taskId, t);
     } catch (e) {
-      setErr(String(e));
+      setLocalErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -132,10 +147,10 @@ export default function CbRateTool() {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>🏦 央行利率分析</h1>
-      <p style={{ color: "#666", marginTop: "-0.4rem" }}>
-        九大央行利率政策时间线分析（LLM 驱动）。数据基于模型知识，请留意「数据截至日期」。需要先在「🤖 LLM 设置」中配置 DeepSeek API key。
-      </p>
+      <PageHeader
+        title="🏦 央行利率分析"
+        desc="九大央行利率政策时间线分析（LLM 驱动）。数据基于模型知识，请留意「数据截至日期」。需要先在「🤖 LLM 设置」中配置 DeepSeek API key。"
+      />
 
       {/* 参数区 */}
       <div style={card}>
@@ -182,26 +197,41 @@ export default function CbRateTool() {
             <input type="checkbox" checked={withSearch} onChange={(e) => setWithSearch(e.target.checked)} />
             📡 联网搜索（实时数据，较慢）
           </label>
-          <button style={btn} onClick={run} disabled={loading} type="button">
-            {loading ? "分析中…（LLM 可能需要 10~60 秒）" : "⚡ 开始分析"}
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.88rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={withCache} onChange={(e) => setWithCache(e.target.checked)} />
+            💾 缓存（命中免调 LLM）
+          </label>
+          <button style={btn} onClick={run} disabled={loading || taskRunning} type="button">
+            {loading ? "提交中…" : taskRunning ? "⏳ 后台分析中…" : "⚡ 开始分析"}
           </button>
         </div>
       </div>
 
-      {/* 错误 */}
-      {err && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {err}
-        </div>
-      )}
-      {result && !result.ok && (
-        <div style={{ ...card, borderColor: "#fca5a5", background: "#fef2f2", color: "#b91c1c" }}>
-          ❌ {result.message}
+      {/* 后台任务进行中提示（可切走页面，稍后回来查看） */}
+      {taskRunning && (
+        <div style={{ ...card, borderColor: "#fcd34d", background: "#fffbeb", color: "#b45309" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 600 }}>
+              ⏳ 分析任务已在后台运行{taskId ? `（任务 ${taskId.slice(0, 8)}…）` : ""}，每 3 秒自动刷新。
+            </div>
+            <button
+              style={{ ...btn, background: "#dc2626", marginLeft: "auto" }}
+              onClick={() => void task.cancel()}
+              type="button"
+            >
+              ⏹ 停止分析
+            </button>
+          </div>
+          <div style={{ fontSize: "0.85rem", marginTop: "0.3rem" }}>
+            你可以放心切换到其它页面（或刷新），分析不会被中断；完成后回到本页会自动展示结果。卡住时可点「停止分析」强行中断。
+          </div>
         </div>
       )}
 
-      {/* 结果 */}
-      {result && result.ok && (
+      {/* 错误 */}
+      {err && <ErrorCard>❌ {err}</ErrorCard>}
+      {/* 结果（result 恒为 ok:true，错误已由上方 err 分支展示） */}
+      {result && (
         <div>
           {/* 小结 */}
           <div style={card}>
@@ -210,8 +240,32 @@ export default function CbRateTool() {
               <span style={{ background: "#f1f5f9", color: "#475569", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.8rem" }}>
                 数据截至：{result.asOf || "未知"}
               </span>
+              {result.dataMode === "search" ? (
+                <span style={{ background: "#dcfce7", color: "#15803d", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.8rem", fontWeight: 600 }}>
+                  📡 联网实时数据
+                </span>
+              ) : (
+                <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.8rem", fontWeight: 600 }}>
+                  ⚠️ 模型知识模式{result.knowledgeCutoff ? `（知识截至 ${result.knowledgeCutoff}）` : ""}
+                </span>
+              )}
+              {result.fromCache && (
+                <span style={{ background: "#fef3c7", color: "#b45309", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.8rem", fontWeight: 600 }}>
+                  💾 来自缓存{result.cachedAt ? `（${new Date(result.cachedAt).toLocaleString()}）` : ""}
+                </span>
+              )}
               <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>模型：{result.model}</span>
             </div>
+            {result.dataMode === "knowledge" && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 8, padding: "0.5rem 0.8rem", fontSize: "0.82rem", marginTop: "0.6rem" }}>
+                ⚠️ 当前为<b>知识模式</b>：数据来自模型训练知识（{result.knowledgeCutoff ? `截至 ${result.knowledgeCutoff}` : "可能过时"}），仅供参考，请勿用于实盘决策；建议开启「联网搜索」获取实时数据。
+              </div>
+            )}
+            {result.missingBanks && result.missingBanks.length > 0 && (
+              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#b45309", borderRadius: 8, padding: "0.5rem 0.8rem", fontSize: "0.82rem", marginTop: "0.6rem" }}>
+                ⚠️ 以下央行本次未返回数据：{result.missingBanks.join("、")}
+              </div>
+            )}
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, marginTop: "0.6rem", fontSize: "0.92rem" }}>
               {result.summary}
             </p>
@@ -265,9 +319,7 @@ export default function CbRateTool() {
                 {showRaw ? "收起 LLM 原始输出" : "查看 LLM 原始输出"}
               </button>
               {showRaw && (
-                <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: "0.7rem", background: "#0f172a", color: "#e2e8f0", padding: "0.9rem 1.1rem", borderRadius: 10, fontSize: "0.78rem", maxHeight: "20rem", overflowY: "auto" }}>
-                  {result.raw}
-                </pre>
+                <CodeBlock maxHeight="20rem">{result.raw}</CodeBlock>
               )}
             </div>
           )}
@@ -289,6 +341,11 @@ function BankCard({ bank }: { bank: CbRateBank }) {
           {ACTION_LABEL[bank.action]}
         </span>
       </div>
+      {bank.flags && bank.flags.length > 0 && (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 6, padding: "0.35rem 0.6rem", fontSize: "0.75rem", marginTop: "0.5rem" }}>
+          ⚠️ {bank.flags.join("；")}
+        </div>
+      )}
       <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
         <span style={{ color: "#94a3b8" }}>最新利率：</span>
         <b>{bank.latestRate}</b>

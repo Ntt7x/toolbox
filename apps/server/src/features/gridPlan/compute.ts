@@ -7,7 +7,6 @@
 // ============================================================
 
 import type {
-  GridPlanErrorResponse,
   GridPlanResponse,
   GridPlanResult,
   GridStyleKey,
@@ -139,7 +138,6 @@ function calcSpacing(m: number, r: number, sigmaD: number): GridCalc | null {
   const BInt = Math.max(100, Math.round((bRaw * 1000) / 100) * 100);
   const aFinal = SInt / 1000; // 百分数
   const bFinal = BInt / 1000; // 百分数
-  // 中性校验：S_int/a_final 恒等于 1000.0，为恒等式，无需处理
   return {
     m,
     a_raw: aRaw,
@@ -501,9 +499,9 @@ export function generateGridPlan(
 
   const params = TYPE_PARAMS[type];
 
-  // 1. 波动率
+  // 1. 波动率（此处已保证 U > M > L，M !== L 恒成立）
   const sigmaM = ((U - L) / (4 * M)) * 100;
-  const ratio = M !== L ? (U - M) / (M - L) : Infinity;
+  const ratio = (U - M) / (M - L);
   const asymmetric = ratio < 0.7 || ratio > 1.3;
   const sigmaD = sigmaM / SQRT21;
   if (sigmaD >= sigmaM) {

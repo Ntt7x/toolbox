@@ -12,7 +12,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 │   └── src/
 │       ├── index.ts           装配层：cors + health + tools 收集 + 挂载路由 + 启动
 │       ├── core/              下层公共模块（能力，不依赖业务）：llm / quote / deepseekShare / routes
-│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / deepseekShareTool
+│       │                       / tasks / sse / db / tableStore / kvStore / settingsStore / dataRegistry
+│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / deepseekShareTool / localData
 ├── apps/web/          Vite + React 19 + react-router-dom
 │   └── src/
 │       ├── App.tsx            侧边栏分组菜单 MENU_GROUPS + toolPages 映射 + 路由
@@ -44,9 +45,40 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - `chat(messages, { search?, json? })`：search=联网搜索（Responses API + web_search，服务端执行，
   仅 deepseek-v4-flash）；json=response_format json_object；两者可组合
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
-- API key 存 `apps/server/.env`（`DEEPSEEK_API_KEY`，已 gitignore），`/api/llm/*` 管理
+- API key 存服务端本地设置库（`settings:llm.apiKey`，SQLite `.file/`，已 gitignore）；旧 `.env` 仅一次性迁移
 - 结构化工具（如 cb-rate）用 search 默认开 + JSON 输出 + 提示词给出严格 JSON schema，
   解析容忍杂质包裹；失败时保留 raw 兜底展示
+- **LLM JSON 输出必须多层容错解析**（`robustJsonParse`，cbRate/service.ts）：
+  LLM 常在字符串值内插未转义半角引号（如 `"summary": "2026年7月呈现"xxx"yyy"`）导致
+  JSON.parse 失败。解析链：直接 parse → 栈匹配提取最外层 JSON（跳过字符串内 { }）→
+  修复值内裸引号 → parse。
+  `fixJsonQuotes` 为两遍扫描：定位所有"内容引号/结束候选"，最后一个结束候选作字符串结束，
+  其余全部转义（内容引号成对 + 与结束重叠的 LLM 畸形模式如 `"高"}` 也能恢复合法 JSON）。
+  注意 extractOuterJson 遇裸引号会因栈不平衡返回 null，故 fix 后须对整体再试 parse。
+
+## 4.5 数据可信度（cb-rate 等 LLM 结构化输出）
+
+- 响应带 `dataMode: search|knowledge`：search=联网实时；knowledge=模型训练知识（**可能过时/幻觉**）
+- **知识模式提示词必须防幻觉**：注入今天日期 + 明确"训练知识截止约 2025 年中，严禁编造今天之后
+  的会议与决策，拿不准用不确定/省略，asOf 用知识最新日期"；输出 knowledgeCutoff 字段
+- 不静默篡改 LLM 数据：action 非法 → 降级 hold 展示但加 bank.flags 标记；缺失央行 → missingBanks
+- **缓存 schema 升级必须改 key 版本**（如 cbRate: → cbRate:v2:），否则旧契约缓存被命中
+  返回污染数据（防幻觉前的编造内容还在 TTL 内）
+- **任务超时终态保护**（core/tasks）：fn 在超时后迟到返回不得覆盖 error/cancelled 终态
+  （DeepSeek search abort 无响应时尤其会触发，否则"卡死"后仍显示 running/done）
+
+## 4.6 前端异步任务（useAsyncTask，切页不丢状态的正确姿势）
+
+- **结果必须持久化**：taskId 存 sessionStorage 只解决"进行中任务"的恢复；**任务完成后的成果
+  也要存 sessionStorage（`:result` 键）**，否则切页（组件卸载）后成果丢失，返回页面空白
+- **初始响应即终态要直落**：缓存命中路径返回 `cache-xxx` 假 taskId + done + 完整 result，
+  必须 `task.watch(taskId, initialResponse)` 直接落地展示，**绝不能**对假 taskId 再连 SSE
+  （否则显示"任务不存在"）
+- **SSE error 事件必须区分传输错误与服务端 error 帧**：传输层错误 `ev.data` 为空串，
+  应交给 onerror 降级轮询；只有带 JSON data 的 error 帧才算"任务不存在"。两者混在一起会
+  导致网络抖动时误清状态、降级轮询永不生效
+- **终态防重复**：settledRef 标记——error 帧/迟到轮询结果不得重复处理（防止 onerror 与
+  error 帧双路径互相覆盖）
 
 ## 5. 外部数据源经验
 
@@ -55,13 +87,19 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **DeepSeek 分享提取**：`GET https://chat.deepseek.com/api/v0/share/content?share_id={id}`
   （UA + Accept: application/json），消息含 role/content/thinking/inserted_at/accumulated_token_usage
 - 测试用真实分享 id：`u5myqtvktzo5gal4qi`；测试行情：`600519` / `hk00700`
+- 测试命令：`node "node_modules\.pnpm\tsx@4.23.5\node_modules\tsx\dist\cli.mjs" --test
+  apps/server/src/features/cbRate/cbRate.test.ts apps/server/src/core/tasks.test.ts`
+  （cbRate 单测 14 项 + tasks 单测 6 项，共 20 项，均须全绿）
 
 ## 6. git 规范
 
 - 身份：`kk <kk@localhost>`（全局已配）
 - 提交信息：`feat(scope): 摘要` + 空行 + 要点列表；中文
-- 每完成一个功能批提交一次；`.env`、`.vscode/` 不入库（已 gitignore）
+- 每完成一个功能批提交一次；`.env`、`.vscode/`、`.file/` 不入库（已 gitignore）
 - 提交前 `git status` 确认无测试残留（`$null` 之类的垃圾文件）
+- **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
+  本会话若产生了新的经验/约定/架构变化/文件改名，先更新 dev.md 再提交，
+  提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
 
 ## 7. 验证清单（每功能必过）
 
@@ -78,4 +116,22 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **每个 Agent 会话结束时**：在 `docs/for_agent/history/` 追加一份总结，命名 `YYYY-MM-DD-NN.md`（NN 为当日序号）
 - 总结格式：时间、会话主题、按序完成的功能（含文件/API）、git commit、**遗留/规划事项**（🔮 未实现 🚧 未提交）
 - 历史文件只增不改（除非事实错误），保持时间线完整
+
+### 8.1 维护性文件同步规则（每次提交/归档必做）
+
+`docs/for_agent/` 下所有文件均为**维护性文件**，每次**阶段性提交**与**归档**后必须整体同步，不允许只更新其中一部分：
+
+1. **维护性文件清单**：
+   - `docs/for_agent/dev.md`——常驻开发规范（架构/经验/约定），后续 Agent 的主依据；
+   - `docs/for_agent/history/*.md`——时间线记录（会话总结，只增不改）；
+   - 根目录 `AGENTS.md`——强制加载入口（若 dev.md 目录结构/引用路径变化需同步）。
+2. **每次阶段性 git commit 前**（§6）：检查本次改动是否影响任何经验/约定/结构，
+   受影响则先更新 dev.md（新增节/条目或修订过时内容），把文档更新一起提交。
+3. **每次归档 history 后**：立即对照本次会话改动核对 dev.md——新增的经验/教训必须
+   已固化进 dev.md（历史记录 ≠ 常驻规范，只有 dev.md 会被自动加载）；
+   若 dev.md 有目录/编号变化，同步检查 AGENTS.md 的引用与导入仍正确。
+4. **检查方法**：`git status` 查看 `docs/for_agent/` 与 `AGENTS.md` 的变更，
+   确认本次会话的 dev.md 更新 + history 归档两者都在（提交或工作区中）。
+5. **反例（禁止）**：只写 history 不更新 dev.md（新 Agent 看不到经验）；
+   只改代码不改文档；归档后 dev.md 与代码事实不符（如存储位置/API 已变但文档仍旧）。
 

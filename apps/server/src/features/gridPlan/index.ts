@@ -51,12 +51,12 @@ export function register(app: Hono): void {
       const body: GridPlanResult = {
         ok: false,
         error: "format",
-        message: "格式错误，请按 `编号 数值1 数值2 数值3` 发送。示例：`1 1.073 1.290 0.856`",
+        message: "格式错误：type 必须为 1~7 的整数，boll 必须为三个正数（上轨/中轨/下轨，顺序任意）。示例：`1 1.073 1.290 0.856`",
       };
       return c.json(body, 400);
     }
     const result = generateGridPlan(type as GridTrendType, boll as [number, number, number], maxAmount);
-    const status = result.ok ? 200 : result.error === "format" ? 400 : 422;
-    return c.json(result, status);
+    // 业务失败统一 400（compute 的 format 错误已被上方校验拦截，不会到达此处）
+    return c.json(result, result.ok ? 200 : 400);
   });
 }

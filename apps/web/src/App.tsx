@@ -1,4 +1,4 @@
-﻿import { createElement, useEffect, useState, type ComponentType, type CSSProperties } from "react";
+﻿import { useEffect, useState, type ComponentType, type CSSProperties } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { api } from "./api";
 import type { HealthResponse, ToolMeta } from "@toolbox/shared";
@@ -8,6 +8,7 @@ import GridPlanTool from "./tools/GridPlanTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
 import CbRateTool from "./tools/CbRateTool";
 import LlmSettings from "./settings/LlmSettings";
+import LocalData from "./settings/LocalData";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
@@ -16,9 +17,11 @@ const toolPages: Record<string, ComponentType> = {
   "cb-rate": CbRateTool,
 };
 
-const createPage = (C: ComponentType) => createElement(C);
-
-/** 侧边栏菜单分组：静态项 + 按工具 id 归组的工具 */
+/** 已实现工具页渲染；未映射的工具回退到占位页 */
+function ToolPage({ t }: { t: ToolMeta }) {
+  const C = toolPages[t.id];
+  return C ? <C /> : <ToolPlaceholder tool={t} />;
+}
 interface MenuGroup {
   label: string;
   staticItems?: { name: string; path: string; icon: string }[];
@@ -26,7 +29,13 @@ interface MenuGroup {
 }
 
 const MENU_GROUPS: MenuGroup[] = [
-  { label: "设置", staticItems: [{ name: "LLM 设置", path: "/settings/llm", icon: "🤖" }] },
+  {
+    label: "设置",
+    staticItems: [
+      { name: "LLM 设置", path: "/settings/llm", icon: "🤖" },
+      { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
+    ],
+  },
   { label: "交易", toolIds: ["grid-plan", "cb-rate"] },
   { label: "小工具", toolIds: ["deepseek-share"] },
 ];
@@ -138,12 +147,9 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
             <Route path="/settings/llm" element={<LlmSettings />} />
+            <Route path="/settings/local-data" element={<LocalData />} />
             {tools.map((t) => (
-              <Route
-                key={t.id}
-                path={t.path}
-                element={toolPages[t.id] ? createPage(toolPages[t.id]) : <ToolPlaceholder tool={t} />}
-              />
+              <Route key={t.id} path={t.path} element={<ToolPage t={t} />} />
             ))}
             <Route path="*" element={<ToolPlaceholder tool={null} />} />
           </Routes>

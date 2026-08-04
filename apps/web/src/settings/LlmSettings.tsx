@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { api } from "../api";
+import { api, errMsg } from "../api";
+import { PageHeader } from "../ui";
 import type { LlmStatusResponse, LlmTestResult } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -47,7 +48,9 @@ export default function LlmSettings() {
   const refreshStatus = async () => {
     try {
       setStatus(await api.llmStatus());
-    } catch {
+    } catch (e) {
+      // 状态查询失败：显示错误（不静默吞掉）
+      setMsg({ kind: "err", text: errMsg(e) });
       setStatus(null);
     }
   };
@@ -67,10 +70,10 @@ export default function LlmSettings() {
     try {
       await api.llmSettings({ apiKey: key });
       setKeyInput("");
-      setMsg({ kind: "ok", text: "✅ API key 已保存到服务端（.env，已 gitignore）" });
+      setMsg({ kind: "ok", text: "✅ API key 已保存到服务端本地设置库（SQLite，已 gitignore）" });
       await refreshStatus();
     } catch (e) {
-      setMsg({ kind: "err", text: String(e) });
+      setMsg({ kind: "err", text: errMsg(e) });
     } finally {
       setSaving(false);
     }
@@ -84,7 +87,7 @@ export default function LlmSettings() {
       setMsg({ kind: "ok", text: "已清除 API key" });
       await refreshStatus();
     } catch (e) {
-      setMsg({ kind: "err", text: String(e) });
+      setMsg({ kind: "err", text: errMsg(e) });
     } finally {
       setSaving(false);
     }
@@ -97,7 +100,7 @@ export default function LlmSettings() {
     try {
       setTestResult(await api.llmTest());
     } catch (e) {
-      setMsg({ kind: "err", text: String(e) });
+      setMsg({ kind: "err", text: errMsg(e) });
     } finally {
       setTesting(false);
     }
@@ -126,7 +129,7 @@ export default function LlmSettings() {
         setMsg({ kind: "err", text: r.message });
       }
     } catch (e) {
-      setMsg({ kind: "err", text: String(e) });
+      setMsg({ kind: "err", text: errMsg(e) });
     } finally {
       setChatting(false);
     }
@@ -134,10 +137,10 @@ export default function LlmSettings() {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>🤖 LLM 设置（DeepSeek）</h1>
-      <p style={{ color: "#666", marginTop: "-0.4rem" }}>
-        网站公共 LLM 能力模块：配置 DeepSeek API key，供各工具复用（对话 / 测试 / 后续扩展）。
-      </p>
+      <PageHeader
+        title="🤖 LLM 设置（DeepSeek）"
+        desc="网站公共 LLM 能力模块：配置 DeepSeek API key，供各工具复用（对话 / 测试 / 后续扩展）。"
+      />
 
       {/* 状态 */}
       <div style={card}>
@@ -182,7 +185,7 @@ export default function LlmSettings() {
           </button>
         </div>
         <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.5rem" }}>
-          🔒 key 仅保存在服务端 .env（已被 .gitignore 排除），不存浏览器，不会出现在前端代码中。
+          🔒 key 仅保存在服务端本地设置库（SQLite .file/ 目录，已 gitignore），不存浏览器，不会出现在前端代码中。
         </div>
       </div>
 

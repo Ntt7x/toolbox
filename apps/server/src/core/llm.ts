@@ -8,16 +8,52 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LlmChatMessage, LlmChatResult, LlmTestResult } from "@toolbox/shared";
+import { deleteSetting, getSetting, setSetting } from "./settingsStore.js";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const RESPONSES_URL = "https://api.deepseek.com/responses";
 export const DEFAULT_MODEL = "deepseek-chat";
-export const REASONER_MODEL = "deepseek-reasoner";
 /** 联网搜索仅 deepseek-v4-flash 支持 */
 export const SEARCH_MODEL = "deepseek-v4-flash";
 const KEY_VAR = "DEEPSEEK_API_KEY";
 
-// ---------- .env 读写 ----------
+// ---------- API key 存储（本地设置数据公共模块） ----------
+
+/** 设置项 key（本地设置数据 / settings:llm.apiKey） */
+const LLM_KEY_SETTING = "llm.apiKey";
+
+/**
+ * 读取已配置的 API key（未配置返回 null）。
+ * 存储：本地设置数据（settingsStore）。兼容迁移：若设置库为空但旧 .env
+ * 仍有 DEEPSEEK_API_KEY，则一次性迁入设置库并清理 .env。
+ */
+export function loadApiKey(): string | null {
+  const fromSettings = getSetting<string>(LLM_KEY_SETTING)?.trim();
+  if (fromSettings) return fromSettings;
+
+  // 旧 .env 一次性迁移
+  const legacy = readLegacyEnvKey();
+  if (legacy) {
+    setSetting(LLM_KEY_SETTING, legacy);
+    removeLegacyEnvKey();
+    return legacy;
+  }
+  return null;
+}
+
+/** 保存 API key（写入本地设置数据；清理旧 .env） */
+export function saveApiKey(key: string): void {
+  setSetting(LLM_KEY_SETTING, key.trim());
+  removeLegacyEnvKey();
+}
+
+/** 清除 API key（设置库 + 旧 .env） */
+export function clearApiKey(): void {
+  deleteSetting(LLM_KEY_SETTING);
+  removeLegacyEnvKey();
+}
+
+// ---------- 旧 .env 兼容（仅一次性迁移用） ----------
 
 const envPath = (): string => join(process.cwd(), ".env");
 
@@ -35,28 +71,16 @@ function writeEnvFile(content: string): void {
   writeFileSync(envPath(), content, "utf8");
 }
 
-/** 读取已配置的 API key（未配置返回 null） */
-export function loadApiKey(): string | null {
+function readLegacyEnvKey(): string | null {
   const content = readEnvFile();
   const m = content.match(/^DEEPSEEK_API_KEY=(.*)$/m);
   const key = m ? m[1].trim() : "";
   return key.length > 0 ? key : null;
 }
 
-/** 保存 API key 到 .env */
-export function saveApiKey(key: string): void {
+function removeLegacyEnvKey(): void {
   const content = readEnvFile();
-  const line = `${KEY_VAR}=${key}`;
-  if (new RegExp(`^${KEY_VAR}=.*$`, "m").test(content)) {
-    writeEnvFile(content.replace(new RegExp(`^${KEY_VAR}=.*$`, "m"), line));
-  } else {
-    writeEnvFile(content ? `${content.trimEnd()}\n${line}\n` : `${line}\n`);
-  }
-}
-
-/** 从 .env 清除 API key */
-export function clearApiKey(): void {
-  const content = readEnvFile();
+  if (!content.includes(KEY_VAR)) return;
   writeEnvFile(content.replace(new RegExp(`^${KEY_VAR}=.*\\n?`, "m"), ""));
 }
 
@@ -69,6 +93,14 @@ interface ChatOptions {
   json?: boolean;
   /** 启用联网搜索（Responses API + 内置 web_search 工具，服务端执行） */
   search?: boolean;
+  /** 外部取消信号（任务取消/超时中断 LLM 请求） */
+  signal?: AbortSignal;
+}
+
+/** 组合外部信号与内置超时（AbortSignal.any：任一触发即中断） */
+function buildSignal(opts: ChatOptions, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
 }
 
 interface DeepSeekResponse {
@@ -106,7 +138,7 @@ async function chatCompletion(messages: LlmChatMessage[], opts: ChatOptions): Pr
         stream: false,
         ...(opts.json ? { response_format: { type: "json_object" as const } } : {}),
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: buildSignal(opts, 120_000),
     });
     const data = (await res.json().catch(() => null)) as DeepSeekResponse | null;
     if (!res.ok) {
@@ -162,7 +194,7 @@ async function chatSearch(messages: LlmChatMessage[], opts: ChatOptions): Promis
         ...(opts.json ? { text: { format: { type: "json_object" as const } } } : {}),
         stream: false,
       }),
-      signal: AbortSignal.timeout(180_000),
+      signal: buildSignal(opts, 180_000),
     });
     const data = (await res.json().catch(() => null)) as {
       error?: { message?: string };
