@@ -42,7 +42,8 @@ export function register(app: Hono): void {
     return c.json(body);
   });
 
-  // 每日变动探查（增量）：LLM 后台任务 + 缓存 TTL 30 分钟
+  /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查） */
+const DAILY_CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
   app.post(`${API_PREFIX}/tools/reverse-repo/daily`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { force?: unknown } | null;
     const force = raw?.force === true;
@@ -50,7 +51,7 @@ export function register(app: Hono): void {
     if (!force) {
       const cached = kvGet<ReverseRepoDailyResponse & { _at?: string }>("reverseRepo:daily");
       const at = cached?._at ? Date.parse(cached._at) : NaN;
-      if (cached && Number.isFinite(at) && Date.now() - at < 30 * 60 * 1000) {
+      if (cached && Number.isFinite(at) && Date.now() - at < DAILY_CACHE_TTL_MS) {
         const hit: AsyncTaskResult<ReverseRepoDailyResult> = {
           ok: true,
           taskId: "reverse-repo-daily-cache",

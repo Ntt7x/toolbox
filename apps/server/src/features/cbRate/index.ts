@@ -24,11 +24,11 @@ registerDataSource({
   name: "cbRate:",
   page: "央行利率分析",
   tag: "分析缓存",
-  description: "利率分析结果持久化缓存（Key-结构化 Value，TTL 24h 自动过期）",
+  description: "利率分析结果持久化缓存（Key-结构化 Value，TTL 2 年）",
 });
 
-/** 缓存 TTL：24 小时（超期命中视为未命中，重新查询并刷新缓存） */
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+/** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
+export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 /** 缓存 key：参数归一化（banks 排序）后的查询组合。v2 = 防幻觉/数据模式/缺失提示等 schema 升级（旧缓存自动失效） */
 export function cbRateCacheKey(req: CbRateRequest): string {

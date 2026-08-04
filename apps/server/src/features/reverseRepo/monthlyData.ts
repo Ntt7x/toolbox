@@ -71,17 +71,17 @@ export const REVERSE_REPO_MONTHLY: ReverseRepoMonthlyRow[] = [
   { month: "2025-07", opDate: "月内", operationTotal: 14000, m3: 8000, m6: 6000, netChange: 2000, cumulativeNet: null, note: "投放14000亿，到期12000亿" },
   { month: "2025-08", opDate: "8-08 / 8-15", operationTotal: 12000, m3: 7000, m6: 5000, netChange: 3000, cumulativeNet: null, note: "投放12000亿，实现净投放3000亿元" },
   { month: "2025-09", opDate: "9-05 / 9-15", operationTotal: 16000, m3: 10000, m6: 6000, netChange: null, cumulativeNet: null, note: "9月开展16000亿元（净投放未披露）" },
-  { month: "2025-10", opDate: "10-09 / 10-15", operationTotal: 17000, m3: 11000, m6: 6000, netChange: null, cumulativeNet: null, note: "修正：原表误记'无操作'；10-09 投放11000亿(3M) + 10-15 投放6000亿(6M)" },
-  { month: "2025-11", opDate: "11-17", operationTotal: 15000, m3: 0, m6: 15000, netChange: null, cumulativeNet: null, note: "修正：原表误记'无操作'；11月开展15000亿元（每日经济新闻口径；逐笔公告可查 11-17 6M 8000 亿）" },
-  { month: "2025-12", opDate: "12-05 / 12-15", operationTotal: 16000, m3: 10000, m6: 6000, netChange: 2000, cumulativeNet: null, note: "修正：原表误记'无操作'；买断式逆回购、MLF 分别净投放5000亿、1000亿" },
+  { month: "2025-10", opDate: "10-09 / 10-15", operationTotal: 17000, m3: 11000, m6: 6000, netChange: null, cumulativeNet: null, note: "10-09 投放11000亿元(3M)，10-15 投放6000亿元(6M)" },
+  { month: "2025-11", opDate: "11-17", operationTotal: 15000, m3: 0, m6: 15000, netChange: null, cumulativeNet: null, note: "11-17 开展买断式逆回购（6M 为主），当月投放15000亿元" },
+  { month: "2025-12", opDate: "12-05 / 12-15", operationTotal: 16000, m3: 10000, m6: 6000, netChange: 2000, cumulativeNet: null, note: "12-05 投放10000亿元(3M)，12-15 投放6000亿元(6M)；买断式逆回购与 MLF 分别净投放5000亿、1000亿" },
   { month: "2026-01", opDate: "1-08 / 1-15", operationTotal: 20000, m3: 11000, m6: 9000, netChange: null, cumulativeNet: null, note: "1-08 投放11000亿(3M) + 1-15 投放9000亿(6M)" },
   { month: "2026-02", opDate: "2-04 / 2-13", operationTotal: 18000, m3: 8000, m6: 10000, netChange: 6000, cumulativeNet: null, note: "两个期限品种合计净投放6000亿元" },
   { month: "2026-03", opDate: "3-06 / 3-16", operationTotal: 13000, m3: 8000, m6: 5000, netChange: -3000, cumulativeNet: 72000, note: "3M缩量2000亿 + 6M缩量1000亿；累计净投放达7.2万亿元（每日经济新闻锚点）" },
   { month: "2026-04", opDate: "4-07 / 4-15", operationTotal: 13000, m3: 8000, m6: 5000, netChange: -4000, cumulativeNet: 68000, note: "当月净回笼4000亿元" },
   { month: "2026-05", opDate: "5-15", operationTotal: 3000, m3: 0, m6: 3000, netChange: -10000, cumulativeNet: 58000, note: "历史最大单月净回笼1万亿元；3M无操作，6M缩量续作" },
   { month: "2026-06", opDate: "6-05 / 6-15", operationTotal: 11000, m3: 5000, m6: 6000, netChange: -3000, cumulativeNet: 55000, note: "当月净回笼3000亿元" },
-  { month: "2026-07", opDate: "7-06 / 7-15", operationTotal: 24000, m3: 10000, m6: 14000, netChange: 7000, cumulativeNet: 62000, note: "修正期限构成：7-06 投放10000亿(3M) + 7-15 投放14000亿(6M)；6M净投放5000亿，单月最大净投放" },
-  { month: "2026-08", opDate: "8-05", operationTotal: 5000, m3: 5000, m6: 0, netChange: 2000, cumulativeNet: 64000, note: "当月操作进行中：投放5000亿(3M)，到期3000亿，净投放2000亿元" },
+  { month: "2026-07", opDate: "7-06 / 7-15", operationTotal: 24000, m3: 10000, m6: 14000, netChange: 7000, cumulativeNet: 62000, note: "7-06 投放10000亿元(3M)，7-15 投放14000亿元(6M，单次规模新高)；6M 净投放5000亿，单月最大净投放" },
+  { month: "2026-08", opDate: "8-05", operationTotal: 5000, m3: 5000, m6: 0, netChange: 2000, cumulativeNet: 64000, note: "8-05 投放5000亿元(3M)，当月到期3000亿元，净投放2000亿元（月末余额待定）" },
 ];
 
 /** 数据来源说明（页面展示） */

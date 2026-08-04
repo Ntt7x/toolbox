@@ -24,11 +24,11 @@ registerDataSource({
   name: "treasuryFx:",
   page: "国债汇率分析",
   tag: "分析缓存",
-  description: "国债汇率分析结果持久化缓存（Key-结构化 Value，TTL 24h 自动过期）",
+  description: "国债汇率分析结果持久化缓存（Key-结构化 Value，TTL 2 年）",
 });
 
-/** 缓存 TTL：24 小时 */
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+/** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
+export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 /** 缓存 key：参数归一化。v1 = 初始 schema */
 export function treasuryFxCacheKey(req: TreasuryFxRequest): string {
