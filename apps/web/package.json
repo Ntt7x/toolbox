@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@toolbox/web",
   "version": "0.1.0",
   "private": true,
@@ -12,7 +12,8 @@
   "dependencies": {
     "@toolbox/shared": "workspace:*",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@types/react": "^19",
