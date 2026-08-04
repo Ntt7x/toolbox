@@ -45,9 +45,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - `chat(messages, { search?, json? })`：search=联网搜索（Responses API + web_search，服务端执行，
   仅 deepseek-v4-flash）；json=response_format json_object；两者可组合
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
-- **程序性提示词单一来源**（cb-rate/grid-plan）：LLM 提示词模板作为常量放
-  `packages/shared`（`CB_RATE_SYSTEM_PROMPT_TEMPLATE` 等），server 拼接发送、web 页面
-  「查看/复制程序性提示词」展示**同一个常量**——改提示词只改 shared 一处，页面与实发永不失步
+- **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
+  默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
+  服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示
+  走**同一条链路**（`GET /api/prompts/:id` 返回 template + rendered）——改提示词
+  改数据库即生效（或 API/本地数据管理页编辑），页面与实发永不失步；占位符式模板
+  （如 cb-rate.system 的 {banksText}/{calendarJson}/{searchNote}/{calendarRule}）
+  支持 search/日历组合，grid-plan 为无占位符全文
 - API key 存服务端本地设置库（`settings:llm.apiKey`，SQLite `.file/`，已 gitignore）；旧 `.env` 仅一次性迁移
 - 结构化工具（如 cb-rate）用 search 默认开 + JSON 输出 + 提示词给出严格 JSON schema，
   解析容忍杂质包裹；失败时保留 raw 兜底展示

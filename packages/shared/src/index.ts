@@ -282,6 +282,39 @@ export interface ShareExtractErrorResponse {
 export type ShareExtractResult = ShareExtractResponse | ShareExtractErrorResponse;
 
 // ============================================================
+// 提示词（统一存储于「本地设置数据」settings:prompt.*）
+// ============================================================
+
+/** 提示词元信息（列表项） */
+export interface PromptMeta {
+  /** 稳定 id，如 cb-rate.system */
+  id: string;
+  /** settingsStore 存储键（不含 settings: 前缀） */
+  key: string;
+  description: string;
+  /** 当前模板文本 */
+  template: string;
+}
+
+/** 提示词列表响应 */
+export interface PromptsListResponse {
+  ok: true;
+  prompts: PromptMeta[];
+}
+
+/** 提示词详情（模板 + 默认参数渲染预览，页面展示用） */
+export interface PromptDetailResponse {
+  ok: true;
+  id: string;
+  template: string;
+  /** 默认参数渲染后的完整可读文本（无占位符的提示词与 template 相同） */
+  rendered: string;
+}
+
+export type PromptsListResult = PromptsListResponse | { ok: false; message: string };
+export type PromptDetailResult = PromptDetailResponse | { ok: false; message: string };
+
+// ============================================================
 // 央行利率分析（cb-rate，LLM 驱动）
 // ============================================================
 
@@ -290,59 +323,6 @@ export type CbRatePeriod = "month" | "year";
 
 /** 央行动作类型 */
 export type CbAction = "hike" | "cut" | "hold" | "mixed";
-
-// ---------- 程序性提示词（单一来源：server 拼接发送，web 页面展示同一常量） ----------
-
-/** 九大央行固定清单文本（提示词与白名单共用） */
-export const CB_RATE_BANKS_TEXT =
-  "fed 美联储 | ecb 欧洲央行 | boj 日本央行 | boe 英国央行 | boc 加拿大央行 | " +
-  "rba 澳大利亚央行 | rbnz 新西兰央行 | snb 瑞士央行 | norges 挪威央行";
-
-/** 联网搜索模式注记（占位符 {searchNote}） */
-export const CB_RATE_SEARCH_NOTE_DEFAULT =
-  "**联网搜索说明**\n4. 本次调用已启用联网搜索：优先采用搜索结果中的最新信息；回答中若引用搜索来源，保留类似 [reference:N] 的引用标记。\n5. 必须明确标注数据截至日期 asOf（YYYY-MM-DD），即搜索结果中最新的信息日期。";
-
-/** 知识模式注记（防幻觉；占位符 {searchNote}） */
-export const CB_RATE_SEARCH_NOTE_KNOWLEDGE =
-  "**知识模式说明（防幻觉）**\n4. 本次调用未启用联网搜索，只能基于你的训练知识作答。\n5. 你的训练知识截止于约 2025 年中，而今天已到 2026 年：**严禁编造今天之后或超出你知识范围的会议与决策**（尤其不得虚构某年某月某日的加息/降息）；拿不准的信息一律省略或用 \"不确定\" 标注。\n6. 必须明确标注 asOf 为你知识的最新日期（YYYY-MM-DD，通常接近 2025 年中），并在 summary 中注明\"数据基于训练知识、时效有限，建议开启联网搜索获取实时数据\"。\n7. 额外输出字段 knowledgeCutoff（YYYY-MM）表示你知识覆盖的最新月份。";
-
-/** system prompt 模板（占位符：{banksText} {calendarJson} {searchNote} {calendarRule}） */
-export const CB_RATE_SYSTEM_PROMPT_TEMPLATE = `你是一个央行利率政策分析助手，专精于全球主要央行的利率政策时间线。
-九大央行固定清单（必须全部覆盖，除非用户指定部分）：{banksText}
-
-要求：
-1. 基于你的知识给出最准确、最新的信息；不确定的字段明确省略或标注"不确定"。
-2. 必须明确标注数据截至日期 asOf（YYYY-MM-DD）。
-3. 输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
-{
-  "asOf": "YYYY-MM-DD",
-  "summary": "政策取向小结：按【已加息 / 多次加息后暂停 / 按兵不动】分类，并提示近期会议观察窗口",
-  "banks": [
-    {
-      "id": "fed",
-      "name": "美联储",
-      "latestRate": "3.50%–3.75%",
-      "action": "hike|cut|hold|mixed",
-      "actionDesc": "决策描述（含日期与基点数），如：7月30日维持利率不变（连续第五次按兵不动）",
-      "details": "决议详情：投票结果、内部分歧、行长表态（有则填，无则省略）",
-      "nextMeeting": "下次会议时间（有则填，无则省略）",
-      "outlook": "前瞻指引 / 市场预期（有则填，无则省略）",
-      "updatedAt": "YYYY-MM-DD 最新一次利率变动日期（本月/今年无变动可省略）"
-    }
-  ]{calendarJson}
-}
-{searchNote}
-规则：
-- action 取值：hike=加息，cut=降息，hold=按兵不动，mixed=方向混合（如既有加息又有降息）。
-- {calendarRule}
-- banks 至少覆盖用户要求的所有央行（默认全部九家）。`;
-
-/** 默认完整版提示词（联网搜索 + 生成会议日历），供页面「程序性提示词」展示与复制 */
-export const CB_RATE_SYSTEM_PROMPT: string = CB_RATE_SYSTEM_PROMPT_TEMPLATE
-  .replace("{banksText}", CB_RATE_BANKS_TEXT)
-  .replace("{calendarJson}", ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]')
-  .replace("{searchNote}", CB_RATE_SEARCH_NOTE_DEFAULT)
-  .replace("{calendarRule}", "calendar 列出近期（未来 2 个月内）各央行议息会议日历。");
 
 /** 单家央行分析结果 */
 export interface CbRateBank {

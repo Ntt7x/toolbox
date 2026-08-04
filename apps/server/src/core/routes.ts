@@ -10,8 +10,11 @@ import {
   type LlmChatRequest,
   type LlmSettingsRequest,
   type LlmStatusResponse,
+  type PromptDetailResult,
+  type PromptsListResult,
 } from "@toolbox/shared";
 import { DEFAULT_MODEL, chat, clearApiKey, loadApiKey, saveApiKey, testConnection } from "./llm.js";
+import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./prompts.js";
 
 export function registerLlmRoutes(app: Hono): void {
   app.get(`${API_PREFIX}/llm/status`, (c) => {
@@ -54,5 +57,43 @@ export function registerLlmRoutes(app: Hono): void {
       ...(raw.search ? { search: true } : {}),
     });
     return c.json(result, result.ok ? 200 : 400);
+  });
+}
+
+/** 提示词管理路由（统一存储于「本地设置数据」settings:prompt.*） */
+export function registerPromptRoutes(app: Hono): void {
+  // 列表（含全部提示词模板）
+  app.get(`${API_PREFIX}/prompts`, (c) => {
+    const body: PromptsListResult = { ok: true, prompts: listPrompts() };
+    return c.json(body);
+  });
+
+  // 详情（模板 + 默认参数渲染预览，页面展示用）
+  app.get(`${API_PREFIX}/prompts/:id`, (c) => {
+    const detail = getPromptDetail(c.req.param("id"));
+    if (!detail) return c.json({ ok: false, message: "未知提示词 id" }, 404);
+    const body: PromptDetailResult = { ok: true, ...detail };
+    return c.json(body);
+  });
+
+  // 更新模板
+  app.put(`${API_PREFIX}/prompts/:id`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { template?: unknown } | null;
+    const template = raw?.template;
+    if (typeof template !== "string" || template.trim() === "") {
+      return c.json({ ok: false, message: "template 必须是非空字符串" }, 400);
+    }
+    if (!updatePrompt(c.req.param("id"), template)) {
+      return c.json({ ok: false, message: "未知提示词 id" }, 404);
+    }
+    return c.json({ ok: true, id: c.req.param("id") });
+  });
+
+  // 恢复默认
+  app.post(`${API_PREFIX}/prompts/:id/reset`, (c) => {
+    if (!resetPrompt(c.req.param("id"))) {
+      return c.json({ ok: false, message: "未知提示词 id" }, 404);
+    }
+    return c.json({ ok: true, id: c.req.param("id") });
   });
 }

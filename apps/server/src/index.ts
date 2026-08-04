@@ -16,7 +16,7 @@ import {
   type ToolListResponse,
   type ToolMeta,
 } from "@toolbox/shared";
-import { registerLlmRoutes } from "./core/routes.js";
+import { registerLlmRoutes, registerPromptRoutes } from "./core/routes.js";
 import { registerTaskRoutes } from "./core/sse.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
@@ -49,8 +49,9 @@ app.get(`${API_PREFIX}/tools`, (c) => {
   return c.json(body);
 });
 
-// 下层公共能力路由（LLM 设置 + 任务 SSE/取消）
+// 下层公共能力路由（LLM 设置 + 提示词管理 + 任务 SSE/取消）
 registerLlmRoutes(app);
+registerPromptRoutes(app);
 registerTaskRoutes(app);
 
 // 上层业务路由

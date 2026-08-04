@@ -1,9 +1,8 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import type { CbAction, CbRatePeriod, CbRateBank, CbRateResponse } from "@toolbox/shared";
-import { CB_RATE_SYSTEM_PROMPT } from "@toolbox/shared";
 
 // ---------- 九大央行选项 ----------
 
@@ -103,6 +102,8 @@ export default function CbRateTool() {
   const [showRaw, setShowRaw] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
+  // 程序性提示词（统一数据链路：API → 本地设置数据）
+  const [promptText, setPromptText] = useState<string | null>(null);
   // 后台异步任务（SSE 推送 + 轮询兜底 + sessionStorage 恢复 + 停止按钮）
   const task = useAsyncTask<CbRateResponse>("cbRateTaskId", api.cbRateTaskStatus, api.cancelTask);
   const [localErr, setLocalErr] = useState<string | null>(null); // 本地一次性错误（非任务错误）
@@ -149,14 +150,27 @@ export default function CbRateTool() {
   };
 
   const copyPrompt = async () => {
+    if (!promptText) return;
     try {
-      await navigator.clipboard.writeText(CB_RATE_SYSTEM_PROMPT);
+      await navigator.clipboard.writeText(promptText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // 剪贴板不可用（非 https/权限）：静默忽略
     }
   };
+
+  // 挂载时从「本地设置数据」加载程序性提示词（展示/复制）
+  useEffect(() => {
+    void api
+      .promptDetail("cb-rate.system")
+      .then((r) => {
+        if (r.ok) setPromptText(r.rendered);
+      })
+      .catch(() => {
+        // 加载失败静默：提示词区块显示占位文案
+      });
+  }, []);
 
   return (
     <div>
@@ -236,10 +250,12 @@ export default function CbRateTool() {
             </button>
           )}
           <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-            本功能即由该 LLM 提示词固化而来（默认版：联网搜索 + 会议日历），保留原文供对照 / 复用于其它 LLM
+            本功能即由该 LLM 提示词固化而来（默认版：联网搜索 + 会议日历）；提示词统一存储于「本地设置数据」，可编辑与重置
           </span>
         </div>
-        {showPrompt && <CodeBlock maxHeight="24rem">{CB_RATE_SYSTEM_PROMPT}</CodeBlock>}
+        {showPrompt && (
+          <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
+        )}
       </div>
 
       {/* 后台任务进行中提示（可切走页面，稍后回来查看） */}

@@ -1,7 +1,6 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
-import { GRID_PLAN_PROMPT } from "./gridPrompt";
 import type {
   GridPlanRequest,
   GridPlanResponse,
@@ -90,20 +89,35 @@ export default function GridPlanTool() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
+  // 程序性提示词（统一数据链路：API → 本地设置数据）
+  const [promptText, setPromptText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GridPlanResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   /** 复制原始提示词到剪贴板 */
   const copyPrompt = async () => {
+    if (!promptText) return;
     try {
-      await navigator.clipboard.writeText(GRID_PLAN_PROMPT);
+      await navigator.clipboard.writeText(promptText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       setErr("复制失败，请手动选择文本复制");
     }
   };
+
+  // 挂载时从「本地设置数据」加载程序性提示词（展示/复制）
+  useEffect(() => {
+    void api
+      .promptDetail("grid-plan.system")
+      .then((r) => {
+        if (r.ok) setPromptText(r.rendered);
+      })
+      .catch(() => {
+        // 加载失败静默：提示词区块显示占位文案
+      });
+  }, []);
 
   /** 输入股票代码 → 自动获取月线 BOLL → 填充输入框并自动生成计划 */
   const fetchQuote = async () => {
@@ -303,7 +317,7 @@ export default function GridPlanTool() {
           </span>
         </div>
         {showPrompt && (
-          <CodeBlock maxHeight="24rem">{GRID_PLAN_PROMPT}</CodeBlock>
+          <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
         )}
       </div>
 

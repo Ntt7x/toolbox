@@ -14,6 +14,8 @@
   type LlmTestResult,
   type LocalDataResult,
   type LocalDataUpdateRequest,
+  type PromptDetailResult,
+  type PromptsListResult,
   type QuoteResult,
   type ShareExtractRequest,
   type ShareExtractResult,
@@ -80,4 +82,17 @@ export const api = {
   llmSettings: (req: LlmSettingsRequest) => request<LlmSettingsResponse>("/llm/settings", jsonInit("POST", req)),
   llmTest: () => request<LlmTestResult>("/llm/test", jsonInit("POST", {})),
   llmChat: (req: LlmChatRequest) => request<LlmChatResult>("/llm/chat", jsonInit("POST", req)),
+  // 提示词（统一存储于「本地设置数据」）
+  prompts: () => request<PromptsListResult>("/prompts"),
+  promptDetail: (id: string) => request<PromptDetailResult>(`/prompts/${encodeURIComponent(id)}`),
+  promptUpdate: (id: string, template: string) =>
+    request<{ ok: true; id: string } | { ok: false; message: string }>(
+      `/prompts/${encodeURIComponent(id)}`,
+      jsonInit("PUT", { template }),
+    ),
+  promptReset: (id: string) =>
+    request<{ ok: true; id: string } | { ok: false; message: string }>(
+      `/prompts/${encodeURIComponent(id)}/reset`,
+      jsonInit("POST", {}),
+    ),
 };

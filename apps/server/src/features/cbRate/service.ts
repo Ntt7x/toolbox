@@ -6,18 +6,19 @@
 
 import { chat, DEFAULT_MODEL } from "../../core/llm.js";
 import {
-  CB_RATE_BANKS_TEXT,
   CB_RATE_SEARCH_NOTE_DEFAULT,
   CB_RATE_SEARCH_NOTE_KNOWLEDGE,
-  CB_RATE_SYSTEM_PROMPT_TEMPLATE,
-  type CbAction,
-  type CbRateBank,
-  type CbRatePeriod,
-  type CbRateRequest,
-  type CbRateResult,
+  getPromptTemplate,
+} from "../../core/prompts.js";
+import type {
+  CbAction,
+  CbRateBank,
+  CbRatePeriod,
+  CbRateRequest,
+  CbRateResult,
 } from "@toolbox/shared";
 
-/** 九大央行稳定清单（提示词与白名单共用；banksText 与 shared 常量保持一致） */
+/** 九大央行稳定清单（白名单校验用；提示词 {banksText} 由 prompts 注册表提供） */
 const BANKS: { id: string; name: string }[] = [
   { id: "fed", name: "美联储" },
   { id: "ecb", name: "欧洲央行" },
@@ -32,10 +33,11 @@ const BANKS: { id: string; name: string }[] = [
 
 const VALID_ACTIONS: CbAction[] = ["hike", "cut", "hold", "mixed"];
 
-/** 基于共享模板构建 system prompt（单一来源：shared 常量，页面展示同一文本） */
+/** 基于「本地设置数据」中的提示词模板构建 system prompt（占位符替换，支持 search/日历四组合） */
 function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
-  return CB_RATE_SYSTEM_PROMPT_TEMPLATE
-    .replace("{banksText}", CB_RATE_BANKS_TEXT)
+  const banksText = BANKS.map((b) => `${b.id} ${b.name}`).join(" | ");
+  return getPromptTemplate("cb-rate.system")
+    .replace("{banksText}", banksText)
     .replace(
       "{calendarJson}",
       withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : "",
@@ -63,7 +65,10 @@ function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string)
   const timeNote = month
     ? `${periodLabel}当月（自然月，截至月末）`
     : `${periodLabel}（截至今天 ${today}）`;
-  return `今天是 ${today}。分析${timeNote}${scope}的关键利率政策时间线（加息、降息），输出 JSON。`;
+  return getPromptTemplate("cb-rate.user")
+    .replace("{date}", today)
+    .replace("{timeNote}", timeNote)
+    .replace("{scope}", scope);
 }
 
 /** 规范化 LLM 返回的银行列表：过滤未知 id、校验 action（不静默篡改，异常加 flags）、补齐名称 */
