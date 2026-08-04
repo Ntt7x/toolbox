@@ -11,26 +11,25 @@ import { robustJsonParse } from "../../core/jsonParse.js";
 import type {
   ReverseRepoDailyResult,
   ReverseRepoMonthlyResponse,
-  ReverseRepoMonthlyRow,
 } from "@toolbox/shared";
-import { REVERSE_REPO_MONTHLY } from "./monthlyData.js";
+import { REVERSE_REPO_MONTHLY, REVERSE_REPO_OPERATIONS, REVERSE_REPO_SOURCE } from "./monthlyData.js";
 
 function todayStr(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-/** 月度存量数据：月度表 + 余额序列（余额非空的月份）+ 截至月份 */
+/** 存量数据：逐笔流水 + 月度汇总（投放/净投放/累计净投放）+ 余额曲线（累计净投放 = 存量余额） */
 export function getMonthlyData(): ReverseRepoMonthlyResponse {
-  const rows: ReverseRepoMonthlyRow[] = REVERSE_REPO_MONTHLY;
-  const series = rows
-    .filter((r) => r.monthEndBalance !== null && r.monthEndBalance !== undefined)
-    .map((r) => ({ month: r.month, balance: r.monthEndBalance as number }));
-  const last = rows[rows.length - 1];
+  const series = REVERSE_REPO_MONTHLY
+    .filter((r) => r.cumulativeNet !== null && r.cumulativeNet !== undefined)
+    .map((r) => ({ month: r.month, balance: r.cumulativeNet as number }));
+  const last = REVERSE_REPO_MONTHLY[REVERSE_REPO_MONTHLY.length - 1];
   return {
     ok: true,
-    source: "权威数据（中国人民银行买断式逆回购业务公告，2024.10-2026.8）",
-    rows,
+    source: REVERSE_REPO_SOURCE,
+    operations: REVERSE_REPO_OPERATIONS,
+    rows: REVERSE_REPO_MONTHLY,
     series,
     asOf: last?.month ?? todayStr(),
   };

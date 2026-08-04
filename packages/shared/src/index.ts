@@ -488,30 +488,48 @@ export type TreasuryFxResult = TreasuryFxResponse | TreasuryFxErrorResponse;
 // 增量：每日变动探查（LLM）+ 当月变动量说明
 // ============================================================
 
-/** 单月买断式逆回购操作与余额（金额单位：亿元） */
+/** 单笔买断式逆回购操作（精确到年月日；日期未知标注"月内择机操作"） */
+export interface ReverseRepoOperation {
+  /** 操作日期：YYYY-MM-DD 或 "YYYY-MM-（月内）" */
+  date: string;
+  /** 期限：3M（91天左右）/ 6M（182天左右） */
+  term: string;
+  /** 金额（亿元） */
+  amount: number;
+  /** 公告/来源 */
+  source?: string;
+}
+
+/** 单月买断式逆回购汇总（金额单位：亿元；每日经济新闻口径，推算补充） */
 export interface ReverseRepoMonthlyRow {
   /** 月份 YYYY-MM */
   month: string;
+  /** 操作日期（如 "10-28" / "月内" / "6-06 / 6-16"） */
+  opDate: string;
   /** 当月操作总量 */
   operationTotal: number;
   /** 其中 3 个月期 */
   m3: number;
   /** 其中 6 个月期 */
   m6: number;
-  /** 月末存量余额（暂缺为 null） */
-  monthEndBalance: number | null;
-  /** 备注 */
+  /** 当月净投放（未披露为 null） */
+  netChange: number | null;
+  /** 累计净投放 = 存量余额（未披露为 null；以此绘制余额曲线） */
+  cumulativeNet: number | null;
+  /** 备注/数据依据 */
   note?: string;
 }
 
-/** 月度存量响应 */
+/** 月度存量响应（逐笔流水 + 月度汇总 + 余额曲线） */
 export interface ReverseRepoMonthlyResponse {
   ok: true;
   /** 数据来源说明 */
   source: string;
-  /** 月度操作/余额表 */
+  /** 逐笔操作流水（精确到年月日） */
+  operations: ReverseRepoOperation[];
+  /** 月度汇总表（投放/净投放/累计净投放） */
   rows: ReverseRepoMonthlyRow[];
-  /** 余额序列（仅含余额非空月份） */
+  /** 余额序列（累计净投放，非空月份；= 存量余额） */
   series: { month: string; balance: number }[];
   /** 数据截至月份 */
   asOf: string;

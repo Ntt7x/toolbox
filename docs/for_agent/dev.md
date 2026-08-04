@@ -50,9 +50,11 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **DeepSeek 联网搜索（Responses API + web_search）耗时 8~10 分钟是常态**（多步搜索），
   后台任务超时需留足（≥10 分钟）；前端「停止分析」可随时中断；长超时在此环境
   （Node 24 + tsx watch）偶发不触发（任务最终 done/TTL 清理兜底），属已知现象
-- **逆回购余额（reverse-repo）存量部分用权威种子数据**（`features/reverseRepo/monthlyData.ts`，
-  2024.10-2026.8 月度操作/余额表，用户提供），GET /tools/reverse-repo/monthly 直接返回，
-  不调 LLM；增量（每日变动探查）走 LLM 搜索（reverse-repo.daily 提示词）
+- **逆回购余额（reverse-repo）存量部分用权威种子数据**（`features/reverseRepo/monthlyData.ts`）：
+  页面仅关注「买断式逆回购」；数据结构 = 逐笔操作流水（精确到年月日，41 笔）+ 月度汇总
+  （投放/净投放/累计净投放，每日经济新闻口径推算补充）；**存量余额 = 累计净投放**
+  （2026-03 锚点 7.2 万亿元，与对话中存量 6.3 万亿口径一致）；数据经用户多轮修订
+  （2025-10/11/12 原误记"无操作"已修正、2026-07 期限构成已修正）
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
   默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
   服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示

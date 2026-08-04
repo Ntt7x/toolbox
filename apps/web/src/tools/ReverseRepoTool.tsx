@@ -6,6 +6,7 @@ import type {
   ReverseRepoDailyResponse,
   ReverseRepoMonthlyResult,
   ReverseRepoMonthlyRow,
+  ReverseRepoOperation,
 } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -83,7 +84,7 @@ function BalanceChart({ series }: { series: { month: string; balance: number }[]
 }
 
 export default function ReverseRepoTool() {
-  // 存量月度数据（权威种子，直接读取）
+  // 存量数据（权威种子，直接读取）
   const [monthly, setMonthly] = useState<ReverseRepoMonthlyResult | null>(null);
   const [monthlyErr, setMonthlyErr] = useState<string | null>(null);
   // 增量每日变动
@@ -133,7 +134,7 @@ export default function ReverseRepoTool() {
     setTimeout(() => setChatHint(false), 8000);
   };
 
-  // 挂载：读取存量月度数据 + 每日探查提示词
+  // 挂载：读取存量数据 + 每日探查提示词
   useEffect(() => {
     void api
       .reverseRepoMonthly()
@@ -150,32 +151,39 @@ export default function ReverseRepoTool() {
   return (
     <div>
       <PageHeader
-        title="🏛️ 逆回购余额"
-        desc="央行买断式逆回购（2024 年 10 月推出的中期流动性工具，3M/6M）存量余额跟踪：月度操作/余额表 + 存量余额曲线（权威数据）；每日变动量探查 + 当月变动量说明（LLM 增量）。"
+        title="🏛️ 买断式逆回购余额"
+        desc="央行买断式逆回购（2024 年 10 月推出的中期流动性工具，3M/6M）存量余额跟踪：逐笔操作流水 + 月度汇总 + 存量余额曲线（累计净投放口径，权威数据）；每日变动量探查 + 当月变动量说明（LLM 增量）。仅关注买断式逆回购。"
       />
 
-      {/* 存量部分：月度操作/余额 + 曲线 */}
+      {/* 存量部分 */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📊 存量余额（月度操作/余额，权威数据）</span>
+          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📊 存量余额（买断式逆回购）</span>
           <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-            数据来源：中国人民银行买断式逆回购业务公告（2024.10 - 2026.8）
+            存量余额 = 累计净投放（2026-03 锚点 7.2 万亿元）；逐笔与月度数据经多轮修订整合
           </span>
         </div>
         {monthlyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {monthlyErr}</div>}
         {monthly && monthly.ok && (
           <div style={{ marginTop: "0.8rem" }}>
-            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>📈 存量逆回购余额曲线（亿元，月末余额）</div>
+            <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "0.6rem" }}>{monthly.source}</div>
+
+            {/* 余额曲线 */}
+            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>📈 买断式逆回购存量余额曲线（亿元，累计净投放）</div>
             <BalanceChart series={monthly.series} />
-            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>📋 月度操作流水表（金额：亿元）</div>
+
+            {/* 月度汇总表 */}
+            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>📋 月度汇总表（亿元；每日经济新闻口径，推算补充）</div>
             <table style={table}>
               <thead>
                 <tr>
                   <th style={th}>月份</th>
-                  <th style={th}>操作总量</th>
+                  <th style={th}>操作日期</th>
+                  <th style={th}>投放</th>
                   <th style={th}>3M</th>
                   <th style={th}>6M</th>
-                  <th style={th}>月末余额</th>
+                  <th style={th}>净投放</th>
+                  <th style={th}>累计净投放=存量</th>
                   <th style={th}>备注</th>
                 </tr>
               </thead>
@@ -183,13 +191,42 @@ export default function ReverseRepoTool() {
                 {monthly.rows.map((r: ReverseRepoMonthlyRow, i: number) => (
                   <tr key={i}>
                     <td style={thTd}><b>{r.month}</b></td>
+                    <td style={thTd}>{r.opDate}</td>
                     <td style={thTd}>{r.operationTotal}</td>
                     <td style={thTd}>{r.m3}</td>
                     <td style={thTd}>{r.m6}</td>
+                    <td style={{ ...thTd, color: (r.netChange ?? 0) >= 0 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
+                      {r.netChange !== null ? (r.netChange >= 0 ? `+${r.netChange}` : `${r.netChange}`) : "—"}
+                    </td>
                     <td style={{ ...thTd, fontWeight: 700 }}>
-                      {r.monthEndBalance !== null ? r.monthEndBalance : "暂缺"}
+                      {r.cumulativeNet !== null ? r.cumulativeNet : "—"}
                     </td>
                     <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{r.note ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* 逐笔操作流水 */}
+            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>
+              🧾 逐笔操作流水表（精确到年月日，共 {monthly.operations.length} 笔）
+            </div>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={th}>操作日期</th>
+                  <th style={th}>期限</th>
+                  <th style={th}>金额(亿)</th>
+                  <th style={th}>公告/来源</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthly.operations.map((op: ReverseRepoOperation, i: number) => (
+                  <tr key={i}>
+                    <td style={thTd}><b>{op.date}</b></td>
+                    <td style={thTd}>{op.term}</td>
+                    <td style={thTd}>{op.amount}</td>
+                    <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -201,7 +238,7 @@ export default function ReverseRepoTool() {
       {/* 增量部分：每日变动探查 */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📈 每日变动量探查（LLM）</span>
+          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📈 每日变动量探查（LLM，仅买断式）</span>
           <button style={btn} onClick={() => void probeDaily(false)} disabled={dailyTask.running} type="button">
             {dailyTask.running ? "探查中…" : "🔎 探查今日变动"}
           </button>
@@ -222,7 +259,7 @@ export default function ReverseRepoTool() {
               <span>数据截至：{daily.asOf}</span>
               {daily.currentBalance !== undefined && (
                 <span style={{ background: "#dcfce7", color: "#15803d", padding: "0.15rem 0.5rem", borderRadius: 999, fontWeight: 600 }}>
-                  买断式逆回购存量 ≈ {fmtW(daily.currentBalance)}
+                  存量余额 ≈ {fmtW(daily.currentBalance)}
                 </span>
               )}
               {daily.fromCache && <span style={{ background: "#fef3c7", color: "#b45309", padding: "0.15rem 0.5rem", borderRadius: 999 }}>💾 缓存</span>}

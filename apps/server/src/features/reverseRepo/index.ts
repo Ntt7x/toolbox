@@ -19,19 +19,19 @@ import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getMonthlyData, probeDaily } from "./service.js";
 
-// 注册数据源：逆回购探查结果缓存（本地数据管理页展示 tag 用）
+// 注册数据源：买断式逆回购探查结果缓存（本地数据管理页展示 tag 用）
 registerDataSource({
   kind: "kv",
   name: "reverseRepo:",
-  page: "逆回购余额",
+  page: "买断式逆回购余额",
   tag: "分析数据",
   description: "买断式逆回购每日变动探查缓存（Key-结构化 Value）",
 });
 
 export const meta: ToolMeta = {
   id: "reverse-repo",
-  name: "逆回购余额",
-  description: "央行买断式逆回购（2024.10 启用）存量余额跟踪：月度操作/余额表+曲线，每日变动探查",
+  name: "买断式逆回购余额",
+  description: "央行买断式逆回购（2024.10 启用）存量余额跟踪：逐笔操作流水+月度汇总+余额曲线，每日变动探查",
   path: "/tools/reverse-repo",
 };
 
