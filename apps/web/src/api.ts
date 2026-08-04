@@ -19,6 +19,7 @@
   type QuoteResult,
   type ReverseRepoDailyResponse,
   type ReverseRepoMonthlyResult,
+  type ReverseRepoMonthlyUpdateStatus,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -70,6 +71,10 @@ export const api = {
     request<AsyncTaskResult<TreasuryFxResponse>>(`/tools/treasury-fx/task/${encodeURIComponent(taskId)}`),
   // 逆回购余额跟踪（存量月度数据 + 增量每日探查）
   reverseRepoMonthly: () => request<ReverseRepoMonthlyResult>("/tools/reverse-repo/monthly"),
+  /** 月度数据触发式更新状态（stale 时后台自动触发，此接口查进度/结果） */
+  reverseRepoMonthlyUpdateStatus: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/update-status"),
+  /** 手动触发月度数据更新（幂等：running 中/已最新不重复） */
+  reverseRepoMonthlyRefresh: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/refresh", jsonInit("POST", {})),
   reverseRepoDaily: (force = false) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
   reverseRepoDailyTaskStatus: (taskId: string) =>

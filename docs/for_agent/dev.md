@@ -56,6 +56,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   （投放/净投放/累计净投放，每日经济新闻口径推算补充）；**存量余额 = 累计净投放**
   （2026-03 锚点 7.2 万亿元，与对话中存量 6.3 万亿口径一致）；数据经用户多轮修订
   （2025-10/11/12 原误记"无操作"已修正、2026-07 期限构成已修正）
+- **逆回购月度数据触发式更新**（服务端自动，前端零改动）：`GET /tools/reverse-repo/monthly`
+  返回时计算 `missingMonths(rows)`——最新数据月 < 上个月 → 响应带 `stale/staleMonths` 并
+  自动 `createTask` 后台跑 `runMonthlyUpdate`（LLM 搜索补全缺失月份，`reverse-repo.monthly-update`
+  提示词）；防重（`reverseRepo:monthlyUpdate` KV 记 running，running 中不重复触发）；进度查
+  `GET /tools/reverse-repo/monthly/update-status`，手动触发 `POST .../refresh`；
+  **合并校验**：LLM 返回的月份必须 > 现有最大月且 ∈ expected，否则跳过（防乱序/重复/污染），
+  无有效写入 → failed 且不动 KV（幂等安全）
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
   默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
   服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示

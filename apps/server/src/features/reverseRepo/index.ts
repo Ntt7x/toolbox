@@ -17,7 +17,7 @@ import {
 import { createTask, getTask } from "../../core/tasks.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
-import { getMonthlyData, probeDaily } from "./service.js";
+import { getMonthlyData, getUpdateState, missingMonths, probeDaily, runMonthlyUpdate } from "./service.js";
 
 // 注册数据源：买断式逆回购（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -43,10 +43,34 @@ export const meta: ToolMeta = {
 };
 
 export function register(app: Hono): void {
-  // 存量月度数据（权威种子，直接读取，无 LLM 开销）
+  // 存量月度数据（权威种子 seed → KV 读取；检测到「上个月及更远」缺失时自动触发后台更新）
   app.get(`${API_PREFIX}/tools/reverse-repo/monthly`, (c) => {
-    const body: ReverseRepoMonthlyResult = getMonthlyData();
-    return c.json(body);
+    const body = getMonthlyData();
+    const stale = missingMonths(body.rows);
+    if (stale.length > 0 && getUpdateState().state !== "running") {
+      // 触发式更新：后台异步执行（LLM 搜索补全，耗时数分钟），不阻塞响应；
+      // 进度经 /monthly/update-status 查询，防重（running 中不重复触发）
+      createTask(async (signal) => runMonthlyUpdate(stale, signal), { timeoutMs: 15 * 60 * 1000 });
+    }
+    return c.json({ ...body, stale: stale.length > 0, staleMonths: stale });
+  });
+
+  // 月度更新状态（触发式更新进度/结果）
+  app.get(`${API_PREFIX}/tools/reverse-repo/monthly/update-status`, (c) => {
+    const st = getUpdateState();
+    return c.json({ ok: true, ...st });
+  });
+
+  // 手动触发月度数据更新（等价于 GET monthly 的自动触发；返回立即结果，任务后台执行）
+  app.post(`${API_PREFIX}/tools/reverse-repo/monthly/refresh`, (c) => {
+    const body = getMonthlyData();
+    const stale = missingMonths(body.rows);
+    if (stale.length === 0) return c.json({ ok: true, state: "idle", message: "数据已是最新，无需更新" });
+    if (getUpdateState().state === "running") {
+      return c.json({ ok: true, state: "running", months: stale, message: "已有更新任务进行中" });
+    }
+    const { taskId } = createTask(async (signal) => runMonthlyUpdate(stale, signal), { timeoutMs: 15 * 60 * 1000 });
+    return c.json({ ok: true, state: "running", months: stale, taskId });
   });
 
   /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查） */

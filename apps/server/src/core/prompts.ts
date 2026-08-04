@@ -196,6 +196,34 @@ const REVERSE_REPO_DAILY_PROMPT = `你是一位精通中国货币市场的量化
 - amount 单位为亿元；currentBalance 为买断式逆回购存量余额（累计净投放口径，亿元），不确定时省略
 - 区分 operation（投放）与 maturity（到期）；拿不准标注 desc「不确定」`;
 
+/** 买断式逆回购月度数据更新提示词（触发式：补全缺失月份的月度汇总 + 逐笔操作） */
+const REVERSE_REPO_MONTHLY_UPDATE_PROMPT = `你是央行公开市场操作助手。任务：联网搜索指定月份（{months}）央行「买断式逆回购」（期限3个月/6个月，2024年10月启用）的操作数据，补全缺失月份的月度汇总。
+
+【背景】存量月度数据 = 逐笔操作流水 + 月度汇总（当月投放 / 3M / 6M / 当月净投放 / 累计净投放）。累计净投放 = 存量余额口径（2026-03 锚点 7.2 万亿元，央行/每日经济新闻披露）。
+
+【数据要求】联网搜索央行公开市场操作公告与权威财经媒体（财联社/每日经济新闻/证券时报/中国证券报等），对列出的每一个缺失月份输出：
+- 当月买断式逆回购操作：操作日期、期限（3M/6M）、投放金额（亿元）
+- 当月到期金额、当月净投放（投放 − 到期）
+- 当月月末余额（累计净投放，存量口径）；无法确认的月份明确标注，不要编造
+
+【注意】只关注买断式逆回购，不混入常规7天期逆回购或MLF（它们不计入买断式逆回购存量余额）。
+
+【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "asOf": "YYYY-MM-DD",
+  "months": [
+    { "month": "YYYY-MM", "opDate": "M-D / M-D", "operationTotal": 0, "m3": 0, "m6": 0, "netChange": 0, "cumulativeNet": 0, "note": "当月操作说明" }
+  ],
+  "operations": [
+    { "date": "YYYY-MM-DD", "term": "3M|6M", "amount": 0, "source": "数据来源" }
+  ],
+  "source": "本次更新数据来源说明"
+}
+注意：
+- amount 单位为亿元；term 取值 3M / 6M
+- 某月无操作：operationTotal=0，netChange 按到期推算；拿不准的字段用 note 标注「不确定」，严禁编造
+- 只输出列出的缺失月份；已有月份不要重复输出`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -280,6 +308,13 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.reverseRepo.daily",
     description: "逆回购每日变动探查提示词（增量：当日/最近变动+当月说明；{date}）",
     defaultTemplate: REVERSE_REPO_DAILY_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "reverse-repo.monthly-update",
+    key: "prompt.reverseRepo.monthlyUpdate",
+    description: "逆回购月度数据更新提示词（触发式：补全缺失月份的月度汇总+逐笔操作；{months}）",
+    defaultTemplate: REVERSE_REPO_MONTHLY_UPDATE_PROMPT,
     render: (t) => t,
   },
 ];

@@ -533,6 +533,24 @@ export interface ReverseRepoMonthlyResponse {
   series: { month: string; balance: number }[];
   /** 数据截至月份 */
   asOf: string;
+  /** 是否存在未更新的月份（最新数据月份 < 上个月） */
+  stale?: boolean;
+  /** 缺失月份列表（YYYY-MM，从最新数据月+1 到上个月） */
+  staleMonths?: string[];
+}
+
+/** 月度数据触发式更新状态 */
+export interface ReverseRepoMonthlyUpdateStatus {
+  ok: true;
+  state: "idle" | "running" | "done" | "failed";
+  /** 本次尝试更新的缺失月份 */
+  months?: string[];
+  startedAt?: string;
+  finishedAt?: string;
+  /** done/failed 时的说明 */
+  message?: string;
+  /** 更新成功写入的月份汇总 */
+  updated?: { month: string; operationTotal: number; netChange?: number | null; cumulativeNet?: number | null }[];
 }
 
 /** 每日变动探查请求 */
