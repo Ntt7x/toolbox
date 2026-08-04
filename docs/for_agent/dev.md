@@ -45,6 +45,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - `chat(messages, { search?, json? })`：search=联网搜索（Responses API + web_search，服务端执行，
   仅 deepseek-v4-flash）；json=response_format json_object；两者可组合
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
+- **程序性提示词单一来源**（cb-rate/grid-plan）：LLM 提示词模板作为常量放
+  `packages/shared`（`CB_RATE_SYSTEM_PROMPT_TEMPLATE` 等），server 拼接发送、web 页面
+  「查看/复制程序性提示词」展示**同一个常量**——改提示词只改 shared 一处，页面与实发永不失步
 - API key 存服务端本地设置库（`settings:llm.apiKey`，SQLite `.file/`，已 gitignore）；旧 `.env` 仅一次性迁移
 - 结构化工具（如 cb-rate）用 search 默认开 + JSON 输出 + 提示词给出严格 JSON schema，
   解析容忍杂质包裹；失败时保留 raw 兜底展示

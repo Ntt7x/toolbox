@@ -5,15 +5,19 @@
 // ============================================================
 
 import { chat, DEFAULT_MODEL } from "../../core/llm.js";
-import type {
-  CbAction,
-  CbRateBank,
-  CbRatePeriod,
-  CbRateRequest,
-  CbRateResult,
+import {
+  CB_RATE_BANKS_TEXT,
+  CB_RATE_SEARCH_NOTE_DEFAULT,
+  CB_RATE_SEARCH_NOTE_KNOWLEDGE,
+  CB_RATE_SYSTEM_PROMPT_TEMPLATE,
+  type CbAction,
+  type CbRateBank,
+  type CbRatePeriod,
+  type CbRateRequest,
+  type CbRateResult,
 } from "@toolbox/shared";
 
-/** 九大央行稳定清单（提示词与白名单共用） */
+/** 九大央行稳定清单（提示词与白名单共用；banksText 与 shared 常量保持一致） */
 const BANKS: { id: string; name: string }[] = [
   { id: "fed", name: "美联储" },
   { id: "ecb", name: "欧洲央行" },
@@ -28,39 +32,19 @@ const BANKS: { id: string; name: string }[] = [
 
 const VALID_ACTIONS: CbAction[] = ["hike", "cut", "hold", "mixed"];
 
+/** 基于共享模板构建 system prompt（单一来源：shared 常量，页面展示同一文本） */
 function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
-  const banksText = BANKS.map((b) => `${b.id} ${b.name}`).join(" | ");
-  const searchNote = withSearch
-    ? "4. 本次调用已启用联网搜索：优先采用搜索结果中的最新信息；回答中若引用搜索来源，保留类似 [reference:N] 的引用标记。\n5. 必须明确标注数据截至日期 asOf（YYYY-MM-DD），即搜索结果中最新的信息日期。"
-    : "4. 本次调用未启用联网搜索，只能基于你的训练知识作答。\n5. 你的训练知识截止于约 2025 年中，而今天已到 2026 年：**严禁编造今天之后或超出你知识范围的会议与决策**（尤其不得虚构某年某月某日的加息/降息）；拿不准的信息一律省略或用 \"不确定\" 标注。\n6. 必须明确标注 asOf 为你知识的最新日期（YYYY-MM-DD，通常接近 2025 年中），并在 summary 中注明\"数据基于训练知识、时效有限，建议开启联网搜索获取实时数据\"。\n7. 额外输出字段 knowledgeCutoff（YYYY-MM）表示你知识覆盖的最新月份。";
-  return `你是一个央行利率政策分析助手，专精于全球主要央行的利率政策时间线。
-九大央行固定清单（必须全部覆盖，除非用户指定部分）：${banksText}
-
-要求：
-1. 基于你的知识给出最准确、最新的信息；不确定的字段明确省略或标注"不确定"。
-2. 必须明确标注数据截至日期 asOf（YYYY-MM-DD）。
-3. 输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
-{
-  "asOf": "YYYY-MM-DD",
-  "summary": "政策取向小结：按【已加息 / 多次加息后暂停 / 按兵不动】分类，并提示近期会议观察窗口",
-  "banks": [
-    {
-      "id": "fed",
-      "name": "美联储",
-      "latestRate": "3.50%–3.75%",
-      "action": "hike|cut|hold|mixed",
-      "actionDesc": "决策描述（含日期与基点数），如：7月30日维持利率不变（连续第五次按兵不动）",
-      "details": "决议详情：投票结果、内部分歧、行长表态（有则填，无则省略）",
-      "nextMeeting": "下次会议时间（有则填，无则省略）",
-      "outlook": "前瞻指引 / 市场预期（有则填，无则省略）",
-      "updatedAt": "YYYY-MM-DD 最新一次利率变动日期（本月/今年无变动可省略）"
-    }
-  ]${withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : ""}
-}
-${searchNote}
-8. action 取值：hike=加息，cut=降息，hold=按兵不动，mixed=方向混合（如既有加息又有降息）。
-9. ${withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。"}
-10. banks 至少覆盖用户要求的所有央行（默认全部九家）。`;
+  return CB_RATE_SYSTEM_PROMPT_TEMPLATE
+    .replace("{banksText}", CB_RATE_BANKS_TEXT)
+    .replace(
+      "{calendarJson}",
+      withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : "",
+    )
+    .replace("{searchNote}", withSearch ? CB_RATE_SEARCH_NOTE_DEFAULT : CB_RATE_SEARCH_NOTE_KNOWLEDGE)
+    .replace(
+      "{calendarRule}",
+      withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。",
+    );
 }
 
 function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string): string {
