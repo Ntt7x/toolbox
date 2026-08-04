@@ -173,21 +173,15 @@ export default function CbRateTool() {
       });
   }, []);
 
-  /** 携带提示词跳转 DeepSeek 网页版 Chat（先复制双保险；超长则仅复制） */
+  /** 携带提示词跳转 DeepSeek 网页版 Chat（剪贴板中转：网页版不支持 URL 预填输入） */
   const openChat = (text: string | null) => {
     if (!text) return;
-    void navigator.clipboard
-      .writeText(text)
-      .catch(() => {})
-      .finally(() => {
-        // URL 参数仅用于短文本（DeepSeek 网页版 ?q= 预填，长度受限时退化为空页+粘贴）
-        const bytes = new Blob([text]).size;
-        const url =
-          bytes <= 2000 ? `https://chat.deepseek.com/?q=${encodeURIComponent(text)}` : "https://chat.deepseek.com/";
-        window.open(url, "_blank", "noopener");
-        setChatHint(true);
-        setTimeout(() => setChatHint(false), 8000);
-      });
+    // 同步打开新标签（必须在用户手势内，异步调用会被浏览器弹窗拦截）
+    window.open("https://chat.deepseek.com/", "_blank", "noopener");
+    // 提示词经剪贴板中转（DeepSeek 网页版无预填参数，经代码验证仅支持 ?model=/OAuth 参数）
+    void navigator.clipboard.writeText(text).catch(() => {});
+    setChatHint(true);
+    setTimeout(() => setChatHint(false), 8000);
   };
 
   return (
@@ -279,7 +273,7 @@ export default function CbRateTool() {
         {showPrompt && (
           <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
         )}
-        {chatHint && <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>💬 已复制提示词并打开 DeepSeek 网页版；若输入框未预填，请直接粘贴。</div>}
+        {chatHint && <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。</div>}
       </div>
 
       {/* 后台任务进行中提示（可切走页面，稍后回来查看） */}
