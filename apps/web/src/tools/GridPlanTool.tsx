@@ -89,6 +89,7 @@ export default function GridPlanTool() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [chatHint, setChatHint] = useState(false);
   // 程序性提示词（统一数据链路：API → 本地设置数据）
   const [promptText, setPromptText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,6 +119,23 @@ export default function GridPlanTool() {
         // 加载失败静默：提示词区块显示占位文案
       });
   }, []);
+
+  /** 携带提示词跳转 DeepSeek 网页版 Chat（先复制双保险；超长则仅复制） */
+  const openChat = (text: string | null) => {
+    if (!text) return;
+    void navigator.clipboard
+      .writeText(text)
+      .catch(() => {})
+      .finally(() => {
+        // URL 参数仅用于短文本（DeepSeek 网页版 ?q= 预填，长度受限时退化为空页+粘贴）
+        const bytes = new Blob([text]).size;
+        const url =
+          bytes <= 2000 ? `https://chat.deepseek.com/?q=${encodeURIComponent(text)}` : "https://chat.deepseek.com/";
+        window.open(url, "_blank", "noopener");
+        setChatHint(true);
+        setTimeout(() => setChatHint(false), 8000);
+      });
+  };
 
   /** 输入股票代码 → 自动获取月线 BOLL → 填充输入框并自动生成计划 */
   const fetchQuote = async () => {
@@ -305,20 +323,26 @@ export default function GridPlanTool() {
             onClick={() => setShowPrompt((v) => !v)}
             type="button"
           >
-            {showPrompt ? "🙈 收起原始提示词" : "📜 查看原始提示词"}
+            {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
           </button>
           {showPrompt && (
-            <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
-              {copied ? "✅ 已复制" : "📋 复制"}
-            </button>
+            <>
+              <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
+                {copied ? "✅ 已复制" : "📋 复制"}
+              </button>
+              <button style={{ ...btn, background: "#0891b2" }} onClick={() => openChat(promptText)} type="button">
+                💬 Chat
+              </button>
+            </>
           )}
           <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-            本工具即由该 LLM 提示词固化而来，保留原文供对照 / 复用于其它 LLM
+            本工具即由该 LLM 提示词固化而来，提示词统一存储于「本地设置数据」，可编辑与重置
           </span>
         </div>
         {showPrompt && (
           <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
         )}
+        {chatHint && <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>💬 已复制提示词并打开 DeepSeek 网页版；若输入框未预填，请直接粘贴。</div>}
       </div>
 
       {/* 错误提示 */}
