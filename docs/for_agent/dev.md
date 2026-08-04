@@ -100,6 +100,11 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
   本会话若产生了新的经验/约定/架构变化/文件改名，先更新 dev.md 再提交，
   提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
+- **每次 commit 后必须自动 push 到 origin**（提交即推送，保持 origin/main 同步）：
+  - 远程已配置：`origin = https://github.com/Ntt7x/toolbox.git`，本地凭证可用；
+  - 流程固定为：`git add -A` → `git commit` → `git push`（一条龙，commit 后立即执行 push）；
+  - push 失败（认证/网络）时：保留本地提交、报告失败原因，下次可重推，不得丢弃提交；
+  - push 成功后确认 `git status --short --branch` 显示 `## main...origin/main`（无 ahead/behind）。
 
 ## 7. 验证清单（每功能必过）
 
