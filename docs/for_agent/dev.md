@@ -45,6 +45,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - `chat(messages, { search?, json? })`：search=联网搜索（Responses API + web_search，服务端执行，
   仅 deepseek-v4-flash）；json=response_format json_object；两者可组合
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
+- **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
+  所有 LLM 结构化输出业务（cbRate / treasuryFx）共用——新业务直接 import，不要复制
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
   默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
   服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示

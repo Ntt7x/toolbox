@@ -411,6 +411,78 @@ export interface CbRateErrorResponse {
 export type CbRateResult = CbRateResponse | CbRateErrorResponse;
 
 // ============================================================
+// 国债汇率分析（treasury-fx，LLM 驱动）
+// 人民币短波段研判框架：汇率套利 + 债券信号
+// ============================================================
+
+/** 国债汇率分析请求 */
+export interface TreasuryFxRequest {
+  /** 分析最近 N 个交易日（1~10，默认 5） */
+  days?: number;
+  /** 启用联网搜索获取实时汇率/国债数据（默认 true；false 回退模型知识） */
+  search?: boolean;
+  /** 启用缓存（默认 true；命中直接返回，TTL 24h） */
+  useCache?: boolean;
+}
+
+/** 单日数据行 */
+export interface TreasuryFxRow {
+  /** 交易日 YYYY-MM-DD */
+  date: string;
+  /** USDJPY 数值（含 ~ 估算或来源标注） */
+  usdjpy?: string;
+  /** USDCNY 数值（在岸/中间价注明口径） */
+  usdcny?: string;
+  /** UJ 日变动率 % */
+  uj?: string;
+  /** UC 日变动率 % */
+  uc?: string;
+  /** 排序判定，如 "UJ < UC < 0" */
+  rank?: string;
+  /** 日本 10 年期国债收益率 % */
+  jp10y?: string;
+  /** 中国 10 年期国债收益率 % */
+  cn10y?: string;
+  /** 利差 BP */
+  spreadBp?: string;
+}
+
+/** 国债汇率分析成功响应 */
+export interface TreasuryFxResponse {
+  ok: true;
+  /** 数据截至日期 YYYY-MM-DD */
+  asOf: string;
+  /** 分析窗口（交易日数） */
+  days: number;
+  /** 框架判定小结（宏观阶段/资金流向/债券确认/A股含义） */
+  summary: string;
+  /** 各交易日数据速览 */
+  rows: TreasuryFxRow[];
+  /** 操作结论（脉冲做波段/回调减仓/等待主升信号等） */
+  conclusion: string;
+  /** 数据模式（与请求 search 对应） */
+  dataMode: "search" | "knowledge";
+  /** 知识模式下模型知识截止（YYYY-MM） */
+  knowledgeCutoff?: string;
+  /** 结果是否来自缓存 */
+  fromCache?: boolean;
+  /** 缓存写入时间（ISO） */
+  cachedAt?: string;
+  model: string;
+  /** 联网搜索实际执行的查询词 */
+  searchQueries?: string[];
+  /** 原始 LLM 文本 */
+  raw?: string;
+}
+
+export interface TreasuryFxErrorResponse {
+  ok: false;
+  message: string;
+}
+
+export type TreasuryFxResult = TreasuryFxResponse | TreasuryFxErrorResponse;
+
+// ============================================================
 // 通用异步任务（服务端后台执行 + SSE 推送 / 轮询）
 // ============================================================
 

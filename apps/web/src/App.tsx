@@ -7,6 +7,7 @@ import ToolPlaceholder from "./pages/ToolPlaceholder";
 import GridPlanTool from "./tools/GridPlanTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
 import CbRateTool from "./tools/CbRateTool";
+import TreasuryFxTool from "./tools/TreasuryFxTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 
@@ -15,6 +16,7 @@ const toolPages: Record<string, ComponentType> = {
   "grid-plan": GridPlanTool,
   "deepseek-share": DeepSeekShareTool,
   "cb-rate": CbRateTool,
+  "treasury-fx": TreasuryFxTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页 */
@@ -36,7 +38,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
     ],
   },
-  { label: "交易", toolIds: ["grid-plan", "cb-rate"] },
+  { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx"] },
   { label: "小工具", toolIds: ["deepseek-share"] },
 ];
 

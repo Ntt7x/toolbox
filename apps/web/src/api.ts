@@ -20,6 +20,8 @@
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
+  type TreasuryFxRequest,
+  type TreasuryFxResponse,
 } from "@toolbox/shared";
 
 // API 客户端：前端唯一访问后端的入口。
@@ -59,6 +61,11 @@ export const api = {
   cbRate: (req: CbRateRequest) => request<AsyncTaskResult<CbRateResponse>>("/tools/cb-rate", jsonInit("POST", req)),
   cbRateTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<CbRateResponse>>(`/tools/cb-rate/task/${encodeURIComponent(taskId)}`),
+  // 国债汇率分析（异步任务）
+  treasuryFx: (req: TreasuryFxRequest) =>
+    request<AsyncTaskResult<TreasuryFxResponse>>("/tools/treasury-fx", jsonInit("POST", req)),
+  treasuryFxTaskStatus: (taskId: string) =>
+    request<AsyncTaskResult<TreasuryFxResponse>>(`/tools/treasury-fx/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）
   cancelTask: (taskId: string) =>
     request<{ ok: true; taskId: string; status: string } | { ok: false; message: string }>(

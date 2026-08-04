@@ -7,7 +7,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fixJsonQuotes, extractOuterJson, isValidMonth, missingBanks, normalizeBanks, robustJsonParse } from "./service.js";
+import { fixJsonQuotes, extractOuterJson, robustJsonParse } from "../../core/jsonParse.js";
+import { isValidMonth, missingBanks, normalizeBanks } from "./service.js";
 import { cbRateCacheKey } from "./index.js";
 
 const ALL = ["fed", "ecb", "boj", "boe", "boc", "rba", "rbnz", "snb", "norges"];
