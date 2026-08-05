@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { PageHeader } from "../ui";
+import { DailyTokensBar, DayModulePie } from "../components/UsageCharts";
 import type { LlmBalanceResult, LlmStatusResponse, LlmTestResult, LlmUsageSummary } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -42,10 +43,15 @@ export default function LlmSettings() {
   // 用量监控 + 平台余额
   const [usage, setUsage] = useState<LlmUsageSummary | null>(null);
   const [balance, setBalance] = useState<LlmBalanceResult | null>(null);
+  // 单日扇形图：选中日期（默认最新一天）
+  const [pieDay, setPieDay] = useState<string>("");
 
   const refreshUsage = async () => {
     try {
-      setUsage(await api.llmUsage());
+      const u = await api.llmUsage();
+      setUsage(u);
+      // 默认选中最新一天（byDay 倒序）
+      setPieDay((prev) => prev || (u.byDay[0]?.day ?? ""));
     } catch {
       // 静默
     }
@@ -238,6 +244,31 @@ export default function LlmSettings() {
             <span style={{ color: "#b91c1c" }}>{balance.message}</span>
           )}
         </div>
+
+        {/* 图表：逐日条形图 + 单日扇形图 */}
+        {(usage?.byDay.length ?? 0) > 0 && (
+          <div style={{ marginBottom: "0.7rem", padding: "0.6rem 0.8rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", marginBottom: "0.4rem" }}>📈 逐日用量（tokens）</div>
+            <DailyTokensBar byDay={usage?.byDay ?? []} />
+            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", margin: "0.8rem 0 0.4rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              🥧 单日用量构成
+              <select
+                style={{ padding: "0.25rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem", background: "#fff" }}
+                value={pieDay}
+                onChange={(e) => setPieDay(e.target.value)}
+              >
+                {(usage?.byDay ?? []).map((d) => (
+                  <option key={d.day} value={d.day}>
+                    {d.day}（{d.calls} 次 · {((d.totalTokens / 1000).toFixed(1))}k tokens）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <DayModulePie
+              byModule={usage?.byDay.find((d) => d.day === pieDay)?.byModule ?? []}
+            />
+          </div>
+        )}
 
         {/* 本地用量汇总 */}
         <div style={{ fontSize: "0.85rem" }}>
