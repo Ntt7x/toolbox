@@ -99,6 +99,8 @@ interface ChatOptions {
   module?: string;
 }
 
+export type { ChatOptions };
+
 /** 组合外部信号与内置超时（AbortSignal.any：任一触发即中断） */
 function buildSignal(opts: ChatOptions, timeoutMs: number): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs);

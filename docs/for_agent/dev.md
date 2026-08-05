@@ -40,10 +40,26 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   一条命令只做一件事；多行提交信息用 `-F 文件`（`.git/COMMIT_MSG_TMP.txt`，用完删）
 - typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
 
-## 4. LLM 公共模块（core/llm.ts）
+## 4. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 
-- `chat(messages, { search?, json? })`：search=联网搜索（Responses API + web_search，服务端执行，
-  仅 deepseek-v4-flash）；json=response_format json_object；两者可组合
+### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
+- search=联网搜索（Responses API + web_search，服务端执行，仅 deepseek-v4-flash）；json=response_format json_object
+- **前缀稳定化约定**：system 保持逐字稳定（动态日期/标的/月份移到 user 消息），以命中 DeepSeek 前缀缓存（价 ~1/50）
+
+### 模式 2：自研 Cache 会话 `createChatSession / chatSessionAsk`（core/chatSession.ts）
+- 借鉴 Reasonix "append-only context"：system 固定 + 每轮 append user/assistant；同会话连续调用前缀命中缓存
+- KV 持久化（chatSession:<id>），TTL 30 分钟；历史超长自动压缩（保留 system + 最近 6 轮）
+- 注意：`createChatSession` 返回对象，传给 `chatSessionAsk` 须用 `.id`
+- 实测：3 轮命中率 0% → 51% → 88.7%；适合批量/长任务（单次分析仍用模式 1）
+
+### 模式 3：Reasonix ACP `createReasonixSession / reasonixAsk / closeReasonixSession`（core/reasonix.ts）
+- 启动官方 reasonix 二进制（v1.20.0+）ACP 服务（stdio NDJSON JSON-RPC），享受其会话持久化/压缩/前缀稳定
+- 二进制：`llm.reasonixBin` 配置或 npm 包 `@reasonix/cli-<platform>-<arch>`（node_modules 内）
+- **协议要点（实测）**：`session/prompt` 参数 = `{ sessionId, prompt: [{type:"text",text}] }`（非标准 message）；
+  回答文本必须从 **`session/update` 通知的 `agent_message_chunk`** 收集（transcript .jsonl 不实时更新，勿读）
+- 同会话多轮实测会话保持正常（第 2 轮引用第 1 轮上下文）；reasonix 自带 system 开销大（~20k tokens）
+- 会话生命周期：创建→多轮 ask→close（释放资源）；进程惰性单例，shutdownReasonix() 回收
+
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
   所有 LLM 结构化输出业务（cbRate / treasuryFx）共用——新业务直接 import，不要复制
