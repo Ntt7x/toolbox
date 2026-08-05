@@ -17,6 +17,7 @@
   type PromptDetailResult,
   type PromptsListResult,
   type QuoteResult,
+  type QuoteSnapshot,
   type ReverseRepoDailyResponse,
   type ReverseRepoMonthlyResult,
   type ReverseRepoMonthlyUpdateStatus,
@@ -101,6 +102,12 @@ export const api = {
   /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
   watchlistImport: (url: string) => request<AsyncTaskResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
   watchlistImportTaskStatus: (taskId: string) => request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/import/task/${encodeURIComponent(taskId)}`),
+  /** Chat 补充：分享链接 → 追加个股到指定专题（后台任务） */
+  watchlistAppend: (id: string, url: string) =>
+    request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
+  /** 批量行情快照（个股基本信息） */
+  watchlistQuotes: (codes: string[]) =>
+    request<{ ok: boolean; quotes: QuoteSnapshot[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,

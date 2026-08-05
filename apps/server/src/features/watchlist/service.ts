@@ -10,7 +10,7 @@ import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
 import { extractShare } from "../../core/deepseekShare.js";
-import { createTopic, updateTopic } from "./store.js";
+import { createTopic, getTopic, updateTopic } from "./store.js";
 import type { WatchlistFundamentalResult, WatchlistStock, WatchlistTopic } from "@toolbox/shared";
 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
@@ -126,9 +126,10 @@ function normalizeImportedStock(s: unknown): WatchlistStock | null {
 
 /**
  * Chat 导入：解析分享链接 → 提取对话 → LLM 整理专题 → 自动创建。
- * 返回创建的专题；失败抛错。
+ * topicId 提供时：**追加**到现有专题（Chat 补充个股，已有代码去重更新），否则新建。
+ * 返回专题；失败抛错。
  */
-export async function importFromChat(shareUrl: string, signal?: AbortSignal): Promise<WatchlistTopic> {
+export async function importFromChat(shareUrl: string, signal?: AbortSignal, topicId?: string): Promise<WatchlistTopic> {
   const extracted = await extractShare(shareUrl);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
     throw new Error(!extracted.ok && "message" in extracted ? extracted.message : "对话提取为空，请检查链接");
@@ -154,6 +155,16 @@ export async function importFromChat(shareUrl: string, signal?: AbortSignal): Pr
   const stocks = (Array.isArray(p.stocks) ? p.stocks : [])
     .map(normalizeImportedStock)
     .filter((s): s is WatchlistStock => !!s);
+
+  // 追加模式：合并进现有专题（addStocks 按 code 去重更新），专题名/介绍不变
+  if (topicId) {
+    const existing = await getTopic(topicId);
+    if (!existing) throw new Error("专题不存在");
+    if (stocks.length === 0) throw new Error("Chat 对话中未识别到可补充的个股");
+    const updated = updateTopic(topicId, { addStocks: stocks });
+    if (!updated) throw new Error("补充失败");
+    return updated;
+  }
 
   const topic = createTopic(name, description);
   if (stocks.length > 0) {

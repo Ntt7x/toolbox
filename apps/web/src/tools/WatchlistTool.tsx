@@ -10,6 +10,7 @@ import { useAsyncTask } from "../hooks/useAsyncTask";
 import { ErrorCard, PageHeader } from "../ui";
 import type {
   AsyncTaskResult,
+  QuoteSnapshot,
   WatchlistFundamentalResult,
   WatchlistStock,
   WatchlistSummary,
@@ -96,6 +97,12 @@ export default function WatchlistTool() {
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  // 个股行情快照（code → QuoteSnapshot）
+  const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot>>({});
+  // Chat 补充（追加到当前专题）
+  const [appendUrl, setAppendUrl] = useState("");
+  const [appending, setAppending] = useState(false);
+  const [showAppend, setShowAppend] = useState(false);
   // 列表项描述悬浮卡片
   const [hoverInfo, setHoverInfo] = useState<string | null>(null);
   // 详情页描述：展开 / 编辑
@@ -139,11 +146,33 @@ export default function WatchlistTool() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 选中专题 → 加载详情
+  /** 加载个股行情快照（批量，复用公共行情模块缓存） */
+  const loadQuotes = useCallback(async (codes: string[]) => {
+    if (codes.length === 0) return;
+    try {
+      const r = await api.watchlistQuotes(codes);
+      if (r.ok) {
+        setQuotes((prev) => {
+          const next = { ...prev };
+          for (const q of r.quotes) if (q.ok && q.code) next[q.code] = q;
+          return next;
+        });
+      }
+    } catch {
+      // 行情失败静默（表格显示 —）
+    }
+  }, []);
+
+  // 选中专题 → 加载详情 + 批量行情
   useEffect(() => {
     if (!selectedId) return;
     void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
+
+  // 专题详情变化 → 刷新行情
+  useEffect(() => {
+    if (topic) void loadQuotes(topic.stocks.map((s) => s.code));
+  }, [topic, loadQuotes]);
 
   const createTopic = async () => {
     const name = newName.trim();
@@ -290,10 +319,48 @@ export default function WatchlistTool() {
     }
   };
 
+  /** Chat 补充：分享链接 → LLM 整理 → 追加个股到当前专题（后台任务轮询） */
+  const appendChat = async () => {
+    if (!topic) return;
+    const url = appendUrl.trim();
+    if (!url) return;
+    setAppending(true);
+    setErr(null);
+    try {
+      const t = await api.watchlistAppend(topic.id, url);
+      if (!t.ok) {
+        setErr(t.message || "补充失败");
+        return;
+      }
+      if (t.taskId) {
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const st = await api.watchlistImportTaskStatus(t.taskId).catch(() => null);
+          if (st?.ok && st.status === "done" && st.result) {
+            setAppendUrl("");
+            setShowAppend(false);
+            setTopic(st.result);
+            setSelectedId(st.result.id);
+            await refreshList();
+            return;
+          }
+          if (st?.ok && (st.status === "error" || st.status === "cancelled")) {
+            setErr(st.message || "补充失败");
+            return;
+          }
+        }
+        setErr("补充超时，请稍后重试");
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setAppending(false);
+    }
+  };
+
   /** Chat 导入：分享链接 → 自动创建专题（后台 LLM 整理，轮询进度） */
   /** 从剪贴板读取 DeepSeek 分享链接并自动填入（仅当符合格式且输入框为空） */
-  const readImportClipboard = async () => {
-    try {
+  const readImportClipboard = async () => {    try {
       const text = await navigator.clipboard.readText();
       const url = text.trim();
       if (/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url) && !importUrl.trim()) {
@@ -548,8 +615,28 @@ export default function WatchlistTool() {
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                 />
                 <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>更新于 {topic.updatedAt.slice(0, 10)} · {topic.stocks.length} 只</span>
+                <button style={{ ...btnSmall, background: "#7c3aed" }} onClick={() => setShowAppend((v) => !v)} type="button">
+                  🤖 Chat 补充
+                </button>
                 <button style={btnGhost} onClick={() => void deleteTopic()} type="button">删除专题</button>
               </div>
+
+              {/* Chat 补充输入（阅读 Chat 对话 → 追加个股到本专题） */}
+              {showAppend && (
+                <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.8rem", padding: "0.5rem 0.6rem", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#6d28d9", whiteSpace: "nowrap" }}>📥 阅读 Chat 对话追加个股：</span>
+                  <input
+                    style={{ ...input, flex: 1, minWidth: 200, fontSize: "0.82rem" }}
+                    placeholder="https://chat.deepseek.com/share/<id>"
+                    value={appendUrl}
+                    onChange={(e) => setAppendUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void appendChat(); }}
+                  />
+                  <button style={{ ...btn, background: "#7c3aed", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => void appendChat()} disabled={appending} type="button">
+                    {appending ? "🔄 补充中…" : "补充"}
+                  </button>
+                </div>
+              )}
 
               {/* 专题介绍（摘要折叠 + 编辑；不占版面） */}
               {editingDesc ? (
@@ -617,26 +704,29 @@ export default function WatchlistTool() {
                 <button style={btn} onClick={() => void addStock()} disabled={loading} type="button">加入专题</button>
               </div>
 
-              {/* 个股表（拖动 ⠿ 行头调整优先级；顺序 = 优先级） */}
+              {/* 个股表（拖动 ⠿ 行头调整优先级；顺序 = 优先级；行情 = 实时快照） */}
               <table style={table}>
                 <thead>
                   <tr>
                     <th style={{ ...th, width: 34 }}>⠿</th>
                     <th style={{ ...th, textAlign: "left" }}>名称 / 代码</th>
                     <th style={{ ...th, textAlign: "left" }}>入选理由</th>
-                    <th style={{ ...th, width: 140 }}>财报分析</th>
+                    <th style={{ ...th, width: 130 }}>行情</th>
+                    <th style={{ ...th, width: 130 }}>财报分析</th>
                     <th style={{ ...th, width: 60 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {topic.stocks.length === 0 && (
                     <tr>
-                      <td style={thTd} colSpan={5}>
+                      <td style={thTd} colSpan={6}>
                         <span style={{ color: "#94a3b8" }}>暂无自选股，请在上面添加。拖动 ⠿ 可调整优先级。</span>
                       </td>
                     </tr>
                   )}
-                  {topic.stocks.map((s, i) => (
+                  {topic.stocks.map((s, i) => {
+                    const q = quotes[s.code];
+                    return (
                     <tr
                       key={s.code}
                       draggable
@@ -656,6 +746,26 @@ export default function WatchlistTool() {
                         <div style={{ color: "#94a3b8", fontSize: "0.72rem", lineHeight: 1.2 }}>{s.code}</div>
                       </td>
                       <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}</td>
+                      <td style={{ ...thTd, fontSize: "0.75rem", textAlign: "left", whiteSpace: "nowrap" }}>
+                        {q?.ok ? (
+                          <>
+                            <div style={{ fontWeight: 600 }}>
+                              {q.price?.toLocaleString() ?? "—"}
+                              {q.pct !== undefined ? (
+                                <span style={{ color: (q.pct ?? 0) >= 0 ? "#dc2626" : "#16a34a", marginLeft: "0.25rem" }}>
+                                  {(q.pct ?? 0) >= 0 ? "+" : ""}{q.pct}%
+                                </span>
+                              ) : null}
+                            </div>
+                            <div style={{ color: "#64748b" }}>
+                              {q.marketCap !== undefined ? `市值 ${(q.marketCap / 10000).toFixed(2)}万亿` : ""}
+                              {q.pe !== undefined ? ` PE ${q.pe}` : ""}
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>—</span>
+                        )}
+                      </td>
                       <td style={thTd}>
                         <button
                           style={btnSmall}
@@ -677,7 +787,8 @@ export default function WatchlistTool() {
                         <button style={btnGhost} onClick={() => void removeStock(s.code)} type="button">移除</button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
 

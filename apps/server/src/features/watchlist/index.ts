@@ -21,6 +21,7 @@ import { createTask, getTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
 import { fundamentalAnalysis, importFromChat, resolveStockName } from "./service.js";
+import { getQuoteSnapshots } from "../../core/quote.js";
 
 // 注册数据源：专题自选股（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -73,6 +74,16 @@ export function register(app: Hono): void {
     return c.json({ ok: true, code, name });
   });
 
+  // 批量快照（个股列表基本信息展示；复用公共行情模块缓存）
+  app.get(`${API_PREFIX}/tools/watchlist/quotes`, async (c) => {
+    const codesRaw = c.req.query("codes")?.trim() ?? "";
+    const codes = codesRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (codes.length === 0) return c.json({ ok: false, message: "缺少 codes 参数（逗号分隔）" }, 400);
+    if (codes.length > 40) return c.json({ ok: false, message: "一次最多 40 只" }, 400);
+    const quotes = await getQuoteSnapshots(codes, { force: c.req.query("force") === "1" });
+    return c.json({ ok: true, quotes });
+  });
+
   // Chat 导入：分享链接 → 提取对话 → LLM 整理 → 自动创建专题（后台任务）
   app.post(`${API_PREFIX}/tools/watchlist/import`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
@@ -83,6 +94,23 @@ export function register(app: Hono): void {
     }
     const { taskId } = createTask<WatchlistTopic>(
       async (signal) => importFromChat(url, signal),
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+    return c.json(getTask<WatchlistTopic>(taskId), 202);
+  });
+
+  // Chat 补充：分享链接 → 提取对话 → LLM 整理 → 追加个股到指定专题（后台任务）
+  app.post(`${API_PREFIX}/tools/watchlist/:id/import`, async (c) => {
+    const id = c.req.param("id");
+    if (!getTopic(id)) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+    const url = typeof raw?.url === "string" ? raw.url.trim() : "";
+    if (!url) return c.json({ ok: false, message: "缺少 Chat 分享链接" }, 400);
+    if (!/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url)) {
+      return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
+    }
+    const { taskId } = createTask<WatchlistTopic>(
+      async (signal) => importFromChat(url, signal, id),
       { timeoutMs: 10 * 60 * 1000 },
     );
     return c.json(getTask<WatchlistTopic>(taskId), 202);
