@@ -96,6 +96,12 @@ export default function WatchlistTool() {
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  // 列表项描述悬浮卡片
+  const [hoverInfo, setHoverInfo] = useState<string | null>(null);
+  // 详情页描述：展开 / 编辑
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descEditText, setDescEditText] = useState("");
   // Chat 导入
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -177,6 +183,15 @@ export default function WatchlistTool() {
     } catch (e) {
       setErr(errMsg(e));
     }
+  };
+
+  /** 保存描述编辑（进入编辑模式 → 输入 → 保存） */
+  const saveDescEdit = async () => {
+    if (!topic) return;
+    setTopic({ ...topic, description: descEditText.trim() || undefined });
+    setEditingDesc(false);
+    setDescExpanded(true);
+    await renameTopic();
   };
 
   const deleteTopic = async () => {
@@ -460,7 +475,10 @@ export default function WatchlistTool() {
             <div
               key={t.id}
               onClick={() => setSelectedId(t.id)}
+              onMouseEnter={() => setHoverInfo(t.id)}
+              onMouseLeave={() => setHoverInfo(null)}
               style={{
+                position: "relative",
                 padding: "0.42rem 0.6rem",
                 borderRadius: 8,
                 cursor: "pointer",
@@ -475,12 +493,41 @@ export default function WatchlistTool() {
             >
               <span
                 style={{ fontWeight: 600, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                title={t.description ? `📖 ${t.description}` : undefined}
               >
                 {t.name}
                 {t.description ? <span style={{ color: "#94a3b8", marginLeft: "0.25rem", fontSize: "0.8rem" }}>ℹ️</span> : null}
               </span>
               <span style={{ color: "#94a3b8", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{t.stockCount} 只</span>
+
+              {/* 描述悬浮卡片（自定义，可读全文） */}
+              {hoverInfo === t.id && t.description ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "calc(100% + 8px)",
+                    top: -4,
+                    width: 320,
+                    maxHeight: 220,
+                    overflow: "auto",
+                    background: "#fff",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 10,
+                    boxShadow: "0 8px 24px rgba(15,23,42,0.15)",
+                    padding: "0.7rem 0.85rem",
+                    zIndex: 50,
+                    fontSize: "0.8rem",
+                    lineHeight: 1.5,
+                    color: "#334155",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.3rem", color: "#1d4ed8" }}>
+                    📖 {t.name} · 专题介绍
+                  </div>
+                  {t.description}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -504,14 +551,57 @@ export default function WatchlistTool() {
                 <button style={btnGhost} onClick={() => void deleteTopic()} type="button">删除专题</button>
               </div>
 
-              {/* 专题介绍（双击/失焦保存；空则显示占位） */}
-              <textarea
-                style={{ ...input, width: "100%", resize: "vertical", minHeight: 52, fontSize: "0.85rem", boxSizing: "border-box", marginBottom: "0.8rem", color: topic.description ? "#334155" : "#94a3b8" }}
-                placeholder="📖 专题介绍（可选）：主题逻辑 / 选股思路 / 风险提示…"
-                value={topic.description ?? ""}
-                onChange={(e) => setTopic({ ...topic, description: e.target.value })}
-                onBlur={() => void renameTopic()}
-              />
+              {/* 专题介绍（摘要折叠 + 编辑；不占版面） */}
+              {editingDesc ? (
+                <div style={{ marginBottom: "0.8rem" }}>
+                  <textarea
+                    style={{ ...input, width: "100%", resize: "vertical", minHeight: 80, fontSize: "0.85rem", boxSizing: "border-box" }}
+                    placeholder="📖 专题介绍：主题逻辑 / 选股思路 / 风险提示…"
+                    value={descEditText}
+                    onChange={(e) => setDescEditText(e.target.value)}
+                    autoFocus
+                  />
+                  <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.35rem" }}>
+                    <button style={{ ...btn, padding: "0.35rem 0.9rem", fontSize: "0.82rem" }} onClick={() => void saveDescEdit()} type="button">✓ 保存</button>
+                    <button style={{ ...btn, background: "#64748b", padding: "0.35rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setEditingDesc(false)} type="button">取消</button>
+                  </div>
+                </div>
+              ) : topic.description ? (
+                <div style={{ marginBottom: "0.8rem", padding: "0.5rem 0.7rem", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <span style={{ fontWeight: 600, color: "#1d4ed8" }}>📖 专题介绍</span>
+                    <span style={{ flex: 1 }} />
+                    <button style={{ ...btnSmall, background: "#e2e8f0", color: "#334155" }} onClick={() => setDescExpanded((v) => !v)} type="button">
+                      {descExpanded ? "收起 ▴" : "展开 ▾"}
+                    </button>
+                    <button
+                      style={{ ...btnSmall, background: "#e2e8f0", color: "#334155" }}
+                      onClick={() => { setDescEditText(topic.description ?? ""); setEditingDesc(true); }}
+                      type="button"
+                    >
+                      ✏️ 编辑
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: "0.35rem",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      ...(descExpanded ? {} : { maxHeight: "2.6em", overflow: "hidden" }),
+                    }}
+                  >
+                    {topic.description}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  style={{ ...btnSmall, background: "#e2e8f0", color: "#334155", marginBottom: "0.8rem" }}
+                  onClick={() => { setDescEditText(""); setEditingDesc(true); }}
+                  type="button"
+                >
+                  ＋ 添加专题介绍
+                </button>
+              )}
 
               {/* 添加个股 */}
               <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem" }}>
