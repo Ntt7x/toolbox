@@ -75,7 +75,7 @@ function tagStyle(tag: string): CSSProperties {
 
 const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "存量数据", "运行状态", "改进备忘录", "未标记"];
 
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 50;
 
 export default function LocalData() {
   const [sources, setSources] = useState<LocalDataSource[] | null>(null);
@@ -103,7 +103,7 @@ export default function LocalData() {
     void loadSources();
   }, [loadSources]);
 
-  /** 加载条目（搜索/分页） */
+  /** 加载条目（分页：offset 指定页首；page=0 表示首屏） */
   const loadEntries = useCallback(async (s: LocalDataSource, search: string, off: number) => {
     setLoading(true);
     setMsg(null);
@@ -113,10 +113,9 @@ export default function LocalData() {
         : { table: s.name, search: search || undefined, limit: PAGE_SIZE, offset: off };
       const r = await api.localEntries(q);
       if (r.ok && "entries" in r) {
-        const list = r.entries as LocalDataEntry[];
-        setEntries((prev) => (off === 0 ? list : [...prev, ...list]));
+        setEntries(r.entries as LocalDataEntry[]);
         setTotal(r.total);
-        setOffset(off + list.length);
+        setOffset(off);
       } else if (!r.ok) {
         setMsg({ kind: "err", text: r.message });
       }
@@ -146,10 +145,15 @@ export default function LocalData() {
     await loadEntries(active, searchText.trim(), 0);
   };
 
-  const loadMore = async () => {
+  /** 翻页 */
+  const goPage = async (page: number) => {
     if (!active) return;
-    await loadEntries(active, searchText.trim(), offset);
+    if (page < 0 || page * PAGE_SIZE >= total) return;
+    await loadEntries(active, searchText.trim(), page * PAGE_SIZE);
   };
+
+  const currentPage = total > 0 ? Math.floor(offset / PAGE_SIZE) + 1 : 1;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const clearSource = async () => {
     if (!active || active.kind !== "kv") return;
@@ -359,10 +363,16 @@ export default function LocalData() {
                   ))}
                 </tbody>
               </table>
-              {offset < total && (
-                <div style={{ textAlign: "center", marginTop: "0.7rem" }}>
-                  <button style={{ ...btn, background: "#64748b" }} onClick={() => void loadMore()} disabled={loading} type="button">
-                    {loading ? "加载中…" : `加载更多（已显示 ${offset}/${total}）`}
+              {totalPages > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.6rem", marginTop: "0.7rem" }}>
+                  <button style={{ ...btn, background: "#64748b" }} onClick={() => void goPage(currentPage - 2)} disabled={currentPage <= 1} type="button">
+                    ← 上一页
+                  </button>
+                  <span style={{ color: "#64748b", fontSize: "0.85rem" }}>
+                    第 <b>{currentPage}</b> / {totalPages} 页 · 共 {total} 条（每页 {PAGE_SIZE}）
+                  </span>
+                  <button style={{ ...btn, background: "#64748b" }} onClick={() => void goPage(currentPage)} disabled={currentPage >= totalPages} type="button">
+                    下一页 →
                   </button>
                 </div>
               )}
