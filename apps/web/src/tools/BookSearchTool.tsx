@@ -108,12 +108,6 @@ export default function BookSearchTool() {
     openZlib(`${config?.zlibBase ?? "https://z-library.bz"}/s/?q=${encodeURIComponent(query || "book")}`);
   };
 
-  const download = (item: BookItem) => {
-    // zlib 下载强制登录会话：服务端匿名拿到的 /dl/ 短链无效（404）。
-    // 在浏览器打开该书的搜索结果页，登录态下直接可见下载入口。
-    openZlib(`${config?.zlibBase ?? base}/s/?q=${encodeURIComponent(item.title)}`);
-  };
-
   return (
     <div>
       <PageHeader title="📚 书籍下载（zlib）" desc="输入书名模糊搜索 zlib，服务端经本机代理查询；下载/详情在浏览器打开（需浏览器已登录 zlib，经系统代理访问）。" />
@@ -124,7 +118,7 @@ export default function BookSearchTool() {
           <b>使用须知：</b>
           <br />① zlib 站点需科学上网：服务端经本机代理 <code style={{ background: "#fef3c7", padding: "0 4px", borderRadius: 4 }}>{config?.proxy ?? "http://127.0.0.1:10808"}</code> 访问（可在「本地数据管理」改 books.proxy / books.zlibBase）。
           <br />② 搜索免费匿名可用，但每日有限额（429 时可稍后再试或点「🚀 浏览器打开」）。
-          <br />③ <b>下载需登录 zlib 账号</b>：点「⬇ 打开下载」会在浏览器打开该书搜索页，登录后点书进入详情页下载（免费账号每日限量）。
+          <br />③ <b>下载需登录 zlib 账号</b>：用顶部「🚀 浏览器打开」在浏览器搜索该书，登录后点书进入详情页下载（免费账号每日限量）。
           <br />④ 请遵守版权法规，仅下载你有权获取的内容。
         </div>
       </div>
@@ -201,9 +195,6 @@ export default function BookSearchTool() {
                     </span>
                     <span style={{ color: "#475569", fontSize: "0.78rem" }}>{item.filesizeString ?? (item.filesize ? `${(item.filesize / 1024 / 1024).toFixed(1)} MB` : "")}</span>
                     <span style={{ flex: 1 }} />
-                    <button style={{ ...btnSmall, background: "#3b82f6", color: "#fff" }} onClick={() => download(item)} type="button" title="浏览器打开该书 zlib 搜索结果页，登录后点击下载">
-                      ⬇ 打开下载
-                    </button>
                     {item.detailUrl && (
                       <button style={btnSmall} onClick={() => item.detailUrl && openZlib(item.detailUrl)} type="button" title="打开 zlib 书籍详情页">
                         📖 详情页
