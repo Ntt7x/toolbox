@@ -305,10 +305,15 @@ function readUsageEntries(): UsageEntry[] {
 /** 记录一次 LLM 用量（失败不影响主流程） */
 function recordLlmUsage(module: string, model: string, usage: { promptTokens?: number; completionTokens?: number }): void {
   try {
+    const mod = module || "unknown";
+    if (mod === "unknown") {
+      // 调用方未传 module：警告以便补漏（避免账单归属失控）
+      console.warn(`[llm-usage] 未归属模块的 LLM 调用（model=${model}），请在 chat() 传入 module`);
+    }
     const entries = readUsageEntries();
     entries.push({
       ts: new Date().toISOString(),
-      module: module || "unknown",
+      module: mod,
       model: model || "unknown",
       promptTokens: usage.promptTokens ?? 0,
       completionTokens: usage.completionTokens ?? 0,
