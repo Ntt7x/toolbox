@@ -42,6 +42,11 @@
   type BookConfig,
   type BookHistoryResult,
   type BookSearchResult,
+  type KellyHistoryDeleteResult,
+  type KellyHistoryDetailResult,
+  type KellyHistoryListResult,
+  type KellyRequest,
+  type KellyResult,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -79,6 +84,14 @@ export const api = {
   tools: () => request<ToolListResponse>("/tools"),
   gridPlan: (req: GridPlanRequest) => request<GridPlanResult>("/tools/grid-plan", jsonInit("POST", req)),
   quote: (code: string) => request<QuoteResult>(`/tools/grid-plan/quote?code=${encodeURIComponent(code)}`),
+  /** 行情快照（实时报价，含 price；公共模块 /api/quote） */
+  quoteSnapshot: (code: string) => request<QuoteSnapshot>(`/quote?code=${encodeURIComponent(code)}`),
+  // 凯利仓位助手
+  kellyCalculate: (req: KellyRequest) => request<KellyResult>("/tools/kelly/calculate", jsonInit("POST", req)),
+  kellyHistory: () => request<KellyHistoryListResult>("/tools/kelly/history"),
+  kellyHistoryDetail: (id: string) => request<KellyHistoryDetailResult>(`/tools/kelly/history/${encodeURIComponent(id)}`),
+  kellyHistoryDelete: (id: string) =>
+    request<KellyHistoryDeleteResult>(`/tools/kelly/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   /** 历史网格计划（列表/详情/删除） */
   gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
   gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),

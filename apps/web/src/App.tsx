@@ -5,6 +5,7 @@ import type { HealthResponse, ToolMeta } from "@toolbox/shared";
 import Overview from "./pages/Overview";
 import ToolPlaceholder from "./pages/ToolPlaceholder";
 import GridPlanTool from "./tools/GridPlanTool";
+import KellyTool from "./tools/KellyTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
 import BookSearchTool from "./tools/BookSearchTool";
 import CbRateTool from "./tools/CbRateTool";
@@ -18,6 +19,7 @@ import LocalData from "./settings/LocalData";
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
   "grid-plan": GridPlanTool,
+  "kelly": KellyTool,
   "deepseek-share": DeepSeekShareTool,
   "books": BookSearchTool,
   "cb-rate": CbRateTool,
@@ -46,7 +48,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
-  { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
+  { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
   { label: "小工具", toolIds: ["deepseek-share", "books"] },
 ];
 

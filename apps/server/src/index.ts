@@ -23,6 +23,7 @@ import * as cbRateFeature from "./features/cbRate/index.js";
 import * as treasuryFxFeature from "./features/treasuryFx/index.js";
 import * as reverseRepoFeature from "./features/reverseRepo/index.js";
 import * as watchlistFeature from "./features/watchlist/index.js";
+import * as kellyFeature from "./features/kelly/index.js";
 import * as memoFeature from "./features/memo/index.js";
 import * as booksFeature from "./features/books/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
@@ -49,6 +50,7 @@ const tools: ToolMeta[] = [
   treasuryFxFeature.meta,
   reverseRepoFeature.meta,
   watchlistFeature.meta,
+  kellyFeature.meta,
   booksFeature.meta,
   deepseekShareFeature.meta,
 ];
@@ -71,6 +73,7 @@ cbRateFeature.register(app);
 treasuryFxFeature.register(app);
 reverseRepoFeature.register(app);
 watchlistFeature.register(app);
+kellyFeature.register(app);
 memoFeature.register(app);
 booksFeature.register(app);
 deepseekShareFeature.register(app);
