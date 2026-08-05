@@ -3,6 +3,7 @@
   type AsyncTaskResult,
   type CbRateRequest,
   type CbRateResponse,
+  type FundSnapshot,
   type GridPlanRequest,
   type GridPlanResult,
   type GridPlanHistoryDeleteResult,
@@ -108,7 +109,8 @@ export const api = {
   watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
     request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   watchlistDelete: (id: string) => request<WatchlistDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
-  watchlistResolve: (code: string) => request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}`),
+  watchlistResolve: (code: string, kind?: string) =>
+    request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
   /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
   watchlistImport: (url: string) => request<AsyncTaskResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
   watchlistImportTaskStatus: (taskId: string) => request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/import/task/${encodeURIComponent(taskId)}`),
@@ -117,7 +119,7 @@ export const api = {
     request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
   /** 批量行情快照（个股基本信息） */
   watchlistQuotes: (codes: string[]) =>
-    request<{ ok: boolean; quotes: QuoteSnapshot[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
+    request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,

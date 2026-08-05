@@ -27,6 +27,7 @@ function normalizeStock(s: WatchlistStock): WatchlistStock {
     code: typeof s.code === "string" ? s.code.trim() : "",
     ...(typeof s.name === "string" && s.name.trim() ? { name: s.name.trim() } : {}),
     reason: typeof s.reason === "string" ? s.reason.trim() : "",
+    ...(s.kind === "fund" ? { kind: "fund" as const } : {}),
   };
 }
 

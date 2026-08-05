@@ -208,6 +208,39 @@ export interface QuoteErrorResponse {
 
 export type QuoteResult = QuoteResponse | QuoteErrorResponse;
 
+/** 场外基金（开放式基金）净值快照：天天基金 */
+export interface FundSnapshot {
+  ok: boolean;
+  /** 基金代码（6 位） */
+  code: string;
+  /** 基金名称 */
+  name?: string;
+  /** 单位净值 */
+  nav?: number;
+  /** 净值日期 YYYY-MM-DD */
+  navDate?: string;
+  /** 日涨跌幅（%） */
+  pct?: number;
+  /** 累计净值 */
+  totalNav?: number;
+  /** 近 1 月 / 近 1 年收益率（%） */
+  m1?: number;
+  y1?: number;
+  /** 风险等级（1-5） */
+  riskLevel?: string;
+  /** 基金经理 / 基金公司 */
+  manager?: string;
+  company?: string;
+  /** 申购/赎回状态 */
+  buyStatus?: string;
+  redeemStatus?: string;
+  /** 数据源 */
+  source?: string;
+  /** 快照时间（ISO） */
+  ts?: string;
+  message?: string;
+}
+
 /** 行情快照（实时报价）：腾讯为主源，东财/新浪自动降级 */
 export interface QuoteSnapshot {
   ok: boolean;
@@ -808,12 +841,14 @@ export type LocalDataResult =
 
 /** 专题内的一只自选股（code 为标准 A/H 代码；name 为解析/用户填写的名称） */
 export interface WatchlistStock {
-  /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700 */
+  /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700；场外基金为 6 位数字（如 161725） */
   code: string;
-  /** 股票名称（行情接口解析，可空） */
+  /** 名称（行情接口解析，可空） */
   name?: string;
   /** 入选理由 */
   reason: string;
+  /** 类型：stock=股票/场内ETF（默认），fund=场外基金（净值来自天天基金） */
+  kind?: "stock" | "fund";
 }
 
 /** 一个专题（KV 持久化：watchlist:<id>） */
