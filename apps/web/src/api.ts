@@ -12,6 +12,8 @@
   type LlmSettingsResponse,
   type LlmStatusResponse,
   type LlmTestResult,
+  type LlmBalanceResult,
+  type LlmUsageSummary,
   type LocalDataResult,
   type LocalDataUpdateRequest,
   type PromptDetailResult,
@@ -147,6 +149,10 @@ export const api = {
   llmStatus: () => request<LlmStatusResponse>("/llm/status"),
   llmSettings: (req: LlmSettingsRequest) => request<LlmSettingsResponse>("/llm/settings", jsonInit("POST", req)),
   llmTest: () => request<LlmTestResult>("/llm/test", jsonInit("POST", {})),
+  /** LLM 用量汇总（服务端切面记录） */
+  llmUsage: () => request<LlmUsageSummary>("/llm/usage"),
+  /** DeepSeek 平台余额（API key 授权） */
+  llmBalance: () => request<LlmBalanceResult>("/llm/balance"),
   llmChat: (req: LlmChatRequest) => request<LlmChatResult>("/llm/chat", jsonInit("POST", req)),
   // 提示词（统一存储于「本地设置数据」）
   prompts: () => request<PromptsListResult>("/prompts"),

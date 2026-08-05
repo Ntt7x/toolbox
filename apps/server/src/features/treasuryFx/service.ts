@@ -40,6 +40,7 @@ export async function analyzeTreasuryFx(req: TreasuryFxRequest, signal?: AbortSi
 
   const result = await chat(messages, {
     temperature: 0.3,
+    module: "treasury-fx",
     ...(useSearch ? { search: true } : {}),
     ...(signal ? { signal } : {}),
   });

@@ -50,17 +50,10 @@ export const meta: ToolMeta = {
 };
 
 export function register(app: Hono): void {
-  // 存量月度数据（权威种子 seed → KV 读取；检测到「上个月及更远」缺失时自动触发后台更新）
+  // 存量月度数据（权威种子 seed → KV 读取；缺失月份仅提示，不自动触发 LLM）
   app.get(`${API_PREFIX}/tools/reverse-repo/monthly`, (c) => {
     const body = getMonthlyData();
     const stale = missingMonths(body.rows);
-    if (stale.length > 0 && getUpdateState().state !== "running") {
-      // 触发式更新：后台异步执行（LLM 搜索补全，耗时数分钟），不阻塞响应；
-      // 进度经 /monthly/update-status 查询，防重（running 中不重复触发）
-      let taskId = "";
-      const created = createTask(async (signal) => runMonthlyUpdate(stale, signal, taskId), { timeoutMs: 15 * 60 * 1000 });
-      taskId = created.taskId;
-    }
     return c.json({ ...body, stale: stale.length > 0, staleMonths: stale });
   });
 

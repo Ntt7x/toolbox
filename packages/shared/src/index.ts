@@ -280,6 +280,22 @@ export interface LlmChatErrorResponse {
 
 export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
 
+/** LLM 用量汇总（服务端切面记录，按模块/按天聚合） */
+export interface LlmUsageSummary {
+  ok: true;
+  total: { calls: number; promptTokens: number; completionTokens: number; totalTokens: number };
+  byModule: { module: string; calls: number; totalTokens: number }[];
+  byDay: { day: string; calls: number; totalTokens: number }[];
+}
+
+/** DeepSeek 平台余额查询结果 */
+export interface LlmBalanceResult {
+  ok: boolean;
+  balance?: { currency: string; totalBalance: string; grantedBalance: string; toppedUpBalance: string }[];
+  isAvailable?: boolean;
+  message?: string;
+}
+
 // ============================================================
 // DeepSeek 分享链接对话提取（deepseek-share）
 // ============================================================

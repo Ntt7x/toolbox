@@ -154,6 +154,7 @@ export async function analyzeCentralBankRates(
   const result = await chat(messages, {
     model: DEFAULT_MODEL,
     json: true,
+    module: "cb-rate",
     ...(useSearch ? { search: true } : {}),
     ...(signal ? { signal } : {}),
   });

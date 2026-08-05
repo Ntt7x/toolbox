@@ -201,7 +201,7 @@ export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, t
       { role: "system" as const, content: template.replace("{months}", months.join("、")) },
       { role: "user" as const, content: "请联网搜索并输出缺失月份的买断式逆回购数据 JSON。" },
     ];
-    const result = await chat(messages, { temperature: 0.2, search: true, ...(signal ? { signal } : {}) });
+    const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.monthly-update", ...(signal ? { signal } : {}) });
     if (!result.ok) throw new Error(result.message);
 
     const parsed = robustJsonParse(result.content.trim());
@@ -300,7 +300,7 @@ export async function probeDaily(signal?: AbortSignal): Promise<ReverseRepoDaily
     { role: "system" as const, content: getPromptTemplate("reverse-repo.daily").replace("{date}", todayStr()) },
     { role: "user" as const, content: "请按上述要求执行探查并输出 JSON。" },
   ];
-  const result = await chat(messages, { temperature: 0.2, search: true, ...(signal ? { signal } : {}) });
+  const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.daily", ...(signal ? { signal } : {}) });
   if (!result.ok) return { ok: false, message: result.message };
 
   const content = result.content.trim();

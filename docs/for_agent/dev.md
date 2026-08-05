@@ -101,6 +101,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4.4 本地数据治理原则（禁止硬编码）
 
+- **LLM 调用触发原则（2026-08-06 起，强制）**：**程序不得主动/自动隐式触发 LLM 调用**——
+  所有 LLM 调用必须由**用户主动操作**（点击按钮/明确指令）或**用户明确规划的流程**触发，
+  否则账单失控。GET 类接口只读，不得为补数据而隐式调 LLM（历史违规：reverse-repo
+  GET /monthly 曾自动触发月度更新，已改为仅手动 POST refresh；其余功能均用户点击触发）
+- **LLM 用量监控（core/llm.ts 切面）**：每次 chat 成功且带 usage 时自动记录
+  `llmUsage:log`（KV，上限 2000 条截断）；调用方须传 `module`（如 cb-rate / watchlist.fundamental /
+  llm.test）归属；`GET /api/llm/usage` 聚合（总数+按模块+按天）、`GET /api/llm/balance`
+  查询 DeepSeek 平台余额（/user/balance，API key 即授权）；LLM 设置页展示；
+  platform.deepseek.com/usage 网页明细需登录无法程序化抓取，用本地记录为主
+
 - **业务数据一律进「本地数据管理」**（SQLite KV/表，`core/kvStore`/`tableStore`），
   运行时从库里读取；**禁止在代码中硬编码运行时数据**（表格、流水、配置、分析/探查结果等）
 - **代码内常量只允许作为「工厂默认值」**，通过**幂等 seed** 写入（KV 已有该 key 则跳过，

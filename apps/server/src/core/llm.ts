@@ -95,6 +95,8 @@ interface ChatOptions {
   search?: boolean;
   /** 外部取消信号（任务取消/超时中断 LLM 请求） */
   signal?: AbortSignal;
+  /** 用量归属模块（如 cb-rate / watchlist.fundamental），用于用量监控 */
+  module?: string;
 }
 
 /** 组合外部信号与内置超时（AbortSignal.any：任一触发即中断） */
@@ -115,7 +117,12 @@ export async function chat(
   messages: LlmChatMessage[],
   opts: ChatOptions = {},
 ): Promise<LlmChatResult> {
-  return opts.search ? chatSearch(messages, opts) : chatCompletion(messages, opts);
+  const result = opts.search ? await chatSearch(messages, opts) : await chatCompletion(messages, opts);
+  // 用量监控：成功且有 usage 时记录（模块归属）
+  if (result.ok && result.usage) {
+    recordLlmUsage(opts.module ?? "unknown", result.model, result.usage);
+  }
+  return result;
 }
 
 /** Chat Completions 实现（无搜索） */
@@ -253,7 +260,7 @@ export async function testConnection(): Promise<LlmTestResult> {
     return { ok: false, message: "未配置 DeepSeek API key" };
   }
   const start = Date.now();
-  const r = await chat([{ role: "user", content: "ping" }], { model: DEFAULT_MODEL });
+  const r = await chat([{ role: "user", content: "ping" }], { model: DEFAULT_MODEL, module: "llm.test" });
   const latencyMs = Date.now() - start;
   if (!r.ok) {
     return { ok: false, message: r.message };
@@ -264,4 +271,106 @@ export async function testConnection(): Promise<LlmTestResult> {
     latencyMs,
     model: r.model,
   };
+}
+
+// ============================================================
+// LLM 用量监控（切面记录）：每次 chat 成功记录到 KV，可按模块/按天聚合
+// ============================================================
+
+import { kvGet, kvSet } from "./kvStore.js";
+import type { LlmUsageSummary } from "@toolbox/shared";
+
+/** 用量日志 KV key（本地数据管理可见） */
+export const LLM_USAGE_KEY = "llmUsage:log";
+
+/** 日志上限（超出截断最旧） */
+const USAGE_MAX = 2000;
+
+interface UsageEntry {
+  ts: string;
+  module: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+function readUsageEntries(): UsageEntry[] {
+  const saved = kvGet<{ entries?: unknown[] }>(LLM_USAGE_KEY);
+  if (!Array.isArray(saved?.entries)) return [];
+  return saved.entries
+    .filter((e): e is UsageEntry => !!e && typeof (e as UsageEntry).ts === "string")
+    .slice();
+}
+
+/** 记录一次 LLM 用量（失败不影响主流程） */
+function recordLlmUsage(module: string, model: string, usage: { promptTokens?: number; completionTokens?: number }): void {
+  try {
+    const entries = readUsageEntries();
+    entries.push({
+      ts: new Date().toISOString(),
+      module: module || "unknown",
+      model: model || "unknown",
+      promptTokens: usage.promptTokens ?? 0,
+      completionTokens: usage.completionTokens ?? 0,
+    });
+    if (entries.length > USAGE_MAX) entries.splice(0, entries.length - USAGE_MAX);
+    kvSet(LLM_USAGE_KEY, { entries });
+  } catch {
+    // 记录失败静默
+  }
+}
+
+/** 用量汇总（总数 + 按模块 + 按天） */
+export function getLlmUsageSummary(): LlmUsageSummary {
+  const entries = readUsageEntries();
+  const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const byModule = new Map<string, { calls: number; totalTokens: number }>();
+  const byDay = new Map<string, { calls: number; totalTokens: number }>();
+  for (const e of entries) {
+    total.promptTokens += e.promptTokens;
+    total.completionTokens += e.completionTokens;
+    total.totalTokens += e.promptTokens + e.completionTokens;
+    const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0 };
+    m.calls++;
+    m.totalTokens += e.promptTokens + e.completionTokens;
+    byModule.set(e.module, m);
+    const day = e.ts.slice(0, 10);
+    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0 };
+    d.calls++;
+    d.totalTokens += e.promptTokens + e.completionTokens;
+    byDay.set(day, d);
+  }
+  const sortDesc = (a: { totalTokens: number }, b: { totalTokens: number }) => b.totalTokens - a.totalTokens;
+  return {
+    ok: true,
+    total,
+    byModule: [...byModule.entries()].map(([module, v]) => ({ module, ...v })).sort(sortDesc),
+    byDay: [...byDay.entries()].map(([day, v]) => ({ day, ...v })).sort((a, b) => (a.day < b.day ? 1 : -1)),
+  };
+}
+
+/** 查询 DeepSeek 平台余额（用户 API key 即授权；失败返回错误信息） */
+export async function getDeepSeekBalance(): Promise<{ ok: boolean; balance?: { currency: string; totalBalance: string; grantedBalance: string; toppedUpBalance: string }[]; isAvailable?: boolean; message?: string }> {
+  const apiKey = loadApiKey();
+  if (!apiKey) return { ok: false, message: "未配置 DeepSeek API key，请先在「LLM 设置」中配置" };
+  try {
+    const res = await fetch("https://api.deepseek.com/user/balance", {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = (await res.json().catch(() => null)) as { balance_infos?: { currency?: string; total_balance?: string; granted_balance?: string; topped_up_balance?: string }[]; is_available?: boolean; error?: { message?: string } } | null;
+    if (!res.ok || !data) return { ok: false, message: data?.error?.message ?? `DeepSeek API HTTP ${res.status}` };
+    return {
+      ok: true,
+      balance: (data.balance_infos ?? []).map((b) => ({
+        currency: b.currency ?? "",
+        totalBalance: b.total_balance ?? "0",
+        grantedBalance: b.granted_balance ?? "0",
+        toppedUpBalance: b.topped_up_balance ?? "0",
+      })),
+      isAvailable: data.is_available,
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
 }

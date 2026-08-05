@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { PageHeader } from "../ui";
-import type { LlmStatusResponse, LlmTestResult } from "@toolbox/shared";
+import type { LlmBalanceResult, LlmStatusResponse, LlmTestResult, LlmUsageSummary } from "@toolbox/shared";
 
 const card: CSSProperties = {
   background: "#fff",
@@ -44,6 +44,22 @@ export default function LlmSettings() {
   const [chatting, setChatting] = useState(false);
   const [chatReply, setChatReply] = useState<string | null>(null);
   const [chatUsage, setChatUsage] = useState<string | null>(null);
+  // 用量监控 + 平台余额
+  const [usage, setUsage] = useState<LlmUsageSummary | null>(null);
+  const [balance, setBalance] = useState<LlmBalanceResult | null>(null);
+
+  const refreshUsage = async () => {
+    try {
+      setUsage(await api.llmUsage());
+    } catch {
+      // 静默
+    }
+    try {
+      setBalance(await api.llmBalance());
+    } catch {
+      setBalance({ ok: false, message: "余额查询失败" });
+    }
+  };
 
   const refreshStatus = async () => {
     try {
@@ -57,6 +73,7 @@ export default function LlmSettings() {
 
   useEffect(() => {
     void refreshStatus();
+    void refreshUsage();
   }, []);
 
   const saveKey = async () => {
@@ -194,8 +211,7 @@ export default function LlmSettings() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
           <button style={{ ...btn, background: "#0891b2" }} onClick={runTest} disabled={testing || !status?.configured} type="button">
             {testing ? "测试中…" : "🔌 测试连接"}
-          </button>
-          {testResult && (
+          </button>          {testResult && (
             testResult.ok ? (
               <span style={{ color: "#16a34a", fontSize: "0.9rem" }}>✅ {testResult.message}（{testResult.latencyMs}ms）</span>
             ) : (
@@ -252,6 +268,80 @@ export default function LlmSettings() {
           {msg.text}
         </div>
       )}
+
+      {/* 用量监控 + 平台余额 */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600, fontSize: "1rem" }}>📊 LLM 用量监控</span>
+          <button style={{ ...btn, background: "#64748b", padding: "0.3rem 0.8rem", fontSize: "0.8rem" }} onClick={refreshUsage} type="button">
+            ⟳ 刷新
+          </button>
+        </div>
+
+        {/* 平台余额 */}
+        <div style={{ marginBottom: "0.7rem", padding: "0.6rem 0.8rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: "0.85rem" }}>
+          <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>💰 DeepSeek 平台余额（platform.deepseek.com/usage）</div>
+          {balance === null ? (
+            <span style={{ color: "#94a3b8" }}>加载中…</span>
+          ) : balance.ok ? (
+            <div>
+              {(balance.balance ?? []).map((b) => (
+                <div key={b.currency} style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap" }}>
+                  <span><b>{b.currency}</b> 总余额 <b>{b.totalBalance}</b></span>
+                  <span style={{ color: "#64748b" }}>充值 {b.toppedUpBalance} · 赠送 {b.grantedBalance}</span>
+                  <span style={{ color: balance.isAvailable ? "#15803d" : "#b91c1c" }}>
+                    {balance.isAvailable ? "✓ 可用" : "✗ 不可用"}
+                  </span>
+                </div>
+              ))}
+              {(balance.balance ?? []).length === 0 && <span style={{ color: "#94a3b8" }}>无余额信息</span>}
+            </div>
+          ) : (
+            <span style={{ color: "#b91c1c" }}>{balance.message}</span>
+          )}
+        </div>
+
+        {/* 本地用量汇总 */}
+        <div style={{ fontSize: "0.85rem" }}>
+          <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", marginBottom: "0.5rem", color: "#334155" }}>
+            <span>总调用 <b>{usage?.total.calls ?? 0}</b> 次</span>
+            <span>输入 <b>{((usage?.total.promptTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
+            <span>输出 <b>{((usage?.total.completionTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
+            <span>合计 <b>{((usage?.total.totalTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按模块</div>
+              {usage?.byModule.length ? (
+                usage.byModule.map((m) => (
+                  <div key={m.module} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                    <span>{m.module}</span>
+                    <span style={{ color: "#64748b" }}>{m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k</span>
+                  </div>
+                ))
+              ) : (
+                <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>暂无记录（LLM 调用后自动累积）</span>
+              )}
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按天</div>
+              {usage?.byDay.length ? (
+                usage.byDay.map((d) => (
+                  <div key={d.day} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                    <span>{d.day}</span>
+                    <span style={{ color: "#64748b" }}>{d.calls} 次 · {((d.totalTokens / 1000).toFixed(1))}k</span>
+                  </div>
+                ))
+              ) : (
+                <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>暂无记录</span>
+              )}
+            </div>
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem" }}>
+            ℹ️ 用量由服务端切面记录（每次 LLM 调用的 token 数，按模块归属），存于本地数据管理（llmUsage:log）。platform.deepseek.com/usage 网页明细需登录，本页展示本地统计 + 平台余额（API key 授权）。
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

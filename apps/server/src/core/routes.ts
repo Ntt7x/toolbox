@@ -13,9 +13,19 @@ import {
   type PromptDetailResult,
   type PromptsListResult,
 } from "@toolbox/shared";
-import { DEFAULT_MODEL, chat, clearApiKey, loadApiKey, saveApiKey, testConnection } from "./llm.js";
+import { DEFAULT_MODEL, chat, clearApiKey, getDeepSeekBalance, getLlmUsageSummary, loadApiKey, saveApiKey, testConnection } from "./llm.js";
 import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./prompts.js";
 import { getQuoteSnapshot } from "./quote.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+// 注册数据源：LLM 用量日志（本地数据管理可见）
+registerDataSource({
+  kind: "kv",
+  name: "llmUsage:",
+  page: "LLM 设置",
+  tag: "运行状态",
+  description: "LLM 用量日志（切面记录，按模块/按天聚合）",
+});
 
 export function registerLlmRoutes(app: Hono): void {
   app.get(`${API_PREFIX}/llm/status`, (c) => {
@@ -69,6 +79,18 @@ export function registerQuoteRoutes(app: Hono): void {
     const force = c.req.query("force") === "1";
     const result = await getQuoteSnapshot(code, { force });
     return c.json(result, result.ok ? 200 : 400);
+  });
+}
+
+/** LLM 用量监控路由（服务端切面记录聚合 + DeepSeek 平台余额） */
+export function registerLlmUsageRoutes(app: Hono): void {
+  // 用量汇总（总数 + 按模块 + 按天）
+  app.get(`${API_PREFIX}/llm/usage`, (c) => {
+    return c.json(getLlmUsageSummary());
+  });
+  // DeepSeek 平台余额（用户 API key 即授权）
+  app.get(`${API_PREFIX}/llm/balance`, async (c) => {
+    return c.json(await getDeepSeekBalance());
   });
 }
 

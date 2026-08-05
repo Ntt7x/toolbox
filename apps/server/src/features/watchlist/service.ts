@@ -65,7 +65,7 @@ export async function fundamentalAnalysis(
     { role: "user" as const, content: "请联网搜索该股票最新财报并输出 JSON。" },
   ];
 
-  const result = await chat(messages, { temperature: 0.3, search: true, ...(opts.signal ? { signal: opts.signal } : {}) });
+  const result = await chat(messages, { temperature: 0.3, search: true, module: "watchlist.fundamental", ...(opts.signal ? { signal: opts.signal } : {}) });
   if (!result.ok) return { ok: false, code: stockCode, summary: "", message: result.message };
 
   const content = result.content.trim();
@@ -142,7 +142,7 @@ export async function importFromChat(shareUrl: string, signal?: AbortSignal, top
       { role: "system" as const, content: template },
       { role: "user" as const, content: "请整理上述对话并输出 JSON。" },
     ],
-    { temperature: 0.2, ...(signal ? { signal } : {}) },
+    { temperature: 0.2, module: "watchlist.import", ...(signal ? { signal } : {}) },
   );
   if (!result.ok) throw new Error(result.message);
 
