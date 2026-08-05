@@ -135,8 +135,11 @@ export const api = {
     ),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
-  localEntries: (q: { source?: string; table?: string }) =>
+  localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) =>
     request<LocalDataResult>(`/data/local/entries?${new URLSearchParams(q as Record<string, string>).toString()}`),
+  /** 批量清空数据源（KV，key 归属校验） */
+  localClearSource: (source: string) =>
+    request<{ ok: boolean; deleted: number }>(`/data/local/entries?source=${encodeURIComponent(source)}`, jsonInit("DELETE", {})),
   localEntry: (q: { source?: string; table?: string; key: string }) =>
     request<LocalDataResult>(`/data/local/entry?${new URLSearchParams(q as Record<string, string>).toString()}`),
   localDelete: (q: { source?: string; table?: string; key: string }) =>

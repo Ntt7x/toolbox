@@ -1,4 +1,10 @@
-import { useEffect, useState, type CSSProperties } from "react";
+// ============================================================
+// 本地数据管理：查看与维护本地持久化数据（SQLite KV/表）
+// 增强：源列表按 tag 分组、条目搜索/分页、缓存类源一键清空、
+//       详情 JSON 格式化查看 + 编辑
+// ============================================================
+
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { PageHeader } from "../ui";
 import type { LocalDataSource, LocalDataEntry } from "@toolbox/shared";
@@ -29,6 +35,7 @@ const chip = (bg: string, fg: string): CSSProperties => ({
   borderRadius: 999,
   fontSize: "0.72rem",
   fontWeight: 700,
+  whiteSpace: "nowrap",
 });
 
 const thTd: CSSProperties = {
@@ -41,43 +48,124 @@ const thTd: CSSProperties = {
 
 const th: CSSProperties = { ...thTd, background: "#f1f5f9", fontWeight: 600 };
 
+const input: CSSProperties = {
+  padding: "0.4rem 0.7rem",
+  borderRadius: 8,
+  border: "1px solid #cbd5e1",
+  fontSize: "0.82rem",
+  outline: "none",
+};
+
+/** tag 颜色映射 */
+const TAG_COLOR: Record<string, [string, string]> = {
+  设置数据: ["#eff6ff", "#1d4ed8"],
+  自选数据: ["#f5f3ff", "#6d28d9"],
+  分析缓存: ["#fef3c7", "#b45309"],
+  分析数据: ["#ecfdf5", "#047857"],
+  存量数据: ["#fef2f2", "#b91c1c"],
+  运行状态: ["#f0f9ff", "#0369a1"],
+  改进备忘录: ["#fffbeb", "#a16207"],
+  未标记: ["#f1f5f9", "#475569"],
+};
+
+function tagStyle(tag: string): CSSProperties {
+  const [bg, fg] = TAG_COLOR[tag] ?? ["#f1f5f9", "#475569"];
+  return chip(bg, fg);
+}
+
+const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "存量数据", "运行状态", "改进备忘录", "未标记"];
+
+const PAGE_SIZE = 200;
+
 export default function LocalData() {
   const [sources, setSources] = useState<LocalDataSource[] | null>(null);
   const [active, setActive] = useState<LocalDataSource | null>(null);
   const [entries, setEntries] = useState<LocalDataEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [searchText, setSearchText] = useState("");
   const [detail, setDetail] = useState<{ key: string; value: unknown; updatedAt?: string } | null>(null);
+  const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const loadSources = async () => {
+  const loadSources = useCallback(async () => {
     try {
       const r = await api.localSources();
       if (r.ok && "sources" in r) setSources(r.sources);
     } catch (e) {
       setMsg({ kind: "err", text: errMsg(e) });
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadSources();
+  }, [loadSources]);
+
+  /** 加载条目（搜索/分页） */
+  const loadEntries = useCallback(async (s: LocalDataSource, search: string, off: number) => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const q = s.kind === "kv"
+        ? { source: s.name, search: search || undefined, limit: PAGE_SIZE, offset: off }
+        : { table: s.name, search: search || undefined, limit: PAGE_SIZE, offset: off };
+      const r = await api.localEntries(q);
+      if (r.ok && "entries" in r) {
+        const list = r.entries as LocalDataEntry[];
+        setEntries((prev) => (off === 0 ? list : [...prev, ...list]));
+        setTotal(r.total);
+        setOffset(off + list.length);
+      } else if (!r.ok) {
+        setMsg({ kind: "err", text: r.message });
+      }
+    } catch (e) {
+      setMsg({ kind: "err", text: errMsg(e) });
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const openSource = async (s: LocalDataSource) => {
     setActive(s);
     setDetail(null);
-    setLoading(true);
+    setEditing(false);
+    setEntries([]);
+    setTotal(0);
+    setOffset(0);
+    setSearchText("");
+    await loadEntries(s, "", 0);
+  };
+
+  const applySearch = async () => {
+    if (!active) return;
+    setEntries([]);
+    setTotal(0);
+    setOffset(0);
+    await loadEntries(active, searchText.trim(), 0);
+  };
+
+  const loadMore = async () => {
+    if (!active) return;
+    await loadEntries(active, searchText.trim(), offset);
+  };
+
+  const clearSource = async () => {
+    if (!active || active.kind !== "kv") return;
+    if (!window.confirm(`确定清空数据源「${active.name}」全部 ${total} 条？\n（缓存/分析类可重新生成；请确认非重要数据）`)) return;
     setMsg(null);
     try {
-      const r = s.kind === "kv"
-        ? await api.localEntries({ source: s.name })
-        : await api.localEntries({ table: s.name });
-      if (r.ok && "entries" in r) setEntries(r.entries);
-      else if (!r.ok) setMsg({ kind: "err", text: r.message });
+      const r = await api.localClearSource(active.name);
+      if (r.ok) {
+        setMsg({ kind: "ok", text: `已清空 ${r.deleted} 条` });
+        setEntries([]);
+        setTotal(0);
+        setOffset(0);
+        await loadSources();
+      }
     } catch (e) {
       setMsg({ kind: "err", text: errMsg(e) });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -92,6 +180,7 @@ export default function LocalData() {
       if (r.ok && "value" in r) {
         setDetail({ key, value: r.value, updatedAt: r.updatedAt });
         setEditText(JSON.stringify(r.value, null, 2));
+        setEditing(false);
       } else if (!r.ok) {
         setMsg({ kind: "err", text: r.message });
       }
@@ -113,7 +202,8 @@ export default function LocalData() {
       if (r.ok) {
         setMsg({ kind: "ok", text: `已删除 ${key}` });
         setDetail(null);
-        await openSource(active);
+        await loadEntries(active, searchText.trim(), 0);
+        await loadSources();
       } else {
         setMsg({ kind: "err", text: r.message });
       }
@@ -136,7 +226,9 @@ export default function LocalData() {
       const r = await api.localUpdate({ source: active.name, key: detail.key, value });
       if (r.ok) {
         setMsg({ kind: "ok", text: `已更新 ${detail.key}` });
-        await openSource(active);
+        setEditing(false);
+        await loadEntries(active, searchText.trim(), 0);
+        await loadSources();
       } else {
         setMsg({ kind: "err", text: r.message });
       }
@@ -145,11 +237,23 @@ export default function LocalData() {
     }
   };
 
+  /** 源列表按 tag 分组 */
+  const groups = useCallback(() => {
+    if (!sources) return [];
+    const grouped = new Map<string, LocalDataSource[]>();
+    for (const s of sources) {
+      const list = grouped.get(s.tag) ?? [];
+      list.push(s);
+      grouped.set(s.tag, list);
+    }
+    return TAG_ORDER.filter((t) => grouped.has(t)).map((t) => ({ tag: t, items: grouped.get(t)! }));
+  }, [sources]);
+
   return (
     <div>
       <PageHeader
         title="🗄️ 本地数据管理"
-        desc="查看与维护本地持久化数据（SQLite：表模型 + Key-结构化 Value）。数据带「页面 tag」标记来源与使用场景。"
+        desc="查看与维护本地持久化数据（SQLite：表模型 + Key-结构化 Value）。数据带「页面 tag」标记来源与场景；支持搜索、分页、缓存类源一键清空。"
       />
 
       {msg && (
@@ -158,57 +262,81 @@ export default function LocalData() {
         </div>
       )}
 
-      {/* 数据源列表 */}
+      {/* 数据源列表（按 tag 分组） */}
       {!active && (
         <div>
           {sources === null ? (
             <div style={card}>加载中…</div>
           ) : (
-            sources.map((s) => (
-              <div key={`${s.kind}:${s.name}`} style={{ ...card, cursor: "pointer" }} onClick={() => void openSource(s)}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-                  <span style={chip(s.kind === "kv" ? "#eff6ff" : "#f5f3ff", s.kind === "kv" ? "#1d4ed8" : "#6d28d9")}>
-                    {s.kind === "kv" ? "KV" : "表"}
-                  </span>
-                  <b>{s.name}</b>
-                  <span style={chip("#fef3c7", "#b45309")}>📄 {s.page}</span>
-                  <span style={chip("#ecfdf5", "#047857")}>🏷 {s.tag}</span>
-                  <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>{s.count} 条 →</span>
+            groups().map((g) => (
+              <div key={g.tag} style={{ marginBottom: "0.9rem" }}>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748b", marginBottom: "0.35rem", letterSpacing: "0.05em" }}>
+                  {g.tag}（{g.items.reduce((s, x) => s + x.count, 0)} 条）
                 </div>
-                <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginTop: "0.3rem" }}>{s.description}</div>
+                {g.items.map((s) => (
+                  <div key={`${s.kind}:${s.name}`} style={{ ...card, cursor: "pointer" }} onClick={() => void openSource(s)}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <span style={chip(s.kind === "kv" ? "#eff6ff" : "#f5f3ff", s.kind === "kv" ? "#1d4ed8" : "#6d28d9")}>
+                        {s.kind === "kv" ? "KV" : "表"}
+                      </span>
+                      <b style={{ fontSize: "0.9rem" }}>{s.name}</b>
+                      <span style={chip("#fef3c7", "#b45309")}>📄 {s.page}</span>
+                      <span style={tagStyle(s.tag)}>🏷 {s.tag}</span>
+                      <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>{s.count} 条 →</span>
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.3rem" }}>{s.description}</div>
+                  </div>
+                ))}
               </div>
             ))
           )}
         </div>
       )}
 
-      {/* 数据源条目列表 */}
+      {/* 数据源条目列表（搜索 + 分页 + 清空） */}
       {active && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
             <button style={{ ...btn, background: "#64748b" }} onClick={() => { setActive(null); setDetail(null); setEntries([]); void loadSources(); }} type="button">
               ← 返回
             </button>
             <span style={chip(active.kind === "kv" ? "#eff6ff" : "#f5f3ff", active.kind === "kv" ? "#1d4ed8" : "#6d28d9")}>{active.kind === "kv" ? "KV" : "表"}</span>
             <b>{active.name}</b>
-            <span style={chip("#fef3c7", "#b45309")}>📄 {active.page}</span>
-            <span style={chip("#ecfdf5", "#047857")}>🏷 {active.tag}</span>
-            <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>{entries.length} 条</span>
+            <span style={tagStyle(active.tag)}>🏷 {active.tag}</span>
+            <span style={{ color: "#64748b", fontSize: "0.8rem" }}>{total} 条</span>
+            {active.kind === "kv" && (
+              <button style={{ ...btn, background: "#dc2626", marginLeft: "auto" }} onClick={() => void clearSource()} type="button">
+                🗑 清空数据源
+              </button>
+            )}
           </div>
 
-          {loading ? (
+          {/* 搜索 */}
+          <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.6rem", alignItems: "center" }}>
+            <input
+              style={{ ...input, flex: 1, maxWidth: 360 }}
+              placeholder="搜索 key / 值内容（包含匹配）"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void applySearch(); }}
+            />
+            <button style={btn} onClick={() => void applySearch()} type="button">🔍 搜索</button>
+            <button style={{ ...btn, background: "#64748b" }} onClick={() => { setSearchText(""); void applySearch(); }} type="button">清空</button>
+          </div>
+
+          {loading && entries.length === 0 ? (
             <div style={card}>加载中…</div>
           ) : entries.length === 0 ? (
             <div style={card}>（空）</div>
           ) : (
-            <div style={card} className="noPad">
+            <div style={card}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={th}>key</th>
                     <th style={th}>更新时间</th>
                     <th style={th}>预览</th>
-                    <th style={{ ...th, width: 120 }}>操作</th>
+                    <th style={{ ...th, width: 130 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -231,6 +359,13 @@ export default function LocalData() {
                   ))}
                 </tbody>
               </table>
+              {offset < total && (
+                <div style={{ textAlign: "center", marginTop: "0.7rem" }}>
+                  <button style={{ ...btn, background: "#64748b" }} onClick={() => void loadMore()} disabled={loading} type="button">
+                    {loading ? "加载中…" : `加载更多（已显示 ${offset}/${total}）`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -242,19 +377,24 @@ export default function LocalData() {
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
             <b style={{ fontSize: "0.92rem" }}>📄 {detail.key}</b>
             {detail.updatedAt && <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>更新于 {new Date(detail.updatedAt).toLocaleString()}</span>}
+            <span style={{ marginLeft: "auto" }}>
+              {!editing ? (
+                <button style={{ ...btn, background: "#0891b2" }} onClick={() => setEditing(true)} type="button">✏️ 编辑</button>
+              ) : (
+                <>
+                  <button style={{ ...btn, background: "#16a34a" }} onClick={saveEdit} type="button">💾 保存</button>{" "}
+                  <button style={{ ...btn, background: "#64748b" }} onClick={() => setEditing(false)} type="button">取消</button>
+                </>
+              )}
+            </span>
           </div>
-          {active.kind === "kv" ? (
-            <>
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                rows={10}
-                style={{ width: "100%", marginTop: "0.6rem", fontFamily: "monospace", fontSize: "0.8rem", borderRadius: 8, border: "1px solid #cbd5e1", padding: "0.6rem" }}
-              />
-              <div style={{ marginTop: "0.6rem" }}>
-                <button style={{ ...btn, background: "#16a34a" }} onClick={saveEdit} type="button">💾 保存修改</button>
-              </div>
-            </>
+          {editing ? (
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={12}
+              style={{ width: "100%", marginTop: "0.6rem", fontFamily: "monospace", fontSize: "0.8rem", borderRadius: 8, border: "1px solid #cbd5e1", padding: "0.6rem", boxSizing: "border-box" }}
+            />
           ) : (
             <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#0f172a", color: "#e2e8f0", padding: "0.8rem 1rem", borderRadius: 8, marginTop: "0.6rem", fontSize: "0.78rem", maxHeight: "24rem", overflowY: "auto" }}>
               {JSON.stringify(detail.value, null, 2)}

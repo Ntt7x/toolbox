@@ -721,6 +721,9 @@ export interface LocalDataListResponse {
   source: { kind: "kv" | "table"; name: string };
   entries: LocalDataEntry[];
   total: number;
+  /** 分页：当前偏移/页大小 */
+  offset?: number;
+  limit?: number;
 }
 
 /** 详情（KV：完整 value；表：整行） */
