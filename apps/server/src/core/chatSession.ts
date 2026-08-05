@@ -20,8 +20,22 @@ export const SESSION_PREFIX = "chatSession:";
 
 /** 默认会话 TTL：30 分钟（DeepSeek 缓存 TTL 数小时，会话不宜跨天） */
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
-/** 历史压缩阈值：保留最近轮数（system 恒定，永不删除） */
-const KEEP_RECENT_TURNS = 6;
+/** 历史压缩触发阈值（估算 tokens；借鉴 Reasonix compact：达到预算即压缩） */
+const COMPACT_TRIGGER_TOKENS = 6000;
+/** 压缩后保留的 verbatim 尾部预算（tokens） */
+const TAIL_BUDGET_TOKENS = 4000;
+/** 至少保留的最近轮数（用户/助手成对，即使超过预算） */
+const MIN_RECENT_TURNS = 2;
+/** 字符→token 估算系数（Reasonix fallbackTokPerChar=0.25） */
+const TOK_PER_CHAR = 0.25;
+
+/** 估算文本 tokens（仅用于压缩决策，非计费） */
+function estTokens(text: string): number {
+  return Math.ceil(text.length * TOK_PER_CHAR);
+}
+
+/** 折叠标记（类似 Reasonix summaryTag，机械折叠不用 LLM） */
+const COMPACTED_MARKER = "[compacted 早期历史]";
 
 export interface ChatSession {
   id: string;
@@ -93,17 +107,34 @@ function loadSession(id: string): ChatSession | null {
   return s;
 }
 
-/** 压缩历史：超长时保留 system + 最近 N 轮，丢弃更早（统计 droppedTurns） */
+/** 压缩历史（借鉴 Reasonix compact：按 token 预算）：
+ * 超触发阈值时保留 system + 最近 verbatim tail（预算内且至少 MIN_RECENT_TURNS 轮），
+ * 更早轮次折叠为一行标记（机械折叠，不调 LLM）。system 恒定为前缀锚点，永不删除。 */
 export function compactSession(id: string): ChatSession | null {
   const s = loadSession(id);
   if (!s) return null;
-  const kept = s.history.slice(-KEEP_RECENT_TURNS * 2); // user+assistant 成对
+  const total = s.history.reduce((sum, m) => sum + estTokens(m.content), 0);
+  if (total <= COMPACT_TRIGGER_TOKENS) return s; // 未达触发阈值，无需压缩
+
+  // 从尾部向前累计保留（verbatim tail），至少 MIN_RECENT_TURNS 轮
+  let keep = 0;
+  let budget = 0;
+  for (let i = s.history.length - 1; i >= 0; i--) {
+    budget += estTokens(s.history[i].content);
+    keep++;
+    if (budget >= TAIL_BUDGET_TOKENS && keep >= MIN_RECENT_TURNS * 2) break;
+    if (keep >= s.history.length) break;
+  }
+  const kept = s.history.slice(s.history.length - keep);
   const dropped = s.history.length - kept.length;
   if (dropped > 0) {
-    s.history = kept;
+    s.history = [
+      { role: "user" as const, content: COMPACTED_MARKER }, // 折叠标记（保前缀锚点语义）
+      ...kept,
+    ];
     s.droppedTurns += Math.round(dropped / 2);
+    kvSet(keyOf(id), s);
   }
-  kvSet(keyOf(id), s);
   return s;
 }
 
@@ -132,6 +163,8 @@ export async function chatSessionAsk(sessionId: string, userMessage: string): Pr
     s.history.push({ role: "user", content: userMessage }, { role: "assistant", content: result.content });
     s.lastAt = Date.now();
     kvSet(keyOf(s.id), s);
+    // 历史超预算 → 压缩（保留 verbatim tail）
+    compactSession(s.id);
   }
   return result;
 }

@@ -341,8 +341,8 @@ function readUsageEntries(): UsageEntry[] {
     .slice();
 }
 
-/** 记录一次 LLM 用量（失败不影响主流程） */
-function recordLlmUsage(
+/** 记录一次 LLM 用量（失败不影响主流程）；导出供三模式共用 */
+export function recordLlmUsage(
   module: string,
   model: string,
   usage: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number },
