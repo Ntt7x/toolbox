@@ -14,6 +14,7 @@ import type {
   WatchlistStock,
   WatchlistSummary,
   WatchlistTopic,
+  WatchlistUpdateRequest,
 } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -89,6 +90,7 @@ export default function WatchlistTool() {
 
   // 新建专题
   const [newName, setNewName] = useState("");
+  const [newDesc, setNewDesc] = useState("");
   // 添加股票
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
@@ -132,9 +134,10 @@ export default function WatchlistTool() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await api.watchlistCreate(name);
+      const r = await api.watchlistCreate(name, newDesc.trim() || undefined);
       if (r.ok) {
         setNewName("");
+        setNewDesc("");
         setSelectedId(r.topic.id);
         await refreshList();
       }
@@ -147,11 +150,14 @@ export default function WatchlistTool() {
 
   const renameTopic = async () => {
     if (!topic) return;
+    const patch: { name?: string; description?: string } = {};
     const name = (topic.name || "").trim();
-    if (!name) return;
+    if (name) patch.name = name;
+    // 介绍：与 name 一起提交（输入框 blur 触发）
+    if (topic.description !== undefined) patch.description = topic.description;
     setErr(null);
     try {
-      const r = await api.watchlistUpdate(topic.id, { name });
+      const r = await api.watchlistUpdate(topic.id, patch as WatchlistUpdateRequest);
       if (r.ok) {
         setTopic(r.topic);
         await refreshList();
@@ -283,6 +289,12 @@ export default function WatchlistTool() {
             <input style={{ ...input, flex: 1 }} placeholder="新专题名称" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void createTopic(); }} />
             <button style={btn} onClick={() => void createTopic()} disabled={loading} type="button">新建</button>
           </div>
+          <textarea
+            style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.82rem", boxSizing: "border-box" }}
+            placeholder="专题介绍（可选，如主题逻辑/选股思路）"
+            value={newDesc}
+            onChange={(e) => setNewDesc(e.target.value)}
+          />
           {topics.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>还没有专题，先新建一个。</div>}
           {topics.map((t) => (
             <div
@@ -313,7 +325,7 @@ export default function WatchlistTool() {
           ) : (
             <div>
               {/* 标题 + 操作 */}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.3rem" }}>
                 <input
                   style={{ ...input, fontWeight: 700, fontSize: "1.05rem", flex: 1 }}
                   value={topic.name}
@@ -324,6 +336,15 @@ export default function WatchlistTool() {
                 <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>更新于 {topic.updatedAt.slice(0, 10)} · {topic.stocks.length} 只</span>
                 <button style={btnGhost} onClick={() => void deleteTopic()} type="button">删除专题</button>
               </div>
+
+              {/* 专题介绍（双击/失焦保存；空则显示占位） */}
+              <textarea
+                style={{ ...input, width: "100%", resize: "vertical", minHeight: 52, fontSize: "0.85rem", boxSizing: "border-box", marginBottom: "0.8rem", color: topic.description ? "#334155" : "#94a3b8" }}
+                placeholder="📖 专题介绍（可选）：主题逻辑 / 选股思路 / 风险提示…"
+                value={topic.description ?? ""}
+                onChange={(e) => setTopic({ ...topic, description: e.target.value })}
+                onBlur={() => void renameTopic()}
+              />
 
               {/* 添加个股 */}
               <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem" }}>

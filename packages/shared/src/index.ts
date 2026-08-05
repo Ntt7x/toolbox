@@ -753,6 +753,8 @@ export interface WatchlistStock {
 export interface WatchlistTopic {
   id: string;
   name: string;
+  /** 专题介绍（主题逻辑/选股思路，可选） */
+  description?: string;
   createdAt: string;
   updatedAt: string;
   stocks: WatchlistStock[];
@@ -773,6 +775,8 @@ export interface WatchlistListResult {
 
 export interface WatchlistCreateRequest {
   name: string;
+  /** 专题介绍（可选） */
+  description?: string;
 }
 
 export interface WatchlistCreateResult {
@@ -780,9 +784,11 @@ export interface WatchlistCreateResult {
   topic: WatchlistTopic;
 }
 
-/** 更新请求：改名 / 增删个股（原子提交） */
+/** 更新请求：改名 / 改介绍 / 增删个股（原子提交） */
 export interface WatchlistUpdateRequest {
   name?: string;
+  /** 专题介绍（传空字符串可清空） */
+  description?: string;
   addStocks?: WatchlistStock[];
   removeCodes?: string[];
 }

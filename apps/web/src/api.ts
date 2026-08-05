@@ -90,7 +90,8 @@ export const api = {
     request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
   // 专题自选股（专题 CRUD + 个股财报分析）
   watchlistList: () => request<WatchlistListResult>("/tools/watchlist"),
-  watchlistCreate: (name: string) => request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", { name })),
+  watchlistCreate: (name: string, description?: string) =>
+    request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", description ? { name, description } : { name })),
   watchlistDetail: (id: string) => request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
   watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
     request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),

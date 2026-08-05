@@ -49,18 +49,25 @@ export function getTopic(id: string): WatchlistTopic | null {
   return t && typeof t.id === "string" ? t : null;
 }
 
-/** 新建专题（同名允许，用 id 区分） */
-export function createTopic(name: string): WatchlistTopic {
+/** 新建专题（同名允许，用 id 区分；description 可选） */
+export function createTopic(name: string, description?: string): WatchlistTopic {
   const now = new Date().toISOString();
-  const topic: WatchlistTopic = { id: genTopicId(), name: name.trim(), createdAt: now, updatedAt: now, stocks: [] };
+  const topic: WatchlistTopic = {
+    id: genTopicId(),
+    name: name.trim(),
+    ...(description && description.trim() ? { description: description.trim() } : {}),
+    createdAt: now,
+    updatedAt: now,
+    stocks: [],
+  };
   kvSet(keyOf(topic.id), topic);
   return topic;
 }
 
-/** 更新专题（原子提交：改名 / 增删个股）；返回更新后专题，无则 null */
+/** 更新专题（原子提交：改名 / 改介绍 / 增删个股）；返回更新后专题，无则 null */
 export function updateTopic(
   id: string,
-  patch: { name?: string; addStocks?: WatchlistStock[]; removeCodes?: string[] },
+  patch: { name?: string; description?: string; addStocks?: WatchlistStock[]; removeCodes?: string[] },
 ): WatchlistTopic | null {
   const t = getTopic(id);
   if (!t) return null;
@@ -81,6 +88,10 @@ export function updateTopic(
   const next: WatchlistTopic = {
     ...t,
     name: typeof patch.name === "string" && patch.name.trim() ? patch.name.trim() : t.name,
+    // description 显式传值（含空串清空）才更新
+    ...(typeof patch.description === "string"
+      ? { description: patch.description.trim() ? patch.description.trim() : undefined }
+      : {}),
     updatedAt: new Date().toISOString(),
     stocks,
   };

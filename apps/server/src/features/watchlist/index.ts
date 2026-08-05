@@ -60,7 +60,7 @@ export function register(app: Hono): void {
     const raw = (await c.req.json().catch(() => null)) as WatchlistCreateRequest | null;
     const name = raw?.name?.trim() ?? "";
     if (!name) return c.json({ ok: false, message: "缺少专题名称" }, 400);
-    const topic = createTopic(name);
+    const topic = createTopic(name, raw?.description);
     return c.json({ ok: true, topic }, 201);
   });
 
@@ -86,6 +86,7 @@ export function register(app: Hono): void {
     if (!raw || typeof raw !== "object") return c.json({ ok: false, message: "请求体无效" }, 400);
     const topic = updateTopic(c.req.param("id"), {
       name: raw.name,
+      description: raw.description,
       addStocks: Array.isArray(raw.addStocks) ? raw.addStocks : undefined,
       removeCodes: Array.isArray(raw.removeCodes) ? raw.removeCodes : undefined,
     });
