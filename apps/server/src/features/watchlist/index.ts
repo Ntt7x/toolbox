@@ -22,6 +22,7 @@ import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
 import { fundamentalAnalysis, importFromChat, resolveStockName } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
+import { getFundSnapshots } from "../../core/fund.js";
 
 // 注册数据源：专题自选股（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -69,19 +70,27 @@ export function register(app: Hono): void {
   // 解析股票名称（标准行情工具）——必须在 /:id 之前注册（避免被当作 id）
   app.get(`${API_PREFIX}/tools/watchlist/resolve`, async (c) => {
     const code = c.req.query("code")?.trim() ?? "";
+    const kind = c.req.query("kind")?.trim() ?? "stock";
     if (!code) return c.json({ ok: false, message: "缺少 code 参数" }, 400);
-    const name = await resolveStockName(code);
-    return c.json({ ok: true, code, name });
+    const name = await resolveStockName(code, kind);
+    return c.json({ ok: true, code, kind, name });
   });
 
   // 批量快照（个股列表基本信息展示；复用公共行情模块缓存）
+  // codes 支持前缀：`fund:161725` 走场外基金净值接口（天天基金），其余走股票行情
   app.get(`${API_PREFIX}/tools/watchlist/quotes`, async (c) => {
     const codesRaw = c.req.query("codes")?.trim() ?? "";
-    const codes = codesRaw.split(",").map((s) => s.trim()).filter(Boolean);
-    if (codes.length === 0) return c.json({ ok: false, message: "缺少 codes 参数（逗号分隔）" }, 400);
-    if (codes.length > 40) return c.json({ ok: false, message: "一次最多 40 只" }, 400);
-    const quotes = await getQuoteSnapshots(codes, { force: c.req.query("force") === "1" });
-    return c.json({ ok: true, quotes });
+    const raw = codesRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (raw.length === 0) return c.json({ ok: false, message: "缺少 codes 参数（逗号分隔）" }, 400);
+    if (raw.length > 40) return c.json({ ok: false, message: "一次最多 40 只" }, 400);
+    const force = c.req.query("force") === "1";
+    const fundCodes = raw.filter((x) => x.startsWith("fund:")).map((x) => x.slice(5));
+    const stockCodes = raw.filter((x) => !x.startsWith("fund:"));
+    const [stockQuotes, fundQuotes] = await Promise.all([
+      stockCodes.length ? getQuoteSnapshots(stockCodes, { force }) : Promise.resolve([]),
+      fundCodes.length ? getFundSnapshots(fundCodes, { force }) : Promise.resolve([]),
+    ]);
+    return c.json({ ok: true, quotes: [...stockQuotes, ...fundQuotes] });
   });
 
   // Chat 导入：分享链接 → 提取对话 → LLM 整理 → 自动创建专题（后台任务）
@@ -151,14 +160,6 @@ export function register(app: Hono): void {
     const ok = deleteTopic(c.req.param("id"));
     if (!ok) return c.json({ ok: false, message: "专题不存在" }, 404);
     return c.json({ ok: true, deleted: 1 });
-  });
-
-  // 解析股票名称（标准行情工具）
-  app.get(`${API_PREFIX}/tools/watchlist/resolve`, async (c) => {
-    const code = c.req.query("code")?.trim() ?? "";
-    if (!code) return c.json({ ok: false, message: "缺少 code 参数" }, 400);
-    const name = await resolveStockName(code);
-    return c.json({ ok: true, code, name });
   });
 
   // 个股财报分析（LLM，后台任务 + 缓存）：POST ?code=xxx&force=1

@@ -9,6 +9,7 @@ import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
+import { getFundSnapshot } from "../../core/fund.js";
 import { extractShare } from "../../core/deepseekShare.js";
 import { createTopic, getTopic, updateTopic } from "./store.js";
 import type { WatchlistFundamentalResult, WatchlistStock, WatchlistTopic } from "@toolbox/shared";
@@ -23,11 +24,16 @@ function todayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-/** 用标准行情工具解析股票名称（快照接口，多源 failover；失败静默返回空） */
-export async function resolveStockName(code: string): Promise<string> {
+/** 解析名称（标准行情工具，多源 failover；kind=fund 走天天基金净值接口） */
+export async function resolveStockName(code: string, kind?: string): Promise<string> {
   try {
-    const q = await getQuoteSnapshot(code);
-    if (q.ok && q.name) return q.name;
+    if (kind === "fund") {
+      const f = await getFundSnapshot(code);
+      if (f.ok && f.name) return f.name;
+    } else {
+      const q = await getQuoteSnapshot(code);
+      if (q.ok && q.name) return q.name;
+    }
   } catch {
     // 行情接口失败静默：名称留空由用户/LLM 补
   }

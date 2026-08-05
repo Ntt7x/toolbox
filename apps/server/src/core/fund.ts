@@ -1,0 +1,101 @@
+// ============================================================
+// 场外基金（开放式基金）净值查询：天天基金移动 API
+// fundmobapi.eastmoney.com/FundMNewApi/FundMNBasicInformation
+// - 单位净值 DWJZ、净值日期 FSRQ、日涨跌 RZDF（%）、累计净值 LJJZ、
+//   区间收益、基金经理/公司、风险等级、申赎状态
+// - KV 缓存（净值 T+1、估算盘中更新；缓存 10 分钟）
+// ============================================================
+
+import type { FundSnapshot } from "@toolbox/shared";
+import { kvGet, kvSet } from "./kvStore.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+/** 基金快照缓存 TTL：10 分钟 */
+const FUND_TTL_MS = 10 * 60 * 1000;
+
+const FUND_CACHE_PREFIX = "fund:s:";
+
+/** 基金代码校验（6 位数字） */
+export function isFundCode(code: string): boolean {
+  return /^\d{6}$/.test(code.trim());
+}
+
+/** 从天天基金移动 API 拉取基金基本信息 */
+async function fetchFundInfo(code: string): Promise<Partial<FundSnapshot>> {
+  const url = `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNBasicInformation?FCODE=${code}&deviceid=Wap&plat=Wap&product=EFund&version=6.2.8`;
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`天天基金响应异常（HTTP ${res.status}）`);
+  const json = (await res.json().catch(() => null)) as {
+    Datas?: Record<string, unknown>;
+    Success?: boolean;
+    ErrMsg?: string | null;
+  } | null;
+  if (!json?.Success || !json.Datas) throw new Error(json?.ErrMsg ?? "天天基金未返回数据");
+  const d = json.Datas;
+  const num = (v: unknown): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) && n !== 0 ? n : undefined;
+  };
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() && v !== "--" ? v.trim() : undefined);
+  return {
+    name: str(d.SHORTNAME),
+    nav: num(d.DWJZ),
+    navDate: str(d.FSRQ),
+    pct: num(d.RZDF),
+    totalNav: num(d.LJJZ),
+    m1: num(d.SYL_Y), // 近 1 月
+    y1: num(d.SYL_1N), // 近 1 年
+    riskLevel: str(d.RISKLEVEL),
+    manager: str(d.JJJL),
+    company: str(d.JJGS),
+    buyStatus: str(d.SGZT),
+    redeemStatus: str(d.SHZT),
+  };
+}
+
+/** 场外基金净值快照（缓存 10 分钟；force 可绕过） */
+export async function getFundSnapshot(codeInput: string, opts: { force?: boolean } = {}): Promise<FundSnapshot> {
+  const code = codeInput.trim();
+  if (!isFundCode(code)) {
+    return { ok: false, code, message: "场外基金代码必须为 6 位数字" };
+  }
+  const cacheKey = `${FUND_CACHE_PREFIX}${code}`;
+  if (!opts.force) {
+    const cached = kvGet<FundSnapshot>(cacheKey);
+    const at = cached?.ts ? Date.parse(cached.ts) : NaN;
+    if (cached && cached.ok && Number.isFinite(at) && Date.now() - at < FUND_TTL_MS) {
+      return { ...cached, source: `${cached.source ?? "cache"}` };
+    }
+  }
+  try {
+    const part = await fetchFundInfo(code);
+    const snapshot: FundSnapshot = {
+      ok: true,
+      code,
+      ...part,
+      source: "eastmoney-fund",
+      ts: new Date().toISOString(),
+    };
+    if (!snapshot.name && !snapshot.nav) throw new Error("基金数据为空");
+    kvSet(cacheKey, snapshot);
+    return snapshot;
+  } catch (e) {
+    return { ok: false, code, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 批量基金快照（逐只 + 缓存） */
+export async function getFundSnapshots(codes: string[], opts: { force?: boolean } = {}): Promise<FundSnapshot[]> {
+  const out: FundSnapshot[] = [];
+  for (const c of codes) out.push(await getFundSnapshot(c, opts));
+  return out;
+}
+
+// 注册数据源：场外基金净值（本地数据管理页展示）
+registerDataSource({
+  kind: "kv",
+  name: FUND_CACHE_PREFIX,
+  page: "行情工具",
+  tag: "分析数据",
+  description: "场外基金净值快照缓存（天天基金，TTL 10 分钟）",
+});

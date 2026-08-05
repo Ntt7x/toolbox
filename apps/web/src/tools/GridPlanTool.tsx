@@ -1,7 +1,8 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import type {
+  GridPlanHistoryEntry,
   GridPlanRequest,
   GridPlanResponse,
   GridPlanResult,
@@ -95,6 +96,53 @@ export default function GridPlanTool() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GridPlanResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 历史网格计划
+  const [historyList, setHistoryList] = useState<{ id: string; createdAt: string; summary: GridPlanHistoryEntry["summary"] }[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [viewingResult, setViewingResult] = useState<GridPlanResult | null>(null);
+
+  /** 加载历史列表 */
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await api.gridPlanHistory();
+      if (r.ok) setHistoryList(r.entries);
+    } catch {
+      // 静默
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  /** 查看历史详情 */
+  const viewHistory = async (id: string) => {
+    setErr(null);
+    try {
+      const r = await api.gridPlanHistoryDetail(id);
+      if (r.ok) {
+        setViewingId(id);
+        setViewingResult(r.entry.result);
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    }
+  };
+
+  const deleteHistoryEntry = async (id: string) => {
+    if (!window.confirm("删除这条历史网格计划？")) return;
+    setErr(null);
+    try {
+      const r = await api.gridPlanHistoryDelete(id);
+      if (r.ok) {
+        if (viewingId === id) { setViewingId(null); setViewingResult(null); }
+        await loadHistory();
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    }
+  };
 
   /** 复制原始提示词到剪贴板 */
   const copyPrompt = async () => {
@@ -177,8 +225,11 @@ export default function GridPlanTool() {
         type,
         boll: [bolls[0], bolls[1], bolls[2]],
         ...(amt !== "" ? { maxAmount: Number(amt) } : {}),
+        ...(codeInput.trim() ? { code: codeInput.trim() } : {}),
+        ...(quoteInfo?.name ? { name: quoteInfo.name } : {}),
       };
       setResult(await api.gridPlan(req));
+      await loadHistory();
     } catch (e) {
       setErr(errMsg(e));
     } finally {
@@ -347,6 +398,51 @@ export default function GridPlanTool() {
 
       {/* 结果 */}
       {result && result.ok && <ResultView r={result} />}
+
+      {/* 历史网格计划 */}
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.1rem 1.3rem", marginTop: "1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <button style={{ background: "none", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", color: "#1e293b", padding: 0 }} onClick={() => setShowHistory((v) => !v)} type="button">
+            📜 历史网格计划（{historyList.length}）{showHistory ? " ▾" : " ▸"}
+          </button>
+          {historyList.length > 0 && (
+            <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>生成后自动保存，最多 50 条</span>
+          )}
+        </div>
+        {showHistory && (
+          <div style={{ marginTop: "0.6rem" }}>
+            {historyList.length === 0 ? (
+              <div style={{ color: "#94a3b8", fontSize: "0.85rem", padding: "0.5rem 0" }}>暂无历史记录，生成网格计划后自动保存。</div>
+            ) : (
+              historyList.map((e) => (
+                <div key={e.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", padding: "0.45rem 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.82rem" }}>
+                  <span style={{ color: "#64748b", whiteSpace: "nowrap" }}>{new Date(e.createdAt).toLocaleString()}</span>
+                  {e.summary.name ? <span style={{ fontWeight: 700 }}>{e.summary.name}</span> : null}
+                  {e.summary.code ? <span style={{ color: "#64748b" }}>{e.summary.code}</span> : null}
+                  <span style={{ fontWeight: 600 }}>{e.summary.typeName}</span>
+                  <span style={{ color: "#94a3b8" }}>U{e.summary.U} / M{e.summary.M} / L{e.summary.L}</span>
+                  <span style={{ color: "#94a3b8" }}>{e.summary.rows} 档</span>
+                  {e.summary.maxAmount ? <span style={{ color: "#94a3b8" }}>上限 {e.summary.maxAmount.toLocaleString()}</span> : null}
+                  {e.summary.perBuy ? <span style={{ color: "#94a3b8" }}>单档买入 {e.summary.perBuy.toLocaleString()}</span> : null}
+                  <span style={{ marginLeft: "auto", display: "flex", gap: "0.35rem" }}>
+                    <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.7rem" }} onClick={() => void viewHistory(e.id)} type="button">查看</button>
+                    <button style={{ ...btn, background: "#dc2626", padding: "0.25rem 0.7rem" }} onClick={() => void deleteHistoryEntry(e.id)} type="button">删除</button>
+                  </span>
+                </div>
+              ))
+            )}
+            {viewingResult && viewingResult.ok && viewingId && (
+              <div style={{ marginTop: "0.8rem", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.8rem 1rem", background: "#f8fafc" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>📄 历史计划详情</span>
+                  <button style={{ ...btn, background: "#64748b", padding: "0.25rem 0.7rem" }} onClick={() => { setViewingId(null); setViewingResult(null); }} type="button">关闭</button>
+                </div>
+                <ResultView r={viewingResult} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

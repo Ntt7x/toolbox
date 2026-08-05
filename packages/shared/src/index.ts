@@ -48,6 +48,10 @@ export interface GridPlanRequest {
    * 不传时保持 K=1000 份基准。
    */
   maxAmount?: number;
+  /** 可选：股票代码（历史记录关联，如 sh600519 / 600519） */
+  code?: string;
+  /** 可选：股票名称（历史记录展示用） */
+  name?: string;
 }
 
 /** 单档风格的完整结果 */
@@ -135,6 +139,50 @@ export interface GridPlanErrorResponse {
 
 export type GridPlanResult = GridPlanResponse | GridPlanErrorResponse;
 
+/** 历史网格计划：保存的生成记录（含时间戳与完整结果） */
+export interface GridPlanHistoryEntry {
+  id: string;
+  /** 生成时间（ISO 时间戳） */
+  createdAt: string;
+  /** 输入参数 */
+  request: { type: number; boll: [number, number, number]; maxAmount?: number; code?: string; name?: string };
+  /** 摘要（列表展示用） */
+  summary: {
+    typeName: string;
+    U: number;
+    M: number;
+    L: number;
+    /** 网格档数（styles 行数） */
+    rows: number;
+    maxAmount?: number;
+    /** 均衡档单档买入金额（styles[first].amount.buyAmount） */
+    perBuy?: number;
+    code?: string;
+    name?: string;
+  };
+  /** 完整结果（查看详情用） */
+  result: GridPlanResult;
+}
+
+export interface GridPlanHistoryListResult {
+  ok: true;
+  entries: {
+    id: string;
+    createdAt: string;
+    summary: GridPlanHistoryEntry["summary"];
+  }[];
+}
+
+export interface GridPlanHistoryDetailResult {
+  ok: true;
+  entry: GridPlanHistoryEntry;
+}
+
+export interface GridPlanHistoryDeleteResult {
+  ok: true;
+  deleted: number;
+}
+
 /** 股票行情查询响应（自动补全月线 BOLL） */
 export interface QuoteResponse {
   ok: true;
@@ -159,6 +207,39 @@ export interface QuoteErrorResponse {
 }
 
 export type QuoteResult = QuoteResponse | QuoteErrorResponse;
+
+/** 场外基金（开放式基金）净值快照：天天基金 */
+export interface FundSnapshot {
+  ok: boolean;
+  /** 基金代码（6 位） */
+  code: string;
+  /** 基金名称 */
+  name?: string;
+  /** 单位净值 */
+  nav?: number;
+  /** 净值日期 YYYY-MM-DD */
+  navDate?: string;
+  /** 日涨跌幅（%） */
+  pct?: number;
+  /** 累计净值 */
+  totalNav?: number;
+  /** 近 1 月 / 近 1 年收益率（%） */
+  m1?: number;
+  y1?: number;
+  /** 风险等级（1-5） */
+  riskLevel?: string;
+  /** 基金经理 / 基金公司 */
+  manager?: string;
+  company?: string;
+  /** 申购/赎回状态 */
+  buyStatus?: string;
+  redeemStatus?: string;
+  /** 数据源 */
+  source?: string;
+  /** 快照时间（ISO） */
+  ts?: string;
+  message?: string;
+}
 
 /** 行情快照（实时报价）：腾讯为主源，东财/新浪自动降级 */
 export interface QuoteSnapshot {
@@ -721,6 +802,9 @@ export interface LocalDataListResponse {
   source: { kind: "kv" | "table"; name: string };
   entries: LocalDataEntry[];
   total: number;
+  /** 分页：当前偏移/页大小 */
+  offset?: number;
+  limit?: number;
 }
 
 /** 详情（KV：完整 value；表：整行） */
@@ -757,12 +841,14 @@ export type LocalDataResult =
 
 /** 专题内的一只自选股（code 为标准 A/H 代码；name 为解析/用户填写的名称） */
 export interface WatchlistStock {
-  /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700 */
+  /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700；场外基金为 6 位数字（如 161725） */
   code: string;
-  /** 股票名称（行情接口解析，可空） */
+  /** 名称（行情接口解析，可空） */
   name?: string;
   /** 入选理由 */
   reason: string;
+  /** 类型：stock=股票/场内ETF（默认），fund=场外基金（净值来自天天基金） */
+  kind?: "stock" | "fund";
 }
 
 /** 一个专题（KV 持久化：watchlist:<id>） */

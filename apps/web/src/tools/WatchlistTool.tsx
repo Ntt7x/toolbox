@@ -10,6 +10,7 @@ import { useAsyncTask } from "../hooks/useAsyncTask";
 import { ErrorCard, PageHeader } from "../ui";
 import type {
   AsyncTaskResult,
+  FundSnapshot,
   QuoteSnapshot,
   WatchlistFundamentalResult,
   WatchlistStock,
@@ -97,8 +98,8 @@ export default function WatchlistTool() {
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
-  // 个股行情快照（code → QuoteSnapshot）
-  const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot>>({});
+  // 个股行情快照（code → QuoteSnapshot / FundSnapshot 混合）
+  const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot & Partial<FundSnapshot>>>({});
   // Chat 补充（追加到当前专题）
   const [appendUrl, setAppendUrl] = useState("");
   const [appending, setAppending] = useState(false);
@@ -117,6 +118,8 @@ export default function WatchlistTool() {
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
   const [addReason, setAddReason] = useState("");
+  /** 添加类型：stock=股票/场内ETF，fund=场外基金 */
+  const [addKind, setAddKind] = useState<"stock" | "fund">("stock");
   // 财报分析：code → 结果
   const [fundamentals, setFundamentals] = useState<Record<string, WatchlistFundamentalResult>>({});
   const [analyzing, setAnalyzing] = useState<Record<string, boolean>>({});
@@ -146,7 +149,7 @@ export default function WatchlistTool() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 加载个股行情快照（批量，复用公共行情模块缓存） */
+  /** 加载个股行情快照（批量，复用公共行情模块缓存；基金走 fund: 前缀） */
   const loadQuotes = useCallback(async (codes: string[]) => {
     if (codes.length === 0) return;
     try {
@@ -156,7 +159,7 @@ export default function WatchlistTool() {
           const next = { ...prev };
           for (const q of r.quotes) {
             if (!q.ok || !q.code) continue;
-            next[q.code] = q; // normCode：sh688102
+            next[q.code] = q; // normCode：sh688102 / 基金 161725
             const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
             if (bare !== q.code) next[bare] = q; // 纯数字：688102（表格行 code 兼容）
           }
@@ -174,9 +177,9 @@ export default function WatchlistTool() {
     void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
 
-  // 专题详情变化 → 刷新行情
+  // 专题详情变化 → 刷新行情（基金代码带 fund: 前缀）
   useEffect(() => {
-    if (topic) void loadQuotes(topic.stocks.map((s) => s.code));
+    if (topic) void loadQuotes(topic.stocks.map((s) => (s.kind === "fund" ? `fund:${s.code}` : s.code)));
   }, [topic, loadQuotes]);
 
   const createTopic = async () => {
@@ -249,7 +252,7 @@ export default function WatchlistTool() {
     if (!topic) return;
     const code = addCode.trim();
     if (!code) {
-      setErr("请输入股票代码（如 600519 / sh600519 / hk00700）");
+      setErr(addKind === "fund" ? "请输入基金代码（6 位数字，如 161725）" : "请输入股票代码（如 600519 / sh600519 / hk00700）");
       return;
     }
     if (!addReason.trim()) {
@@ -263,13 +266,13 @@ export default function WatchlistTool() {
       let name = addName.trim();
       if (!name) {
         try {
-          const r = await api.watchlistResolve(code);
+          const r = await api.watchlistResolve(code, addKind);
           if (r.ok && r.name) name = r.name;
         } catch {
           // 解析失败静默
         }
       }
-      const stock: WatchlistStock = { code, ...(name ? { name } : {}), reason: addReason.trim() };
+      const stock: WatchlistStock = { code, ...(name ? { name } : {}), reason: addReason.trim(), ...(addKind === "fund" ? { kind: "fund" as const } : {}) };
       const r = await api.watchlistUpdate(topic.id, { addStocks: [stock] });
       if (r.ok) {
         setTopic(r.topic);
@@ -697,7 +700,16 @@ export default function WatchlistTool() {
 
               {/* 添加个股 */}
               <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem" }}>
-                <input style={{ ...input, width: 120 }} placeholder="代码 600519" value={addCode} onChange={(e) => setAddCode(e.target.value)} />
+                <select
+                  style={{ ...input, width: 104 }}
+                  value={addKind}
+                  onChange={(e) => setAddKind(e.target.value as "stock" | "fund")}
+                  title="股票/ETF 走腾讯实时行情；场外基金走天天基金净值"
+                >
+                  <option value="stock">股票 / ETF</option>
+                  <option value="fund">场外基金</option>
+                </select>
+                <input style={{ ...input, width: 120 }} placeholder={addKind === "fund" ? "代码 161725" : "代码 600519"} value={addCode} onChange={(e) => setAddCode(e.target.value)} />
                 <input style={{ ...input, width: 110 }} placeholder="名称(可选)" value={addName} onChange={(e) => setAddName(e.target.value)} />
                 <input
                   style={{ ...input, flex: 1, minWidth: 180 }}
@@ -753,40 +765,76 @@ export default function WatchlistTool() {
                       <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}</td>
                       <td style={{ ...thTd, fontSize: "0.75rem", textAlign: "left", whiteSpace: "nowrap" }}>
                         {q?.ok ? (
-                          <>
-                            <div style={{ fontWeight: 600 }}>
-                              {q.price?.toLocaleString() ?? "—"}
-                              {q.pct !== undefined ? (
-                                <span style={{ color: (q.pct ?? 0) >= 0 ? "#dc2626" : "#16a34a", marginLeft: "0.25rem" }}>
-                                  {(q.pct ?? 0) >= 0 ? "+" : ""}{q.pct}%
-                                </span>
-                              ) : null}
-                            </div>
-                            <div style={{ color: "#64748b" }}>
-                              {q.marketCap !== undefined ? `市值 ${(q.marketCap / 10000).toFixed(2)}万亿` : ""}
-                              {q.pe !== undefined ? ` PE ${q.pe}` : ""}
-                            </div>
-                          </>
+                          s.kind === "fund" ? (
+                            <>
+                              <div style={{ fontWeight: 600 }}>
+                                {q.nav !== undefined ? q.nav.toFixed(4) : "—"}
+                                {q.pct !== undefined ? (
+                                  <span style={{ color: (q.pct ?? 0) >= 0 ? "#dc2626" : "#16a34a", marginLeft: "0.25rem" }}>
+                                    {(q.pct ?? 0) >= 0 ? "+" : ""}{q.pct}%
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div
+                                style={{ color: "#64748b" }}
+                                title={
+                                  [
+                                    q.navDate ? `净值日期 ${q.navDate}` : "",
+                                    q.totalNav !== undefined ? `累计净值 ${q.totalNav}` : "",
+                                    q.m1 !== undefined ? `近1月 ${q.m1}%` : "",
+                                    q.y1 !== undefined ? `近1年 ${q.y1}%` : "",
+                                    q.manager ? `经理 ${q.manager}` : "",
+                                    q.company ? `公司 ${q.company}` : "",
+                                    q.riskLevel ? `风险等级 ${q.riskLevel}` : "",
+                                    q.buyStatus ? `申购 ${q.buyStatus}` : "",
+                                  ].filter(Boolean).join("\n") || "场外基金"
+                                }
+                              >
+                                {q.navDate ? `净值 ${q.navDate}` : "场外基金"}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ fontWeight: 600 }}>
+                                {q.price?.toLocaleString() ?? "—"}
+                                {q.pct !== undefined ? (
+                                  <span style={{ color: (q.pct ?? 0) >= 0 ? "#dc2626" : "#16a34a", marginLeft: "0.25rem" }}>
+                                    {(q.pct ?? 0) >= 0 ? "+" : ""}{q.pct}%
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div style={{ color: "#64748b" }}>
+                                {q.marketCap !== undefined ? `市值 ${(q.marketCap / 10000).toFixed(2)}万亿` : ""}
+                                {q.pe !== undefined ? ` PE ${q.pe}` : ""}
+                              </div>
+                            </>
+                          )
                         ) : (
                           <span style={{ color: "#94a3b8" }}>—</span>
                         )}
                       </td>
                       <td style={thTd}>
-                        <button
-                          style={btnSmall}
-                          onClick={() => void analyze(s)}
-                          disabled={!!analyzing[s.code]}
-                          type="button"
-                        >
-                          {analyzing[s.code] ? "分析中…" : fundamentals[s.code] ? "重新分析" : "📊 分析"}
-                        </button>
-                        {fundamentals[s.code]?.ok ? (
-                          <div style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "#15803d" }}>
-                            {fundamentals[s.code].conclusion ?? "已生成分析"}
-                          </div>
-                        ) : fundamentals[s.code] && !fundamentals[s.code].ok ? (
-                          <div style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "#b91c1c" }}>{fundamentals[s.code].message}</div>
-                        ) : null}
+                        {s.kind === "fund" ? (
+                          <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>净值型</span>
+                        ) : (
+                          <>
+                            <button
+                              style={btnSmall}
+                              onClick={() => void analyze(s)}
+                              disabled={!!analyzing[s.code]}
+                              type="button"
+                            >
+                              {analyzing[s.code] ? "分析中…" : fundamentals[s.code] ? "重新分析" : "📊 分析"}
+                            </button>
+                            {fundamentals[s.code]?.ok ? (
+                              <div style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "#15803d" }}>
+                                {fundamentals[s.code].conclusion ?? "已生成分析"}
+                              </div>
+                            ) : fundamentals[s.code] && !fundamentals[s.code].ok ? (
+                              <div style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "#b91c1c" }}>{fundamentals[s.code].message}</div>
+                            ) : null}
+                          </>
+                        )}
                       </td>
                       <td style={thTd}>
                         <button style={btnGhost} onClick={() => void removeStock(s.code)} type="button">移除</button>

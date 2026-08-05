@@ -3,8 +3,12 @@
   type AsyncTaskResult,
   type CbRateRequest,
   type CbRateResponse,
+  type FundSnapshot,
   type GridPlanRequest,
   type GridPlanResult,
+  type GridPlanHistoryDeleteResult,
+  type GridPlanHistoryDetailResult,
+  type GridPlanHistoryListResult,
   type HealthResponse,
   type LlmChatRequest,
   type LlmChatResult,
@@ -72,6 +76,11 @@ export const api = {
   tools: () => request<ToolListResponse>("/tools"),
   gridPlan: (req: GridPlanRequest) => request<GridPlanResult>("/tools/grid-plan", jsonInit("POST", req)),
   quote: (code: string) => request<QuoteResult>(`/tools/grid-plan/quote?code=${encodeURIComponent(code)}`),
+  /** 历史网格计划（列表/详情/删除） */
+  gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
+  gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),
+  gridPlanHistoryDelete: (id: string) =>
+    request<GridPlanHistoryDeleteResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   // DeepSeek 分享提取
   shareExtract: (url: string) =>
     request<ShareExtractResult>("/tools/deepseek-share", jsonInit("POST", { url } satisfies ShareExtractRequest)),
@@ -100,7 +109,8 @@ export const api = {
   watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
     request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   watchlistDelete: (id: string) => request<WatchlistDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
-  watchlistResolve: (code: string) => request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}`),
+  watchlistResolve: (code: string, kind?: string) =>
+    request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
   /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
   watchlistImport: (url: string) => request<AsyncTaskResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
   watchlistImportTaskStatus: (taskId: string) => request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/import/task/${encodeURIComponent(taskId)}`),
@@ -109,7 +119,7 @@ export const api = {
     request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
   /** 批量行情快照（个股基本信息） */
   watchlistQuotes: (codes: string[]) =>
-    request<{ ok: boolean; quotes: QuoteSnapshot[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
+    request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
@@ -135,8 +145,17 @@ export const api = {
     ),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
-  localEntries: (q: { source?: string; table?: string }) =>
-    request<LocalDataResult>(`/data/local/entries?${new URLSearchParams(q as Record<string, string>).toString()}`),
+  localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) {
+      // 剔除 undefined / 空串，避免 URLSearchParams 把 undefined 序列化为 "undefined" 导致过滤错乱
+      if (v !== undefined && v !== "") params.set(k, String(v));
+    }
+    return request<LocalDataResult>(`/data/local/entries?${params.toString()}`);
+  },
+  /** 批量清空数据源（KV，key 归属校验） */
+  localClearSource: (source: string) =>
+    request<{ ok: boolean; deleted: number }>(`/data/local/entries?source=${encodeURIComponent(source)}`, jsonInit("DELETE", {})),
   localEntry: (q: { source?: string; table?: string; key: string }) =>
     request<LocalDataResult>(`/data/local/entry?${new URLSearchParams(q as Record<string, string>).toString()}`),
   localDelete: (q: { source?: string; table?: string; key: string }) =>

@@ -11,6 +11,16 @@
 
 import type { QuoteResult, QuoteSnapshot } from "@toolbox/shared";
 import { kvGet, kvSet } from "./kvStore.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+// 注册数据源：行情快照缓存（本地数据管理可见，避免落入"未标记"）
+registerDataSource({
+  kind: "kv",
+  name: "quote:s:",
+  page: "行情工具",
+  tag: "分析数据",
+  description: "行情快照缓存（腾讯/东财/新浪多源，TTL 5 分钟）",
+});
 
 const QT_URL =
   "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={param},month,,,{count},qfq";

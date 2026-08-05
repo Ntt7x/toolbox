@@ -43,27 +43,58 @@ export function register(app: Hono): void {
     return c.json({ ok: true, sources: listDataSources() });
   });
 
-  // 数据源条目列表：?source=<前缀> 或 ?table=<表名>
+  // 数据源条目列表：?source=<前缀> 或 ?table=<表名>；支持 ?search=<包含匹配>、?limit=&offset= 分页
   app.get(`${API_PREFIX}/data/local/entries`, (c) => {
     const source = c.req.query("source");
     const table = c.req.query("table");
     if (!source && !table) return err(c, "缺少 source 或 table 参数");
+    const search = (c.req.query("search") ?? "").trim().toLowerCase();
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 200) || 200, 1), 500);
+    const offset = Math.max(Number(c.req.query("offset") ?? 0) || 0, 0);
     if (source !== undefined) {
-      const rows = kvListRaw(source, 500);
-      const entries = rows.map((r) => {
+      const rows = kvListRaw(source, 2000);
+      let filtered = rows;
+      if (search) {
+        filtered = rows.filter((r) => r.key.toLowerCase().includes(search) || r.value.toLowerCase().includes(search));
+      }
+      const total = filtered.length;
+      const page = filtered.slice(offset, offset + limit);
+      const entries = page.map((r) => {
         let preview = r.value;
         if (preview.length > 200) preview = `${preview.slice(0, 200)}…`;
         return { key: r.key, updatedAt: r.updated_at, preview };
       });
-      // total 用全量计数（与 sources 页 count 口径一致），而非截断后条目数
-      return c.json({ ok: true, source: { kind: "kv", name: source }, entries, total: kvCount(source) });
+      return c.json({ ok: true, source: { kind: "kv", name: source }, entries, total, offset, limit });
     }
     try {
       const entries = tableEntries(table!);
-      return c.json({ ok: true, source: { kind: "table", name: table! }, entries, total: entries.length });
+      const filtered = search ? entries.filter((e) => e.key.toLowerCase().includes(search) || e.preview.toLowerCase().includes(search)) : entries;
+      return c.json({
+        ok: true,
+        source: { kind: "table", name: table! },
+        entries: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+        offset,
+        limit,
+      });
     } catch {
       return err(c, `表不存在: ${table}`, 404);
     }
+  });
+
+  // 批量清空数据源（缓存/分析类）：DELETE ?source=<前缀>（key 归属校验）
+  app.delete(`${API_PREFIX}/data/local/entries`, (c) => {
+    const source = c.req.query("source")?.trim() ?? "";
+    if (!source) return err(c, "缺少 source 参数");
+    const rows = kvListRaw(source, 5000);
+    let deleted = 0;
+    for (const r of rows) {
+      if (r.key.startsWith(source)) {
+        kvDelete(r.key);
+        deleted++;
+      }
+    }
+    return c.json({ ok: true, deleted });
   });
 
   // 条目详情：KV ?source=<前缀>&key=<key>；表 ?table=<表名>&key=<首列值>
