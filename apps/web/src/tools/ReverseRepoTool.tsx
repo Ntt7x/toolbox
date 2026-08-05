@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
+import BalanceChart from "../components/BalanceChart";
 import type {
   ReverseRepoDailyResponse,
   ReverseRepoMonthlyResult,
@@ -33,55 +34,6 @@ const thTd: CSSProperties = { border: "1px solid #e2e8f0", padding: "0.45rem 0.5
 const th: CSSProperties = { ...thTd, background: "#f1f5f9", fontWeight: 600 };
 
 const fmtW = (n: number) => `${(n / 10000).toFixed(n >= 100000 ? 2 : 3)}万亿`;
-
-/** 余额序列 SVG 折线图（无外部依赖） */
-function BalanceChart({ series }: { series: { month: string; balance: number }[] }) {
-  const W = 760;
-  const H = 240;
-  const PAD = { l: 60, r: 16, t: 16, b: 30 };
-  const n = series.length;
-  if (n < 2) {
-    return <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>数据点不足，无法绘制曲线。</div>;
-  }
-  const balances = series.map((s) => s.balance);
-  const min = Math.min(...balances);
-  const max = Math.max(...balances);
-  const span = Math.max(max - min, 100);
-  const x = (i: number) => PAD.l + (i * (W - PAD.l - PAD.r)) / (n - 1);
-  const y = (v: number) => PAD.t + ((max - v) / span) * (H - PAD.t - PAD.b);
-  const pts = series.map((s, i) => `${x(i)},${y(s.balance)}`).join(" ");
-  const gridLines = [0, 1, 2, 3, 4].map((g) => {
-    const v = min + (span * g) / 4;
-    const yy = y(v);
-    return (
-      <g key={g}>
-        <line x1={PAD.l} y1={yy} x2={W - PAD.r} y2={yy} stroke="#e2e8f0" strokeDasharray="4 4" />
-        <text x={PAD.l - 6} y={yy + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
-          {fmtW(Math.round(v))}
-        </text>
-      </g>
-    );
-  });
-  const step = Math.max(1, Math.floor(n / 10));
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", background: "#fff" }}>
-      {gridLines}
-      <polyline points={pts} fill="none" stroke="#3b82f6" strokeWidth="2" />
-      {series.map((s, i) =>
-        i % step === 0 ? (
-          <text key={i} x={x(i)} y={H - 10} textAnchor="middle" fontSize="9" fill="#64748b">
-            {s.month.slice(2)}
-          </text>
-        ) : null,
-      )}
-      {series.map((s, i) =>
-        i % step === 0 ? (
-          <circle key={`c${i}`} cx={x(i)} cy={y(s.balance)} r="3" fill="#3b82f6" />
-        ) : null,
-      )}
-    </svg>
-  );
-}
 
 export default function ReverseRepoTool() {
   // 存量数据（权威种子，直接读取）
@@ -168,9 +120,11 @@ export default function ReverseRepoTool() {
           <div style={{ marginTop: "0.8rem" }}>
             <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "0.6rem" }}>{monthly.source}</div>
 
-            {/* 余额曲线 */}
-            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>📈 买断式逆回购存量余额曲线（亿元，累计净投放）</div>
-            <BalanceChart series={monthly.series} />
+            {/* 余额曲线 + 逐笔投放（ECharts：x 轴精确到月/日期，缩放+十字准星+峰谷标注） */}
+            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>
+              📈 买断式逆回购存量余额曲线（亿元，累计净投放；柱=逐笔投放，右轴）
+            </div>
+            <BalanceChart series={monthly.series} operations={monthly.operations} />
 
             {/* 月度汇总表 */}
             <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>📋 月度汇总表（亿元；每日经济新闻口径，推算补充）</div>
