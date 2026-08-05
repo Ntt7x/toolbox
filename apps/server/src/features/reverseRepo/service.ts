@@ -55,18 +55,69 @@ export function getMonthlyData(): ReverseRepoMonthlyResponse {
   const saved = kvGet<MonthlyPayload>(MONTHLY_KEY);
   const rows = saved?.rows && saved.rows.length > 0 ? saved.rows : REVERSE_REPO_MONTHLY;
   const operations = saved?.operations && saved.operations.length > 0 ? saved.operations : REVERSE_REPO_OPERATIONS;
-  const series = rows
-    .filter((r) => r.cumulativeNet !== null && r.cumulativeNet !== undefined)
-    .map((r) => ({ month: r.month, balance: r.cumulativeNet as number }));
   const last = rows[rows.length - 1];
   return {
     ok: true,
     source: saved?.source ?? REVERSE_REPO_SOURCE,
     operations,
     rows,
-    series,
+    series: deriveBalanceSeries(rows, operations),
     asOf: last?.month ?? todayStr(),
   };
+}
+
+// ============================================================
+// 余额曲线高级加工：权威锚点优先 + 缺失月份模型推算（投放 − 到期）
+// 到期日 = 投放日 + 期限（3M/6M）自然月；推算点标 estimated，前端区分展示
+// ============================================================
+
+/** 逐笔投放 → 逐月投放/到期流量（到期按投放日 + term 自然月归属） */
+function buildMonthlyFlows(operations: ReverseRepoOperation[]): { put: Map<string, number>; mat: Map<string, number> } {
+  const put = new Map<string, number>();
+  const mat = new Map<string, number>();
+  for (const o of operations) {
+    const m = o.date.slice(0, 7);
+    put.set(m, (put.get(m) ?? 0) + o.amount);
+    const [y, mm] = o.date.split("-").map(Number);
+    const n = o.term === "3M" ? 3 : 6;
+    const t = y * 12 + (mm - 1) + n;
+    const em = `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+    mat.set(em, (mat.get(em) ?? 0) + o.amount);
+  }
+  return { put, mat };
+}
+
+/**
+ * 生成连续余额曲线：
+ * - 权威月份（rows.cumulativeNet 非空）用权威值（estimated=false），并重置推算基线
+ * - 缺失月份用模型推算（累计净投放 = Σ投放 − Σ到期），estimated=true
+ * 全月份连续（不再断开），推算段前端以空心/浅色区分
+ */
+export function deriveBalanceSeries(
+  rows: ReverseRepoMonthlyRow[],
+  operations: ReverseRepoOperation[],
+): { month: string; balance: number; estimated?: boolean }[] {
+  const { put, mat } = buildMonthlyFlows(operations);
+  const anchors = new Map(
+    rows.filter((r) => r.cumulativeNet !== null && r.cumulativeNet !== undefined).map((r) => [r.month, r.cumulativeNet as number]),
+  );
+  const maxMonth = rows.map((r) => r.month).sort().at(-1) ?? "";
+  const months = [...new Set([...put.keys(), ...mat.keys(), ...anchors.keys()])]
+    .filter((m) => m <= maxMonth)
+    .sort();
+  const out: { month: string; balance: number; estimated?: boolean }[] = [];
+  let bal = 0;
+  for (const m of months) {
+    bal += (put.get(m) ?? 0) - (mat.get(m) ?? 0);
+    const a = anchors.get(m);
+    if (a !== undefined) {
+      bal = a; // 权威值重置推算基线，避免模型漂移累积
+      out.push({ month: m, balance: a });
+    } else {
+      out.push({ month: m, balance: bal, estimated: true });
+    }
+  }
+  return out;
 }
 
 // ============================================================

@@ -529,8 +529,8 @@ export interface ReverseRepoMonthlyResponse {
   operations: ReverseRepoOperation[];
   /** 月度汇总表（投放/净投放/累计净投放） */
   rows: ReverseRepoMonthlyRow[];
-  /** 余额序列（累计净投放，非空月份；= 存量余额） */
-  series: { month: string; balance: number }[];
+  /** 余额序列（累计净投放 = 存量余额；缺失月份为模型推算，estimated=true） */
+  series: { month: string; balance: number; estimated?: boolean }[];
   /** 数据截至月份 */
   asOf: string;
   /** 是否存在未更新的月份（最新数据月份 < 上个月） */
