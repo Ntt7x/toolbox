@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@toolbox/server",
   "version": "0.1.0",
   "private": true,
@@ -11,7 +11,8 @@
   "dependencies": {
     "@hono/node-server": "^1",
     "@toolbox/shared": "workspace:*",
-    "hono": "^4"
+    "hono": "^4",
+    "undici": "^8.10.0"
   },
   "devDependencies": {
     "@types/node": "^22",

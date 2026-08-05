@@ -6,6 +6,7 @@ import Overview from "./pages/Overview";
 import ToolPlaceholder from "./pages/ToolPlaceholder";
 import GridPlanTool from "./tools/GridPlanTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
+import BookSearchTool from "./tools/BookSearchTool";
 import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
@@ -18,6 +19,7 @@ import LocalData from "./settings/LocalData";
 const toolPages: Record<string, ComponentType> = {
   "grid-plan": GridPlanTool,
   "deepseek-share": DeepSeekShareTool,
+  "books": BookSearchTool,
   "cb-rate": CbRateTool,
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
@@ -45,7 +47,7 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
-  { label: "小工具", toolIds: ["deepseek-share"] },
+  { label: "小工具", toolIds: ["deepseek-share", "books"] },
 ];
 
 const groupLabelStyle: CSSProperties = {

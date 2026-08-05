@@ -27,6 +27,73 @@ export interface ToolListResponse {
 }
 
 // ============================================================
+// 书籍下载工具（books · zlib）
+// ============================================================
+
+/** zlib 搜索命中条目（归一化） */
+export interface BookItem {
+  /** zlib 书籍 id */
+  id: number;
+  title: string;
+  author?: string;
+  year?: number;
+  publisher?: string;
+  language?: string;
+  pages?: number;
+  /** 格式（pdf/epub/mobi…） */
+  extension?: string;
+  /** 文件大小字节 */
+  filesize?: number;
+  /** 文件大小人类可读（43.29 MB） */
+  filesizeString?: string;
+  md5?: string;
+  /** 短哈希 */
+  hash?: string;
+  /** 封面图 URL */
+  cover?: string;
+  /** 详情页 URL（绝对） */
+  detailUrl?: string;
+  /** 相对下载路径（如 /dl/xxx） */
+  downloadPath?: string;
+  /** 在线读 URL */
+  readOnlineUrl?: string;
+}
+
+/** zlib 搜索响应 */
+export interface BookSearchResult {
+  ok: boolean;
+  items?: BookItem[];
+  /** 命中总数 */
+  total?: number;
+  /** 当前页 */
+  page?: number;
+  /** zlib 站点 base（前端拼下载链接用） */
+  base?: string;
+  /** 提示（如匿名限流/需要登录） */
+  message?: string;
+  /** 限流码（rate_limited 等） */
+  code?: string;
+}
+
+/** 书籍下载工具配置（存本地设置数据） */
+export interface BookConfig {
+  ok: boolean;
+  /** zlib 站点 base */
+  zlibBase: string;
+  /** 本机 HTTP 代理地址（空 = 直连） */
+  proxy: string;
+  message?: string;
+}
+
+/** 书籍下载历史搜索记录 */
+export interface BookHistoryResult {
+  ok: boolean;
+  items?: { q: string; ts: string; hits?: number }[];
+  removed?: boolean;
+  cleared?: boolean;
+}
+
+// ============================================================
 // 交易网格计划工具（grid-plan）
 // ============================================================
 

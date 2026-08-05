@@ -39,6 +39,9 @@
   type MemoDetailResult,
   type MemoListResult,
   type MemoUpdateRequest,
+  type BookConfig,
+  type BookHistoryResult,
+  type BookSearchResult,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -135,6 +138,14 @@ export const api = {
   memoUpdate: (id: string, patch: MemoUpdateRequest) =>
     request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  // 书籍下载（zlib）
+  booksSearch: (q: string, page = 1, limit = 20) =>
+    request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),
+  booksConfig: () => request<BookConfig>("/tools/books/config"),
+  booksSaveConfig: (patch: { zlibBase?: string; proxy?: string }) => request<BookConfig>("/tools/books/config", jsonInit("PUT", patch)),
+  booksHistory: () => request<BookHistoryResult>("/tools/books/history"),
+  booksHistoryDelete: (q?: string) =>
+    request<BookHistoryResult>(`/tools/books/history${q ? `?q=${encodeURIComponent(q)}` : ""}`, jsonInit("DELETE", {})),
   reverseRepoDailyTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）
