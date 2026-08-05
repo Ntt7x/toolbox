@@ -135,6 +135,48 @@ export interface GridPlanErrorResponse {
 
 export type GridPlanResult = GridPlanResponse | GridPlanErrorResponse;
 
+/** 历史网格计划：保存的生成记录（含时间戳与完整结果） */
+export interface GridPlanHistoryEntry {
+  id: string;
+  /** 生成时间（ISO 时间戳） */
+  createdAt: string;
+  /** 输入参数 */
+  request: { type: number; boll: [number, number, number]; maxAmount?: number };
+  /** 摘要（列表展示用） */
+  summary: {
+    typeName: string;
+    U: number;
+    M: number;
+    L: number;
+    /** 网格档数（styles 行数） */
+    rows: number;
+    maxAmount?: number;
+    /** 均衡档单档买入金额（styles[first].amount.buyAmount） */
+    perBuy?: number;
+  };
+  /** 完整结果（查看详情用） */
+  result: GridPlanResult;
+}
+
+export interface GridPlanHistoryListResult {
+  ok: true;
+  entries: {
+    id: string;
+    createdAt: string;
+    summary: GridPlanHistoryEntry["summary"];
+  }[];
+}
+
+export interface GridPlanHistoryDetailResult {
+  ok: true;
+  entry: GridPlanHistoryEntry;
+}
+
+export interface GridPlanHistoryDeleteResult {
+  ok: true;
+  deleted: number;
+}
+
 /** 股票行情查询响应（自动补全月线 BOLL） */
 export interface QuoteResponse {
   ok: true;

@@ -14,7 +14,18 @@ import {
   type ToolMeta,
 } from "@toolbox/shared";
 import { generateGridPlan } from "./compute.js";
+import { deleteHistory, getHistory, HISTORY_KEY, listHistory, saveHistory } from "./history.js";
 import { queryMonthlyBoll } from "../../core/quote.js";
+import { registerDataSource } from "../../core/dataRegistry.js";
+
+// 注册数据源：历史网格计划（本地数据管理可见）
+registerDataSource({
+  kind: "kv",
+  name: HISTORY_KEY,
+  page: "交易网格计划",
+  tag: "存量数据",
+  description: "历史网格计划（生成记录：时间戳 + 输入参数 + 完整结果，上限 50 条）",
+});
 
 export const meta: ToolMeta = {
   id: "grid-plan",
@@ -56,7 +67,29 @@ export function register(app: Hono): void {
       return c.json(body, 400);
     }
     const result = generateGridPlan(type as GridTrendType, boll as [number, number, number], maxAmount);
+    // 成功时自动保存历史（时间戳 + 输入 + 完整结果）
+    if (result.ok) saveHistory({ type: type as GridTrendType, boll: boll as [number, number, number], ...(maxAmount ? { maxAmount } : {}) }, result);
     // 业务失败统一 400（compute 的 format 错误已被上方校验拦截，不会到达此处）
     return c.json(result, result.ok ? 200 : 400);
+  });
+
+  // 历史列表（摘要）
+  app.get(`${API_PREFIX}/tools/grid-plan/history`, (c) => {
+    const entries = listHistory().map((e) => ({ id: e.id, createdAt: e.createdAt, summary: e.summary }));
+    return c.json({ ok: true, entries });
+  });
+
+  // 历史详情
+  app.get(`${API_PREFIX}/tools/grid-plan/history/:id`, (c) => {
+    const entry = getHistory(c.req.param("id"));
+    if (!entry) return c.json({ ok: false, message: "记录不存在" }, 404);
+    return c.json({ ok: true, entry });
+  });
+
+  // 删除历史
+  app.delete(`${API_PREFIX}/tools/grid-plan/history/:id`, (c) => {
+    const ok = deleteHistory(c.req.param("id"));
+    if (!ok) return c.json({ ok: false, message: "记录不存在" }, 404);
+    return c.json({ ok: true, deleted: 1 });
   });
 }

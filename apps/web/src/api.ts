@@ -5,6 +5,9 @@
   type CbRateResponse,
   type GridPlanRequest,
   type GridPlanResult,
+  type GridPlanHistoryDeleteResult,
+  type GridPlanHistoryDetailResult,
+  type GridPlanHistoryListResult,
   type HealthResponse,
   type LlmChatRequest,
   type LlmChatResult,
@@ -72,6 +75,11 @@ export const api = {
   tools: () => request<ToolListResponse>("/tools"),
   gridPlan: (req: GridPlanRequest) => request<GridPlanResult>("/tools/grid-plan", jsonInit("POST", req)),
   quote: (code: string) => request<QuoteResult>(`/tools/grid-plan/quote?code=${encodeURIComponent(code)}`),
+  /** 历史网格计划（列表/详情/删除） */
+  gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
+  gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),
+  gridPlanHistoryDelete: (id: string) =>
+    request<GridPlanHistoryDeleteResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   // DeepSeek 分享提取
   shareExtract: (url: string) =>
     request<ShareExtractResult>("/tools/deepseek-share", jsonInit("POST", { url } satisfies ShareExtractRequest)),
