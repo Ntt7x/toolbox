@@ -177,7 +177,7 @@ export default function BookSearchTool() {
         <div style={{ fontSize: "0.85rem", color: "#92400e", lineHeight: 1.7 }}>
           <b>使用须知：</b>
           <br />① zlib 站点需科学上网：服务端经本机代理 <code style={{ background: "#fef3c7", padding: "0 4px", borderRadius: 4 }}>{config?.proxy ?? "http://127.0.0.1:10808"}</code> 访问（可在「本地数据管理」改 books.proxy / books.zlibBase）。
-          <br />② 搜索免费匿名可用，但每日有限额（429 时可稍后再试或点「🚀 浏览器打开」）。
+          <br />② 搜索自动携带 <b>访客会话</b>（zlib singlelogin 免密，服务端自动获取），一般不受匿名每日限额影响；极端限流（429）时稍后再试或点「🚀 浏览器打开」。
           <br />③ <b>下载需登录 zlib 账号</b>：用顶部「🚀 浏览器打开」在浏览器搜索该书，登录后点书进入详情页下载（免费账号每日限量）。
           <br />④ 请遵守版权法规，仅下载你有权获取的内容。
         </div>

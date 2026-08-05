@@ -50,6 +50,50 @@ export interface BookHistoryEntry {
 const HISTORY_KEY = "books:history";
 const HISTORY_MAX = 50;
 
+// ============================================================
+// 访客会话（singlelogin 免密）：GET /login 获取 __ddg* DataDome cookie
+// - 携带后可解除匿名搜索 429 限额（连搜验证 200）
+// - 注意：下载仍需要真实登录会话（remix_userkey），访客态无法下载
+// - cookie 与出口 IP 绑定，缓存 30 分钟；429 时强制刷新重试一次
+// ============================================================
+
+const SESSION_KEY = "books:session";
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+async function fetchGuestCookie(zlibBase: string, proxy: string): Promise<string> {
+  const r = await proxyFetch(
+    `${zlibBase.replace(/\/+$/, "")}/login`,
+    {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+      },
+      signal: AbortSignal.timeout(15000),
+    },
+    proxy,
+  );
+  const cookies = typeof r.headers.getSetCookie === "function" ? r.headers.getSetCookie() : [];
+  return cookies.map((c) => c.split(";")[0]).filter(Boolean).join("; ");
+}
+
+/** 获取（并缓存）访客 cookie；force 强制刷新 */
+async function getGuestCookie(zlibBase: string, proxy: string, force = false): Promise<string> {
+  if (!force) {
+    const cached = kvGet<{ cookie: string; ts: string }>(SESSION_KEY);
+    const at = cached?.ts ? Date.parse(cached.ts) : NaN;
+    if (cached?.cookie && Number.isFinite(at) && Date.now() - at < SESSION_TTL_MS) {
+      return cached.cookie;
+    }
+  }
+  try {
+    const cookie = await fetchGuestCookie(zlibBase, proxy);
+    if (cookie) kvSet(SESSION_KEY, { cookie, ts: new Date().toISOString() });
+    return cookie;
+  } catch {
+    return "";
+  }
+}
+
 function readHistory(): BookHistoryEntry[] {
   const saved = kvGet<{ items?: unknown[] }>(HISTORY_KEY);
   if (!Array.isArray(saved?.items)) return [];
@@ -134,7 +178,9 @@ export async function searchBooks(qInput: string, opts: { page?: number; limit?:
 
   const body = new URLSearchParams({ q, page: String(page), limit: String(limit), order: "popular" }).toString();
   const url = `${zlibBase.replace(/\/+$/, "")}/api/search`;
-  try {
+
+  /** 执行一次搜索请求（带 cookie）；返回原始响应文本 + 状态 */
+  async function doSearch(cookie: string): Promise<{ status: number; text: string }> {
     const res = await proxyFetch(
       url,
       {
@@ -145,18 +191,31 @@ export async function searchBooks(qInput: string, opts: { page?: number; limit?:
           "Origin": zlibBase,
           "Referer": `${zlibBase}/s/`,
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+          ...(cookie ? { Cookie: cookie } : {}),
         },
         body,
         signal: AbortSignal.timeout(25000),
       },
       proxy,
     );
-    const text = await res.text();
-    if (res.status === 429) {
-      return { ok: false, code: "rate_limited", message: "zlib 匿名搜索被限流（429 Too Many Requests）。请稍后再试，或在下方按钮用浏览器打开 zlib 直接搜索（浏览器登录态不限）。" };
+    return { status: res.status, text: await res.text() };
+  }
+
+  try {
+    // 访客会话（__ddg* cookie）：解除匿名搜索限额；429 时强制刷新重试一次
+    let cookie = await getGuestCookie(zlibBase, proxy);
+    let { status, text } = await doSearch(cookie);
+    if (status === 429) {
+      cookie = await getGuestCookie(zlibBase, proxy, true);
+      const retry = await doSearch(cookie);
+      status = retry.status;
+      text = retry.text;
     }
-    if (!res.ok) {
-      return { ok: false, code: "http_error", message: `zlib 响应异常（HTTP ${res.status}）` };
+    if (status === 429) {
+      return { ok: false, code: "rate_limited", message: "zlib 搜索被限流（429 Too Many Requests）。请稍后再试，或在下方按钮用浏览器打开 zlib 直接搜索（浏览器登录态不限）。" };
+    }
+    if (status !== 200) {
+      return { ok: false, code: "http_error", message: `zlib 响应异常（HTTP ${status}）` };
     }
     const j = JSON.parse(text) as { success?: number; books?: unknown[]; pagination?: { total?: number; page?: number } };
     if (j.success !== 1 || !Array.isArray(j.books)) {
