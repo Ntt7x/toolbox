@@ -65,6 +65,7 @@ export function registerLlmRoutes(app: Hono): void {
     const result = await chat(raw.messages as LlmChatMessage[], {
       model: raw.model,
       temperature: raw.temperature,
+      module: "llm.chat",
       ...(raw.search ? { search: true } : {}),
     });
     return c.json(result, result.ok ? 200 : 400);

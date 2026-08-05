@@ -315,7 +315,7 @@ export default function LlmSettings() {
               {usage?.byModule.length ? (
                 usage.byModule.map((m) => (
                   <div key={m.module} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
-                    <span>{m.module}</span>
+                    <span>{m.label}</span>
                     <span style={{ color: "#64748b" }}>{m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k</span>
                   </div>
                 ))

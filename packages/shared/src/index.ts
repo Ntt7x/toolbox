@@ -284,7 +284,7 @@ export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
 export interface LlmUsageSummary {
   ok: true;
   total: { calls: number; promptTokens: number; completionTokens: number; totalTokens: number };
-  byModule: { module: string; calls: number; totalTokens: number }[];
+  byModule: { module: string; label: string; calls: number; totalTokens: number }[];
   byDay: { day: string; calls: number; totalTokens: number }[];
 }
 

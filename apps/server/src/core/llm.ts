@@ -283,6 +283,22 @@ import type { LlmUsageSummary } from "@toolbox/shared";
 /** 用量日志 KV key（本地数据管理可见） */
 export const LLM_USAGE_KEY = "llmUsage:log";
 
+/** 模块 → 中文描述（用量统计展示用） */
+const MODULE_LABELS: Record<string, string> = {
+  "cb-rate": "央行利率分析",
+  "treasury-fx": "国债汇率分析",
+  "watchlist.fundamental": "专题自选股·财报分析",
+  "watchlist.import": "专题自选股·Chat导入",
+  "reverse-repo.daily": "逆回购·每日探查",
+  "reverse-repo.monthly-update": "逆回购·月度更新",
+  "llm.test": "连接测试",
+  "llm.chat": "对话验证",
+};
+
+function moduleLabel(module: string): string {
+  return MODULE_LABELS[module] ?? module;
+}
+
 /** 日志上限（超出截断最旧） */
 const USAGE_MAX = 2000;
 
@@ -349,7 +365,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
   return {
     ok: true,
     total,
-    byModule: [...byModule.entries()].map(([module, v]) => ({ module, ...v })).sort(sortDesc),
+    byModule: [...byModule.entries()].map(([module, v]) => ({ module, label: moduleLabel(module), ...v })).sort(sortDesc),
     byDay: [...byDay.entries()].map(([day, v]) => ({ day, ...v })).sort((a, b) => (a.day < b.day ? 1 : -1)),
   };
 }
