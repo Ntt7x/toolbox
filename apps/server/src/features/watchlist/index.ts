@@ -14,12 +14,13 @@ import {
   type WatchlistDetailResult,
   type WatchlistFundamentalResult,
   type WatchlistStock,
+  type WatchlistTopic,
   type WatchlistUpdateRequest,
 } from "@toolbox/shared";
 import { createTask, getTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
-import { fundamentalAnalysis, resolveStockName } from "./service.js";
+import { fundamentalAnalysis, importFromChat, resolveStockName } from "./service.js";
 
 // 注册数据源：专题自选股（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -70,6 +71,28 @@ export function register(app: Hono): void {
     if (!code) return c.json({ ok: false, message: "缺少 code 参数" }, 400);
     const name = await resolveStockName(code);
     return c.json({ ok: true, code, name });
+  });
+
+  // Chat 导入：分享链接 → 提取对话 → LLM 整理 → 自动创建专题（后台任务）
+  app.post(`${API_PREFIX}/tools/watchlist/import`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+    const url = typeof raw?.url === "string" ? raw.url.trim() : "";
+    if (!url) return c.json({ ok: false, message: "缺少 Chat 分享链接" }, 400);
+    if (!/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url)) {
+      return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
+    }
+    const { taskId } = createTask<WatchlistTopic>(
+      async (signal) => importFromChat(url, signal),
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+    return c.json(getTask<WatchlistTopic>(taskId), 202);
+  });
+
+  // Chat 导入任务状态
+  app.get(`${API_PREFIX}/tools/watchlist/import/task/:taskId`, (c) => {
+    const task: AsyncTaskResult<WatchlistTopic> | null = getTask<WatchlistTopic>(c.req.param("taskId"));
+    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
+    return c.json(task, 200);
   });
 
   // 专题详情

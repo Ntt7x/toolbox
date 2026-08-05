@@ -25,6 +25,7 @@
   type WatchlistDetailResult,
   type WatchlistFundamentalResult,
   type WatchlistListResult,
+  type WatchlistTopic,
   type WatchlistUpdateRequest,
   type MemoCreateResult,
   type MemoDeleteResult,
@@ -97,6 +98,9 @@ export const api = {
     request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   watchlistDelete: (id: string) => request<WatchlistDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   watchlistResolve: (code: string) => request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}`),
+  /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
+  watchlistImport: (url: string) => request<AsyncTaskResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
+  watchlistImportTaskStatus: (taskId: string) => request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/import/task/${encodeURIComponent(taskId)}`),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,

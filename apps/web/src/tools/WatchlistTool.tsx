@@ -91,6 +91,9 @@ export default function WatchlistTool() {
   // 新建专题
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  // Chat 导入
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
   // 添加股票
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
@@ -243,6 +246,42 @@ export default function WatchlistTool() {
     }
   };
 
+  /** Chat 导入：分享链接 → 自动创建专题（后台 LLM 整理，轮询进度） */
+  const importChat = async () => {
+    const url = importUrl.trim();
+    if (!url) return;
+    setImporting(true);
+    setErr(null);
+    try {
+      const t = await api.watchlistImport(url);
+      if (!t.ok) {
+        setErr(t.message || "导入失败");
+        return;
+      }
+      if (t.taskId) {
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const st = await api.watchlistImportTaskStatus(t.taskId).catch(() => null);
+          if (st?.ok && st.status === "done" && st.result) {
+            setImportUrl("");
+            setSelectedId(st.result.id);
+            await refreshList();
+            return;
+          }
+          if (st?.ok && (st.status === "error" || st.status === "cancelled")) {
+            setErr(st.message || "导入失败");
+            return;
+          }
+        }
+        setErr("导入超时，请稍后重试");
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   /** 财报分析（后台任务；命中缓存秒回） */
   const analyze = async (stock: WatchlistStock, force = false) => {
     if (!topic) return;
@@ -290,21 +329,37 @@ export default function WatchlistTool() {
             <button style={btn} onClick={() => void createTopic()} disabled={loading} type="button">新建</button>
           </div>
           <textarea
-            style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.82rem", boxSizing: "border-box" }}
+            style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.82rem", boxSizing: "border-box", marginBottom: "0.7rem" }}
             placeholder="专题介绍（可选，如主题逻辑/选股思路）"
             value={newDesc}
             onChange={(e) => setNewDesc(e.target.value)}
           />
-          {topics.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>还没有专题，先新建一个。</div>}
+
+          {/* Chat 导入 */}
+          <div style={{ marginBottom: "0.7rem", padding: "0.55rem 0.6rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.35rem" }}>🤖 Chat 导入（分享链接 → 自动建专题）</div>
+            <input
+              style={{ ...input, width: "100%", fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
+              placeholder="https://chat.deepseek.com/share/<id>"
+              value={importUrl}
+              onChange={(e) => setImportUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void importChat(); }}
+            />
+            <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem", background: "#7c3aed" }} onClick={() => void importChat()} disabled={importing} type="button">
+              {importing ? "🔄 提取对话并整理中…" : "📥 从 Chat 导入"}
+            </button>
+          </div>
+
+          {topics.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>还没有专题，先新建或导入一个。</div>}
           {topics.map((t) => (
             <div
               key={t.id}
               onClick={() => setSelectedId(t.id)}
               style={{
-                padding: "0.5rem 0.7rem",
+                padding: "0.42rem 0.6rem",
                 borderRadius: 8,
                 cursor: "pointer",
-                marginBottom: "0.3rem",
+                marginBottom: "0.25rem",
                 background: t.id === selectedId ? "#eff6ff" : "transparent",
                 border: t.id === selectedId ? "1px solid #bfdbfe" : "1px solid transparent",
                 display: "flex",
@@ -312,8 +367,8 @@ export default function WatchlistTool() {
                 alignItems: "center",
               }}
             >
-              <span style={{ fontWeight: 600 }}>{t.name}</span>
-              <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>{t.stockCount} 只</span>
+              <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{t.name}</span>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{t.stockCount} 只</span>
             </div>
           ))}
         </div>

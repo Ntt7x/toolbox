@@ -248,6 +248,31 @@ const WATCHLIST_FUNDAMENTAL_PROMPT = `你是资深基本面分析师。任务：
   "conclusion": "一句话投资结论"
 }`;
 
+/** 专题自选股：Chat 分享链接导入（对话内容 → 专题名称/介绍/个股+理由） */
+const WATCHLIST_IMPORT_PROMPT = `你是投资专题整理助手。任务：阅读下面的 DeepSeek 对话内容，理解用户的选股/投资主题，整理成一个「专题自选股」结构化数据。
+
+【要求】
+- 从对话中提取：专题名称（主题关键词，如「商业航天」「通胀消费」）、专题介绍
+  （主题逻辑/选股思路/风险提示，200 字以内）、入选个股列表
+- 个股以对话中**明确入选/最终确认**的标的为准（用户拍板的股票组合、ETF 等）；
+  被明确排除/否定（如"不符合条件""应排除""脱钩风险"等）的标的**不要收录**
+- 股票代码用 6 位数字（A 股/ETF 均 6 位，如 600519 / 159227；港股不用）
+- 每只股票给 30-60 字入选理由（核心逻辑 + 关键风险可简短带过）
+
+【对话内容】
+{conversation}
+
+【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "name": "专题名称",
+  "description": "专题介绍（行业背景 / 组合逻辑 / 风险提示）",
+  "stocks": [
+    { "code": "688102", "name": "斯瑞新材", "reason": "入选理由" }
+  ]
+}
+注意：code 必须为 6 位数字；若对话中没有明确入选个股，stocks 输出空数组；
+严禁编造对话中不存在的股票。`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -346,6 +371,13 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.watchlist.fundamental",
     description: "专题自选股：个股财报分析提示词（LLM 驱动，默认联网搜索；{code} {name} {date}）",
     defaultTemplate: WATCHLIST_FUNDAMENTAL_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "watchlist.import",
+    key: "prompt.watchlist.import",
+    description: "专题自选股：Chat 分享链接导入（对话内容 → 专题名称/介绍/个股+理由；{conversation}）",
+    defaultTemplate: WATCHLIST_IMPORT_PROMPT,
     render: (t) => t,
   },
 ];

@@ -9,7 +9,9 @@ import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
-import type { WatchlistFundamentalResult } from "@toolbox/shared";
+import { extractShare } from "../../core/deepseekShare.js";
+import { createTopic, updateTopic } from "./store.js";
+import type { WatchlistFundamentalResult, WatchlistStock, WatchlistTopic } from "@toolbox/shared";
 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
 export const FUNDAMENTAL_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
@@ -95,4 +97,68 @@ export async function fundamentalAnalysis(
   };
   kvSet(cacheKey, { ...out, _at: new Date().toISOString() });
   return out;
+}
+
+// ============================================================
+// Chat 分享链接导入：提取对话 → LLM 整理 → 自动创建专题
+// ============================================================
+
+/** 对话文本上限（超长截断，防止超 token） */
+const CONVERSATION_LIMIT = 60000;
+
+/** 对话内容 → 简洁文本 */
+function conversationText(messages: { role: string; content: string }[]): string {
+  const parts = messages.map((m) => (m.role === "user" ? `[用户] ${m.content}` : `[AI] ${m.content}`));
+  return parts.join("\n\n").slice(0, CONVERSATION_LIMIT);
+}
+
+/** 校验股票条目（6 位数字代码 + 名称），非法剔除 */
+function normalizeImportedStock(s: unknown): WatchlistStock | null {
+  if (!s || typeof s !== "object") return null;
+  const r = s as Record<string, unknown>;
+  const code = typeof r.code === "string" ? r.code.trim() : "";
+  if (!/^\d{6}$/.test(code)) return null;
+  const name = typeof r.name === "string" ? r.name.trim().slice(0, 20) : "";
+  const reason = typeof r.reason === "string" ? r.reason.trim().slice(0, 120) : "";
+  if (!name && !reason) return null;
+  return { code, ...(name ? { name } : {}), reason: reason || "（由 Chat 对话导入）" };
+}
+
+/**
+ * Chat 导入：解析分享链接 → 提取对话 → LLM 整理专题 → 自动创建。
+ * 返回创建的专题；失败抛错。
+ */
+export async function importFromChat(shareUrl: string, signal?: AbortSignal): Promise<WatchlistTopic> {
+  const extracted = await extractShare(shareUrl);
+  if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
+    throw new Error(!extracted.ok && "message" in extracted ? extracted.message : "对话提取为空，请检查链接");
+  }
+  const messages = extracted.messages;
+
+  const template = getPromptTemplate("watchlist.import").replace("{conversation}", conversationText(messages));
+  const result = await chat(
+    [
+      { role: "system" as const, content: template },
+      { role: "user" as const, content: "请整理上述对话并输出 JSON。" },
+    ],
+    { temperature: 0.2, ...(signal ? { signal } : {}) },
+  );
+  if (!result.ok) throw new Error(result.message);
+
+  const parsed = robustJsonParse(result.content.trim());
+  if (!parsed) throw new Error(`LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${result.content.trim().slice(0, 200)}`);
+
+  const p = parsed as Record<string, unknown>;
+  const name = typeof p.name === "string" && p.name.trim() ? p.name.trim().slice(0, 30) : "Chat 导入专题";
+  const description = typeof p.description === "string" && p.description.trim() ? p.description.trim().slice(0, 1000) : undefined;
+  const stocks = (Array.isArray(p.stocks) ? p.stocks : [])
+    .map(normalizeImportedStock)
+    .filter((s): s is WatchlistStock => !!s);
+
+  const topic = createTopic(name, description);
+  if (stocks.length > 0) {
+    const updated = updateTopic(topic.id, { addStocks: stocks });
+    if (updated) return updated;
+  }
+  return topic;
 }
