@@ -91,6 +91,10 @@ export default function WatchlistTool() {
   // 新建专题
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  // 新建面板折叠
+  const [showCreate, setShowCreate] = useState(false);
+  // 拖拽排序
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
   // Chat 导入
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -246,6 +250,26 @@ export default function WatchlistTool() {
     }
   };
 
+  /** 拖拽重排：stocks 顺序 = 优先级（乐观更新 + 失败回滚） */
+  const reorderStock = async (from: number, to: number) => {
+    if (!topic || from === to) return;
+    const stocks = topic.stocks.slice();
+    const [moved] = stocks.splice(from, 1);
+    stocks.splice(to, 0, moved);
+    const prev = topic;
+    setTopic({ ...topic, stocks });
+    try {
+      const r = await api.watchlistUpdate(topic.id, { reorderCodes: stocks.map((s) => s.code) });
+      if (r.ok) {
+        setTopic(r.topic);
+        await refreshList();
+      }
+    } catch (e) {
+      setTopic(prev);
+      setErr(errMsg(e));
+    }
+  };
+
   /** Chat 导入：分享链接 → 自动创建专题（后台 LLM 整理，轮询进度） */
   const importChat = async () => {
     const url = importUrl.trim();
@@ -325,15 +349,37 @@ export default function WatchlistTool() {
         <div style={card}>
           <div style={{ fontWeight: 700, marginBottom: "0.7rem" }}>🗂️ 我的专题</div>
           <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.6rem" }}>
-            <input style={{ ...input, flex: 1 }} placeholder="新专题名称" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void createTopic(); }} />
-            <button style={btn} onClick={() => void createTopic()} disabled={loading} type="button">新建</button>
+            <button
+              style={{ ...btn, flex: 1, background: showCreate ? "#1d4ed8" : "#3b82f6" }}
+              onClick={() => setShowCreate((v) => !v)}
+              type="button"
+            >
+              {showCreate ? "▾ 收起新建面板" : "➕ 新建专题"}
+            </button>
           </div>
-          <textarea
-            style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.82rem", boxSizing: "border-box", marginBottom: "0.7rem" }}
-            placeholder="专题介绍（可选，如主题逻辑/选股思路）"
-            value={newDesc}
-            onChange={(e) => setNewDesc(e.target.value)}
-          />
+
+          {/* 新建专题聚合面板（与列表/导入区分：独立底色边框） */}
+          {showCreate && (
+            <div style={{ marginBottom: "0.7rem", padding: "0.6rem", background: "#eff6ff", borderRadius: 8, border: "1px solid #bfdbfe" }}>
+              <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.35rem", color: "#1d4ed8" }}>🆕 新建专题</div>
+              <input
+                style={{ ...input, width: "100%", boxSizing: "border-box", marginBottom: "0.35rem", fontSize: "0.82rem" }}
+                placeholder="专题名称（如 商业航天）"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void createTopic(); }}
+              />
+              <textarea
+                style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
+                placeholder="专题介绍（可选）"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+              />
+              <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem" }} onClick={() => void createTopic()} disabled={loading} type="button">
+                ✓ 创建专题
+              </button>
+            </div>
+          )}
 
           {/* Chat 导入 */}
           <div style={{ marginBottom: "0.7rem", padding: "0.55rem 0.6rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
@@ -415,31 +461,44 @@ export default function WatchlistTool() {
                 <button style={btn} onClick={() => void addStock()} disabled={loading} type="button">加入专题</button>
               </div>
 
-              {/* 个股表 */}
+              {/* 个股表（拖动 ⠿ 行头调整优先级；顺序 = 优先级） */}
               <table style={table}>
                 <thead>
                   <tr>
-                    <th style={{ ...th, width: 40 }}>#</th>
-                    <th style={th}>代码</th>
-                    <th style={th}>名称</th>
+                    <th style={{ ...th, width: 34 }}>⠿</th>
+                    <th style={{ ...th, textAlign: "left" }}>名称 / 代码</th>
                     <th style={{ ...th, textAlign: "left" }}>入选理由</th>
-                    <th style={{ ...th, width: 150 }}>财报分析</th>
+                    <th style={{ ...th, width: 140 }}>财报分析</th>
                     <th style={{ ...th, width: 60 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {topic.stocks.length === 0 && (
                     <tr>
-                      <td style={thTd} colSpan={6}>
-                        <span style={{ color: "#94a3b8" }}>暂无自选股，请在上面添加。</span>
+                      <td style={thTd} colSpan={5}>
+                        <span style={{ color: "#94a3b8" }}>暂无自选股，请在上面添加。拖动 ⠿ 可调整优先级。</span>
                       </td>
                     </tr>
                   )}
                   {topic.stocks.map((s, i) => (
-                    <tr key={s.code}>
-                      <td style={thTd}>{i + 1}</td>
-                      <td style={thTd}><b>{s.code}</b></td>
-                      <td style={thTd}>{s.name ?? "—"}</td>
+                    <tr
+                      key={s.code}
+                      draggable
+                      onDragStart={() => setDragIdx(i)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => { if (dragIdx !== null) void reorderStock(dragIdx, i); setDragIdx(null); }}
+                      onDragEnd={() => setDragIdx(null)}
+                      style={{
+                        cursor: "grab",
+                        ...(dragIdx === i ? { opacity: 0.35, background: "#f8fafc" } : {}),
+                        ...(dragIdx !== null && dragIdx !== i ? { borderTop: "2px dashed #93c5fd" } : {}),
+                      }}
+                    >
+                      <td style={{ ...thTd, color: "#94a3b8", fontSize: "1rem" }} title="拖动调整优先级">⠿</td>
+                      <td style={{ ...thTd, textAlign: "left", whiteSpace: "nowrap" }}>
+                        <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.3 }}>{s.name ?? "—"}</div>
+                        <div style={{ color: "#94a3b8", fontSize: "0.72rem", lineHeight: 1.2 }}>{s.code}</div>
+                      </td>
                       <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}</td>
                       <td style={thTd}>
                         <button

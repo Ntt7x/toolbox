@@ -784,13 +784,15 @@ export interface WatchlistCreateResult {
   topic: WatchlistTopic;
 }
 
-/** 更新请求：改名 / 改介绍 / 增删个股（原子提交） */
+/** 更新请求：改名 / 改介绍 / 增删个股 / 重排（原子提交） */
 export interface WatchlistUpdateRequest {
   name?: string;
   /** 专题介绍（传空字符串可清空） */
   description?: string;
   addStocks?: WatchlistStock[];
   removeCodes?: string[];
+  /** 新顺序（code 数组，stocks 将按此重排；顺序 = 优先级） */
+  reorderCodes?: string[];
 }
 
 export interface WatchlistDetailResult {

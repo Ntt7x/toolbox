@@ -112,6 +112,7 @@ export function register(app: Hono): void {
       description: raw.description,
       addStocks: Array.isArray(raw.addStocks) ? raw.addStocks : undefined,
       removeCodes: Array.isArray(raw.removeCodes) ? raw.removeCodes : undefined,
+      reorderCodes: Array.isArray(raw.reorderCodes) ? raw.reorderCodes : undefined,
     });
     if (!topic) return c.json({ ok: false, message: "专题不存在" }, 404);
     return c.json({ ok: true, topic });

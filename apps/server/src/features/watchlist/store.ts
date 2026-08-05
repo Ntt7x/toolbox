@@ -64,10 +64,16 @@ export function createTopic(name: string, description?: string): WatchlistTopic 
   return topic;
 }
 
-/** 更新专题（原子提交：改名 / 改介绍 / 增删个股）；返回更新后专题，无则 null */
+/** 更新专题（原子提交：改名 / 改介绍 / 增删个股 / 重排）；返回更新后专题，无则 null */
 export function updateTopic(
   id: string,
-  patch: { name?: string; description?: string; addStocks?: WatchlistStock[]; removeCodes?: string[] },
+  patch: {
+    name?: string;
+    description?: string;
+    addStocks?: WatchlistStock[];
+    removeCodes?: string[];
+    reorderCodes?: string[];
+  },
 ): WatchlistTopic | null {
   const t = getTopic(id);
   if (!t) return null;
@@ -84,6 +90,21 @@ export function updateTopic(
   if (Array.isArray(patch.removeCodes)) {
     const rm = new Set(patch.removeCodes.map((c) => c.trim()).filter(Boolean));
     for (let i = stocks.length - 1; i >= 0; i--) if (rm.has(stocks[i].code)) stocks.splice(i, 1);
+  }
+  // 重排：按 reorderCodes 顺序（未列出的代码保持相对顺序补在末尾；顺序 = 优先级）
+  if (Array.isArray(patch.reorderCodes) && patch.reorderCodes.length > 0) {
+    const order = patch.reorderCodes.map((c) => c.trim()).filter(Boolean);
+    const byCode = new Map(stocks.map((s) => [s.code, s]));
+    const reordered: WatchlistStock[] = [];
+    for (const code of order) {
+      const s = byCode.get(code);
+      if (s) {
+        reordered.push(s);
+        byCode.delete(code);
+      }
+    }
+    for (const s of byCode.values()) reordered.push(s);
+    stocks.splice(0, stocks.length, ...reordered);
   }
   const next: WatchlistTopic = {
     ...t,
