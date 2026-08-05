@@ -154,7 +154,12 @@ export default function WatchlistTool() {
       if (r.ok) {
         setQuotes((prev) => {
           const next = { ...prev };
-          for (const q of r.quotes) if (q.ok && q.code) next[q.code] = q;
+          for (const q of r.quotes) {
+            if (!q.ok || !q.code) continue;
+            next[q.code] = q; // normCode：sh688102
+            const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
+            if (bare !== q.code) next[bare] = q; // 纯数字：688102（表格行 code 兼容）
+          }
           return next;
         });
       }
