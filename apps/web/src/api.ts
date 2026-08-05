@@ -135,8 +135,14 @@ export const api = {
     ),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
-  localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) =>
-    request<LocalDataResult>(`/data/local/entries?${new URLSearchParams(q as Record<string, string>).toString()}`),
+  localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) {
+      // 剔除 undefined / 空串，避免 URLSearchParams 把 undefined 序列化为 "undefined" 导致过滤错乱
+      if (v !== undefined && v !== "") params.set(k, String(v));
+    }
+    return request<LocalDataResult>(`/data/local/entries?${params.toString()}`);
+  },
   /** 批量清空数据源（KV，key 归属校验） */
   localClearSource: (source: string) =>
     request<{ ok: boolean; deleted: number }>(`/data/local/entries?source=${encodeURIComponent(source)}`, jsonInit("DELETE", {})),
