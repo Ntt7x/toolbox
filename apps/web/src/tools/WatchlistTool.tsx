@@ -99,6 +99,7 @@ export default function WatchlistTool() {
   // Chat 导入
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
+  const [importClipHint, setImportClipHint] = useState(false);
   // 添加股票
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
@@ -125,10 +126,12 @@ export default function WatchlistTool() {
     }
   }, []);
 
-  // 挂载：加载专题列表
+  // 挂载：加载专题列表 + 自动捕获剪贴板（Chat 导入链接）
   useEffect(() => {
     void refreshList();
-  }, [refreshList]);
+    void readImportClipboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 选中专题 → 加载详情
   useEffect(() => {
@@ -273,6 +276,21 @@ export default function WatchlistTool() {
   };
 
   /** Chat 导入：分享链接 → 自动创建专题（后台 LLM 整理，轮询进度） */
+  /** 从剪贴板读取 DeepSeek 分享链接并自动填入（仅当符合格式且输入框为空） */
+  const readImportClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const url = text.trim();
+      if (/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url) && !importUrl.trim()) {
+        setImportUrl(url);
+        setImportClipHint(true);
+        setTimeout(() => setImportClipHint(false), 6000);
+      }
+    } catch {
+      // 剪贴板无权限/不可用：静默，可手动粘贴
+    }
+  };
+
   const importChat = async () => {
     const url = importUrl.trim();
     if (!url) return;
@@ -410,9 +428,28 @@ export default function WatchlistTool() {
                     onChange={(e) => setImportUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void importChat(); }}
                   />
-                  <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem", background: "#7c3aed" }} onClick={() => void importChat()} disabled={importing} type="button">
-                    {importing ? "🔄 提取对话并整理中…" : "📥 从 Chat 导入"}
-                  </button>
+                  <div style={{ display: "flex", gap: "0.3rem" }}>
+                    <button
+                      style={{ ...btn, flex: 1, padding: "0.4rem", fontSize: "0.8rem", background: "#0891b2" }}
+                      onClick={() => void readImportClipboard()}
+                      type="button"
+                    >
+                      📋 从剪贴板读取
+                    </button>
+                    <button
+                      style={{ ...btn, flex: 1, padding: "0.4rem", fontSize: "0.8rem", background: "#7c3aed" }}
+                      onClick={() => void importChat()}
+                      disabled={importing}
+                      type="button"
+                    >
+                      {importing ? "🔄 提取整理中…" : "📥 从 Chat 导入"}
+                    </button>
+                  </div>
+                  {importClipHint && (
+                    <div style={{ color: "#0891b2", fontSize: "0.75rem", marginTop: "0.3rem" }}>
+                      📋 已捕获剪贴板中的分享链接，点击「从 Chat 导入」即可创建专题。
+                    </div>
+                  )}
                 </>
               )}
             </div>
