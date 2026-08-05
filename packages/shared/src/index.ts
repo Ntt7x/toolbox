@@ -27,6 +27,99 @@ export interface ToolListResponse {
 }
 
 // ============================================================
+// 凯利仓位助手（kelly）
+// ============================================================
+
+/** 凯利仓位计算请求 */
+export interface KellyRequest {
+  /** 当前价格 */
+  price: number;
+  /** 上止盈价格 */
+  takeProfit: number;
+  /** 下止损价格 */
+  stopLoss: number;
+  /** 主观胜率 0~1 */
+  winRate: number;
+  /** 仓位可用最大金额 */
+  maxAmount: number;
+  /** 可选：股票代码（历史记录关联） */
+  code?: string;
+  /** 可选：股票名称（历史记录展示） */
+  name?: string;
+}
+
+/** 凯利方案（分数凯利） */
+export interface KellyScheme {
+  key: "quarter" | "third" | "half" | "kelly";
+  label: string;
+  /** 占配额比例（%） */
+  pct: number;
+  /** 实际开仓资金 */
+  cash: number;
+  /** 实际份额（100 的整数倍） */
+  shares: number;
+  note: string;
+}
+
+/** 凯利计算响应 */
+export interface KellyResult {
+  ok: boolean;
+  price: number;
+  takeProfit: number;
+  stopLoss: number;
+  /** 胜率 0~1 */
+  winRate: number;
+  /** 盈亏比 */
+  b: number;
+  /** 期望优势 */
+  edge: number;
+  /** 凯利原始比例（未截断） */
+  fRaw: number;
+  /** 无正期望（分支一） */
+  noPositiveEdge?: boolean;
+  /** 所有方案份额为零（分支二） */
+  allZero?: boolean;
+  /** 截断提示（f_raw > 1 时） */
+  cutMessage?: string;
+  schemes?: KellyScheme[];
+  message?: string;
+}
+
+/** 凯利历史条目 */
+export interface KellyHistoryEntry {
+  id: string;
+  createdAt: string;
+  request: {
+    price: number;
+    takeProfit: number;
+    stopLoss: number;
+    winRate: number;
+    maxAmount: number;
+    code?: string;
+    name?: string;
+  };
+  summary: {
+    price: number;
+    takeProfit: number;
+    stopLoss: number;
+    winRate: number;
+    maxAmount: number;
+    b: number;
+    fRaw: number;
+    /** 凯利方案开仓资金/占配额比例 */
+    kellyCash: number;
+    kellyPct: number;
+    code?: string;
+    name?: string;
+  };
+  result: KellyResult;
+}
+
+export type KellyHistoryListResult = { ok: true; entries: KellyHistoryEntry[] };
+export type KellyHistoryDetailResult = { ok: true; entry: KellyHistoryEntry };
+export type KellyHistoryDeleteResult = { ok: true; deleted: number };
+
+// ============================================================
 // 书籍下载工具（books · zlib）
 // ============================================================
 
