@@ -9,6 +9,7 @@ import DeepSeekShareTool from "./tools/DeepSeekShareTool";
 import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
+import WatchlistTool from "./tools/WatchlistTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 
@@ -19,6 +20,7 @@ const toolPages: Record<string, ComponentType> = {
   "cb-rate": CbRateTool,
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
+  "watchlist": WatchlistTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页 */
@@ -40,7 +42,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
     ],
   },
-  { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx", "reverse-repo"] },
+  { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
   { label: "小工具", toolIds: ["deepseek-share"] },
 ];
 

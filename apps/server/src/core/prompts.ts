@@ -224,6 +224,30 @@ const REVERSE_REPO_MONTHLY_UPDATE_PROMPT = `你是央行公开市场操作助手
 - 某月无操作：operationTotal=0，netChange 按到期推算；拿不准的字段用 note 标注「不确定」，严禁编造
 - 只输出列出的缺失月份；已有月份不要重复输出`;
 
+/** 专题自选股：个股财报分析提示词（LLM 驱动，默认联网搜索） */
+const WATCHLIST_FUNDAMENTAL_PROMPT = `你是资深基本面分析师。任务：分析股票 {code}（{name}）的最新财报与基本面情况（今天是 {date}）。
+
+【数据要求】联网搜索该股票最新财报（季度/年报）与市场信息：
+- 公司简介与主营业务
+- 最新财务数据：营收及同比、净利润及同比、毛利率、净利率、ROE、资产负债率
+- 估值水平：PE、PB（注明数据时点）
+- 核心看点（2-4 条）与主要风险（2-3 条）
+
+【注意】搜索不到最新财报时，基于训练知识给出并明确标注"基于训练知识（可能过时）"；
+严禁编造具体数字；拿不准的字段省略或标注不确定。
+
+【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "asOf": "YYYY-MM-DD",
+  "name": "股票名称",
+  "code": "股票代码",
+  "summary": "公司简介 + 最新财报概况（150 字内）",
+  "financials": "关键财务数据：营收/净利同比、毛利率、ROE、PE/PB（带数据时点）",
+  "strengths": "核心看点：1.xxx 2.xxx",
+  "risks": "主要风险：1.xxx 2.xxx",
+  "conclusion": "一句话投资结论"
+}`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -315,6 +339,13 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.reverseRepo.monthlyUpdate",
     description: "逆回购月度数据更新提示词（触发式：补全缺失月份的月度汇总+逐笔操作；{months}）",
     defaultTemplate: REVERSE_REPO_MONTHLY_UPDATE_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "watchlist.fundamental",
+    key: "prompt.watchlist.fundamental",
+    description: "专题自选股：个股财报分析提示词（LLM 驱动，默认联网搜索；{code} {name} {date}）",
+    defaultTemplate: WATCHLIST_FUNDAMENTAL_PROMPT,
     render: (t) => t,
   },
 ];

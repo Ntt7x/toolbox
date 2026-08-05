@@ -20,6 +20,12 @@
   type ReverseRepoDailyResponse,
   type ReverseRepoMonthlyResult,
   type ReverseRepoMonthlyUpdateStatus,
+  type WatchlistCreateResult,
+  type WatchlistDeleteResult,
+  type WatchlistDetailResult,
+  type WatchlistFundamentalResult,
+  type WatchlistListResult,
+  type WatchlistUpdateRequest,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -77,6 +83,23 @@ export const api = {
   reverseRepoMonthlyRefresh: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/refresh", jsonInit("POST", {})),
   reverseRepoDaily: (force = false) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
+  // 专题自选股（专题 CRUD + 个股财报分析）
+  watchlistList: () => request<WatchlistListResult>("/tools/watchlist"),
+  watchlistCreate: (name: string) => request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", { name })),
+  watchlistDetail: (id: string) => request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
+  watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
+    request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  watchlistDelete: (id: string) => request<WatchlistDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  watchlistResolve: (code: string) => request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}`),
+  watchlistFundamental: (id: string, code: string, force = false) =>
+    request<AsyncTaskResult<WatchlistFundamentalResult>>(
+      `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
+      jsonInit("POST", {}),
+    ),
+  watchlistFundamentalTaskStatus: (id: string, taskId: string) =>
+    request<AsyncTaskResult<WatchlistFundamentalResult>>(
+      `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,
+    ),
   reverseRepoDailyTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）

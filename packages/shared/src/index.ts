@@ -691,5 +691,114 @@ export type LocalDataResult =
   | LocalDataDetailResponse
   | LocalDataErrorResponse;
 
+// ============================================================
+// 专题自选股（watchlist）：专题 + 入选个股（含入选理由）
+// ============================================================
+
+/** 专题内的一只自选股（code 为标准 A/H 代码；name 为解析/用户填写的名称） */
+export interface WatchlistStock {
+  /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700 */
+  code: string;
+  /** 股票名称（行情接口解析，可空） */
+  name?: string;
+  /** 入选理由 */
+  reason: string;
+}
+
+/** 一个专题（KV 持久化：watchlist:<id>） */
+export interface WatchlistTopic {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  stocks: WatchlistStock[];
+}
+
+/** 专题列表项（轻量，不带全量个股） */
+export interface WatchlistSummary {
+  id: string;
+  name: string;
+  stockCount: number;
+  updatedAt: string;
+}
+
+export interface WatchlistListResult {
+  ok: true;
+  topics: WatchlistSummary[];
+}
+
+export interface WatchlistCreateRequest {
+  name: string;
+}
+
+export interface WatchlistCreateResult {
+  ok: true;
+  topic: WatchlistTopic;
+}
+
+/** 更新请求：改名 / 增删个股（原子提交） */
+export interface WatchlistUpdateRequest {
+  name?: string;
+  addStocks?: WatchlistStock[];
+  removeCodes?: string[];
+}
+
+export interface WatchlistDetailResult {
+  ok: true;
+  topic: WatchlistTopic;
+}
+
+export interface WatchlistDeleteResult {
+  ok: true;
+  deleted: number;
+}
+
+/** 个股财报分析（LLM 驱动）请求：POST /api/tools/watchlist/:id/fundamental?code=xxx&force=1 */
+export interface WatchlistFundamentalRequest {
+  /** 股票代码 */
+  code: string;
+  /** 是否强制重新分析（忽略缓存；默认 false） */
+  force?: boolean;
+}
+
+/** 个股财报分析结果 */
+export interface WatchlistFundamentalResult {
+  ok: boolean;
+  /** 股票代码/名称 */
+  code: string;
+  name?: string;
+  /** 分析结论摘要（LLM） */
+  summary: string;
+  /** 关键财务数据（营收/净利/估值等） */
+  financials?: string;
+  /** 核心看点 */
+  strengths?: string;
+  /** 主要风险 */
+  risks?: string;
+  /** 一句话结论 */
+  conclusion?: string;
+  /** dataMode：search=联网实时 / knowledge=训练知识 */
+  dataMode?: "search" | "knowledge";
+  model?: string;
+  /** 是否命中缓存 */
+  fromCache?: boolean;
+  /** LLM 原始输出（容错兜底展示） */
+  raw?: string;
+  message?: string;
+}
+
+export interface WatchlistErrorResult {
+  ok: false;
+  message: string;
+}
+
+export type WatchlistResult =
+  | WatchlistListResult
+  | WatchlistCreateResult
+  | WatchlistDetailResult
+  | WatchlistDeleteResult
+  | WatchlistFundamentalResult
+  | WatchlistErrorResult;
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
