@@ -341,12 +341,15 @@ function recordLlmUsage(module: string, model: string, usage: { promptTokens?: n
   }
 }
 
-/** 用量汇总（总数 + 按模块 + 按天） */
+/** 用量汇总（总数 + 按模块 + 按天；按天含当日模块明细，供单日扇形图） */
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
   const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   const byModule = new Map<string, { calls: number; totalTokens: number }>();
-  const byDay = new Map<string, { calls: number; totalTokens: number }>();
+  const byDay = new Map<
+    string,
+    { calls: number; totalTokens: number; byModule: Map<string, { calls: number; totalTokens: number }> }
+  >();
   for (const e of entries) {
     total.promptTokens += e.promptTokens;
     total.completionTokens += e.completionTokens;
@@ -356,9 +359,13 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     m.totalTokens += e.promptTokens + e.completionTokens;
     byModule.set(e.module, m);
     const day = e.ts.slice(0, 10);
-    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0 };
+    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, byModule: new Map() };
     d.calls++;
     d.totalTokens += e.promptTokens + e.completionTokens;
+    const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0 };
+    dm.calls++;
+    dm.totalTokens += e.promptTokens + e.completionTokens;
+    d.byModule.set(e.module, dm);
     byDay.set(day, d);
   }
   const sortDesc = (a: { totalTokens: number }, b: { totalTokens: number }) => b.totalTokens - a.totalTokens;
@@ -366,7 +373,16 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     ok: true,
     total,
     byModule: [...byModule.entries()].map(([module, v]) => ({ module, label: moduleLabel(module), ...v })).sort(sortDesc),
-    byDay: [...byDay.entries()].map(([day, v]) => ({ day, ...v })).sort((a, b) => (a.day < b.day ? 1 : -1)),
+    byDay: [...byDay.entries()]
+      .map(([day, v]) => ({
+        day,
+        calls: v.calls,
+        totalTokens: v.totalTokens,
+        byModule: [...v.byModule.entries()]
+          .map(([module, m]) => ({ module, label: moduleLabel(module), ...m }))
+          .sort(sortDesc),
+      }))
+      .sort((a, b) => (a.day < b.day ? 1 : -1)),
   };
 }
 

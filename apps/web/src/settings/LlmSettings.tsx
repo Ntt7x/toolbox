@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { PageHeader } from "../ui";
+import { DailyTokensBar, DayModulePie } from "../components/UsageCharts";
 import type { LlmBalanceResult, LlmStatusResponse, LlmTestResult, LlmUsageSummary } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -39,18 +40,18 @@ export default function LlmSettings() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  // 对话验证
-  const [prompt, setPrompt] = useState("");
-  const [chatting, setChatting] = useState(false);
-  const [chatReply, setChatReply] = useState<string | null>(null);
-  const [chatUsage, setChatUsage] = useState<string | null>(null);
   // 用量监控 + 平台余额
   const [usage, setUsage] = useState<LlmUsageSummary | null>(null);
   const [balance, setBalance] = useState<LlmBalanceResult | null>(null);
+  // 单日扇形图：选中日期（默认最新一天）
+  const [pieDay, setPieDay] = useState<string>("");
 
   const refreshUsage = async () => {
     try {
-      setUsage(await api.llmUsage());
+      const u = await api.llmUsage();
+      setUsage(u);
+      // 默认选中最新一天（byDay 倒序）
+      setPieDay((prev) => prev || (u.byDay[0]?.day ?? ""));
     } catch {
       // 静默
     }
@@ -84,6 +85,7 @@ export default function LlmSettings() {
     }
     setSaving(true);
     setMsg(null);
+    setTestResult(null);
     try {
       await api.llmSettings({ apiKey: key });
       setKeyInput("");
@@ -99,6 +101,7 @@ export default function LlmSettings() {
   const clearKey = async () => {
     setSaving(true);
     setMsg(null);
+    setTestResult(null);
     try {
       await api.llmSettings({ apiKey: "" });
       setMsg({ kind: "ok", text: "已清除 API key" });
@@ -123,45 +126,19 @@ export default function LlmSettings() {
     }
   };
 
-  const sendChat = async () => {
-    const text = prompt.trim();
-    if (!text) {
-      setMsg({ kind: "err", text: "请输入对话内容" });
-      return;
-    }
-    setChatting(true);
-    setChatReply(null);
-    setChatUsage(null);
-    setMsg(null);
-    try {
-      const r = await api.llmChat({ messages: [{ role: "user", content: text }] });
-      if (r.ok) {
-        setChatReply(r.content);
-        if (r.usage) {
-          setChatUsage(`tokens：prompt ${r.usage.promptTokens} / completion ${r.usage.completionTokens} / total ${r.usage.totalTokens}（模型 ${r.model}）`);
-        } else {
-          setChatUsage(`模型：${r.model}`);
-        }
-      } else {
-        setMsg({ kind: "err", text: r.message });
-      }
-    } catch (e) {
-      setMsg({ kind: "err", text: errMsg(e) });
-    } finally {
-      setChatting(false);
-    }
-  };
-
   return (
     <div>
       <PageHeader
-        title="🤖 LLM 设置（DeepSeek）"
-        desc="网站公共 LLM 能力模块：配置 DeepSeek API key，供各工具复用（对话 / 测试 / 后续扩展）。"
+        title="🤖 LLM 管理（DeepSeek）"
+        desc="网站公共 LLM 能力模块：私钥配置 + 用量管理。配置 DeepSeek API key 后，各工具（央行利率分析 / 国债汇率分析 / 专题自选股等）自动复用。"
       />
 
-      {/* 状态 */}
+      {/* ============ 模块一：私钥配置 ============ */}
       <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
+        <div style={{ fontWeight: 600, marginBottom: "0.6rem", fontSize: "1rem" }}>🔑 私钥配置</div>
+
+        {/* 状态 */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
           <span style={{ fontWeight: 600 }}>当前状态：</span>
           {status === null ? (
             <span style={{ color: "#94a3b8" }}>查询中…</span>
@@ -178,11 +155,8 @@ export default function LlmSettings() {
             刷新
           </button>
         </div>
-      </div>
 
-      {/* API key 配置 */}
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: "0.6rem" }}>DeepSeek API 私钥</div>
+        {/* API key 输入行：输入框 + 显示/隐藏 + 保存 + 清除 + 测试连接（并列） */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
           <input
             style={input}
@@ -191,7 +165,7 @@ export default function LlmSettings() {
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
           />
-          <button style={{ ...btn, background: "#64748b" }} onClick={() => setShowKey((v) => !v)} type="button">
+          <button style={{ ...btn, background: "#64748b", padding: "0.5rem 0.9rem" }} onClick={() => setShowKey((v) => !v)} type="button">
             {showKey ? "🙈 隐藏" : "👁 显示"}
           </button>
           <button style={btn} onClick={saveKey} disabled={saving} type="button">
@@ -200,79 +174,37 @@ export default function LlmSettings() {
           <button style={{ ...btn, background: "#dc2626" }} onClick={clearKey} disabled={saving} type="button">
             清除
           </button>
-        </div>
-        <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.5rem" }}>
-          🔒 key 仅保存在服务端本地设置库（SQLite .file/ 目录，已 gitignore），不存浏览器，不会出现在前端代码中。
-        </div>
-      </div>
-
-      {/* 测试连接 */}
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
-          <button style={{ ...btn, background: "#0891b2" }} onClick={runTest} disabled={testing || !status?.configured} type="button">
+          <button
+            style={{ ...btn, background: "#0891b2" }}
+            onClick={runTest}
+            disabled={testing || !status?.configured}
+            title={status?.configured ? "用已保存的 key 测试 DeepSeek 连接" : "请先保存 API key"}
+            type="button"
+          >
             {testing ? "测试中…" : "🔌 测试连接"}
-          </button>          {testResult && (
-            testResult.ok ? (
-              <span style={{ color: "#16a34a", fontSize: "0.9rem" }}>✅ {testResult.message}（{testResult.latencyMs}ms）</span>
-            ) : (
-              <span style={{ color: "#dc2626", fontSize: "0.9rem" }}>❌ {testResult.message}</span>
-            )
-          )}
-        </div>
-      </div>
-
-      {/* 对话验证 */}
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: "0.6rem" }}>💬 对话验证（公共 chat 能力）</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <input
-            style={input}
-            placeholder="输入问题，如：用一句话介绍 DeepSeek"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
-          />
-          <button style={{ ...btn, background: "#16a34a" }} onClick={sendChat} disabled={chatting || !status?.configured} type="button">
-            {chatting ? "思考中…" : "发送"}
           </button>
         </div>
-        {chatReply !== null && (
-          <div
-            style={{
-              marginTop: "0.8rem",
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
-              borderRadius: 8,
-              padding: "0.8rem 1rem",
-              whiteSpace: "pre-wrap",
-              fontSize: "0.9rem",
-              lineHeight: 1.6,
-            }}
-          >
-            {chatReply}
-            {chatUsage && <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem" }}>{chatUsage}</div>}
+
+        {/* 测试结果内联 */}
+        {testResult && (
+          <div style={{ marginTop: "0.6rem", fontSize: "0.9rem" }}>
+            {testResult.ok ? (
+              <span style={{ color: "#16a34a" }}>✅ {testResult.message}（{testResult.latencyMs}ms）</span>
+            ) : (
+              <span style={{ color: "#dc2626" }}>❌ {testResult.message}</span>
+            )}
           </div>
         )}
+
+        <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.6rem" }}>
+          🔒 key 仅保存在服务端本地设置库（SQLite .file/ 目录，已 gitignore），不存浏览器，不会出现在前端代码中。测试连接使用已保存的 key。
+        </div>
       </div>
 
-      {/* 消息 */}
-      {msg && (
-        <div
-          style={{
-            ...card,
-            borderColor: msg.kind === "ok" ? "#86efac" : "#fca5a5",
-            background: msg.kind === "ok" ? "#f0fdf4" : "#fef2f2",
-            color: msg.kind === "ok" ? "#15803d" : "#b91c1c",
-          }}
-        >
-          {msg.text}
-        </div>
-      )}
-
-      {/* 用量监控 + 平台余额 */}
+      {/* ============ 模块二：用量管理 ============ */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, fontSize: "1rem" }}>📊 LLM 用量监控</span>
+          <span style={{ fontWeight: 600, fontSize: "1rem" }}>📊 用量管理</span>
           <button style={{ ...btn, background: "#64748b", padding: "0.3rem 0.8rem", fontSize: "0.8rem" }} onClick={refreshUsage} type="button">
             ⟳ 刷新
           </button>
@@ -312,6 +244,31 @@ export default function LlmSettings() {
             <span style={{ color: "#b91c1c" }}>{balance.message}</span>
           )}
         </div>
+
+        {/* 图表：逐日条形图 + 单日扇形图 */}
+        {(usage?.byDay.length ?? 0) > 0 && (
+          <div style={{ marginBottom: "0.7rem", padding: "0.6rem 0.8rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", marginBottom: "0.4rem" }}>📈 逐日用量（tokens）</div>
+            <DailyTokensBar byDay={usage?.byDay ?? []} />
+            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", margin: "0.8rem 0 0.4rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              🥧 单日用量构成
+              <select
+                style={{ padding: "0.25rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem", background: "#fff" }}
+                value={pieDay}
+                onChange={(e) => setPieDay(e.target.value)}
+              >
+                {(usage?.byDay ?? []).map((d) => (
+                  <option key={d.day} value={d.day}>
+                    {d.day}（{d.calls} 次 · {((d.totalTokens / 1000).toFixed(1))}k tokens）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <DayModulePie
+              byModule={usage?.byDay.find((d) => d.day === pieDay)?.byModule ?? []}
+            />
+          </div>
+        )}
 
         {/* 本地用量汇总 */}
         <div style={{ fontSize: "0.85rem" }}>
@@ -354,6 +311,20 @@ export default function LlmSettings() {
           </div>
         </div>
       </div>
+
+      {/* 消息 */}
+      {msg && (
+        <div
+          style={{
+            ...card,
+            borderColor: msg.kind === "ok" ? "#86efac" : "#fca5a5",
+            background: msg.kind === "ok" ? "#f0fdf4" : "#fef2f2",
+            color: msg.kind === "ok" ? "#15803d" : "#b91c1c",
+          }}
+        >
+          {msg.text}
+        </div>
+      )}
     </div>
   );
 }

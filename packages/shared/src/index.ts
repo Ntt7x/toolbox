@@ -366,7 +366,8 @@ export interface LlmUsageSummary {
   ok: true;
   total: { calls: number; promptTokens: number; completionTokens: number; totalTokens: number };
   byModule: { module: string; label: string; calls: number; totalTokens: number }[];
-  byDay: { day: string; calls: number; totalTokens: number }[];
+  /** 逐日（倒序）；byModule 为该日各模块明细（单日扇形图用） */
+  byDay: { day: string; calls: number; totalTokens: number; byModule: { module: string; label: string; calls: number; totalTokens: number }[] }[];
 }
 
 /** DeepSeek 平台余额查询结果 */
