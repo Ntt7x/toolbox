@@ -162,8 +162,10 @@ function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000)
 // ---------- 会话注册表（KV 持久化，服务端状态） ----------
 
 const REG_PREFIX = "reasonixSession:";
-/** 注册表 TTL：90 天（会话状态持久化；reasonix 侧 transcript 同样持久化于磁盘） */
-const REG_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** 活跃期：30 天（reasonix 会话保持打开，可续问；期间缓存友好） */
+const ACTIVE_MS = 30 * 24 * 60 * 60 * 1000;
+/** 归档期：360 天（注册表保留，reasonix 侧会话自动 close 释放资源；续用时 resume 恢复） */
+const ARCHIVE_MS = 360 * 24 * 60 * 60 * 1000;
 
 export interface ReasonixSessionReg {
   /** 业务会话 id（注册表 key 段，对外暴露） */
@@ -188,8 +190,9 @@ function genRegId(): string {
 function loadReg(id: string): ReasonixSessionReg | null {
   const r = kvGet<ReasonixSessionReg>(regKey(id));
   if (!r || typeof r.reasonixSessionId !== "string") return null;
-  if (Date.now() - r.lastAt > r.ttlMs) {
-    kvDelete(regKey(id));
+  const age = Date.now() - r.lastAt;
+  if (age > ARCHIVE_MS) {
+    kvDelete(regKey(id)); // 超归档期：清理
     return null;
   }
   return r;
@@ -216,7 +219,7 @@ export async function createReasonixSession(opts: { cwd?: string; module?: strin
       module: opts.module ?? "reasonix",
       createdAt: now,
       lastAt: now,
-      ttlMs: REG_TTL_MS,
+      ttlMs: ACTIVE_MS,
     };
     saveReg(reg);
     return { ok: true, id: reg.id };
@@ -298,15 +301,21 @@ export async function closeReasonixSession(regId: string): Promise<void> {
   }
 }
 
-/** 会话注册表列表（含 TTL 清理；供状态管理/恢复） */
+/** 会话注册表列表（两级生命周期：活跃 30 天 / 归档 360 天 / 过期清理）
+ * 归档态（>30 天未用）自动 close reasonix 侧会话释放资源（注册表保留，续用时 resume） */
 export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] {
   const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] = [];
   for (const r of kvListRaw(REG_PREFIX, 200)) {
     const reg = r.value ? (JSON.parse(r.value) as ReasonixSessionReg) : null;
     if (!reg || typeof reg.reasonixSessionId !== "string") continue;
-    if (Date.now() - reg.lastAt > reg.ttlMs) {
+    const age = Date.now() - reg.lastAt;
+    if (age > ARCHIVE_MS) {
       kvDelete(r.key);
       continue;
+    }
+    if (age > ACTIVE_MS) {
+      // 归档态：释放 reasonix 侧会话资源（fire-and-forget；失败静默，注册表保留）
+      void rpc("session/close", { sessionId: reg.reasonixSessionId }, 8000).catch(() => {});
     }
     out.push({ id: reg.id, module: reg.module, cwd: reg.cwd, createdAt: reg.createdAt, lastAt: reg.lastAt });
   }
@@ -330,4 +339,4 @@ export function reasonixSessionsDir(): string {
   return join(process.env.USERPROFILE ?? process.env.HOME ?? "", "AppData", "Roaming", "reasonix", "sessions");
 }
 
-export { REG_TTL_MS };
+export { ACTIVE_MS, ARCHIVE_MS };

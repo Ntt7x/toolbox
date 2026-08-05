@@ -18,8 +18,10 @@ import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
 /** KV key 前缀 */
 export const SESSION_PREFIX = "chatSession:";
 
-/** 默认会话 TTL：90 天（状态持久化优先；缓存命中收益在 DeepSeek 缓存 TTL 内有效，状态保持则跨天/跨周） */
-const DEFAULT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** 活跃期：30 天（完整历史 + 缓存友好，可继续追问） */
+const ACTIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** 归档期：360 天（历史折叠为摘要，可查看/恢复） */
+const ARCHIVE_TTL_MS = 360 * 24 * 60 * 60 * 1000;
 /** 历史压缩触发阈值（估算 tokens；借鉴 Reasonix compact：达到预算即压缩） */
 const COMPACT_TRIGGER_TOKENS = 6000;
 /** 压缩后保留的 verbatim 尾部预算（tokens） */
@@ -54,6 +56,10 @@ export interface ChatSession {
   createdAt: number;
   lastAt: number;
   ttlMs: number;
+  /** 已归档（活跃期后自动折叠历史为摘要；归档期内可恢复/续用） */
+  archived?: boolean;
+  /** 归档时折叠的历史摘要（最近内容 + 折叠标记） */
+  summary?: string;
 }
 
 export interface CreateSessionOptions {
@@ -73,10 +79,6 @@ function keyOf(id: string): string {
   return `${SESSION_PREFIX}${id}`;
 }
 
-function isExpired(s: ChatSession, now = Date.now()): boolean {
-  return now - s.lastAt > s.ttlMs;
-}
-
 /** 新建会话（KV 持久化） */
 export function createChatSession(opts: CreateSessionOptions): ChatSession {
   const now = Date.now();
@@ -91,18 +93,54 @@ export function createChatSession(opts: CreateSessionOptions): ChatSession {
     droppedTurns: 0,
     createdAt: now,
     lastAt: now,
-    ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
+    ttlMs: opts.ttlMs ?? ACTIVE_TTL_MS,
   };
   kvSet(keyOf(session.id), session);
   return session;
 }
 
+/** 会话生命周期：活跃 30 天 → 归档 360 天 → 过期清理
+ * - 活跃（≤30 天）：完整历史 + 缓存友好
+ * - 归档（30~360 天）：历史折叠为摘要（archived=true + summary），可查看/恢复续用
+ * - 过期（>360 天）：删除 */
 function loadSession(id: string): ChatSession | null {
   const s = kvGet<ChatSession>(keyOf(id));
   if (!s || typeof s.system !== "string") return null;
-  if (isExpired(s)) {
-    kvDelete(keyOf(id)); // TTL 过期自动清理
+  const age = Date.now() - s.lastAt;
+  if (age > ARCHIVE_TTL_MS) {
+    kvDelete(keyOf(id)); // 超归档期：清理
     return null;
+  }
+  if (age > ACTIVE_TTL_MS && !s.archived) {
+    // 进入归档期：折叠历史为摘要（保留最近 2 轮 verbatim，早期折叠）
+    archiveSessionInternal(s);
+  }
+  return s;
+}
+
+/** 归档：折叠 history 为摘要（保留最近 2 轮 verbatim + 早期折叠标记） */
+function archiveSessionInternal(s: ChatSession): void {
+  const recent = s.history.slice(-4); // 最近 2 轮（user+assistant 成对）
+  const early = s.history.slice(0, -4);
+  const earlyLen = Math.round(early.length / 2);
+  const summary = [earlyLen > 0 ? `${COMPACTED_MARKER} 早期 ${earlyLen} 轮` : "", ...recent.map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content.slice(0, 200)}`)].join("\n");
+  s.summary = summary.trim();
+  s.history = [];
+  s.archived = true;
+  kvSet(keyOf(s.id), s);
+}
+
+/** 恢复归档会话（摘要注入为历史上下文，重新进入活跃期）；无则 null */
+export function restoreArchivedSession(id: string): ChatSession | null {
+  const s = loadSession(id);
+  if (!s) return null;
+  if (s.archived) {
+    const summary = s.summary ?? "";
+    s.history = summary ? [{ role: "user" as const, content: `[历史摘要]\n${summary}` }] : [];
+    s.summary = undefined;
+    s.archived = false;
+    s.lastAt = Date.now();
+    kvSet(keyOf(s.id), s);
   }
   return s;
 }
@@ -143,9 +181,11 @@ export function compactSession(id: string): ChatSession | null {
  * messages = [system, ...history, user]；成功才 append，失败不动历史。
  */
 export async function chatSessionAsk(sessionId: string, userMessage: string): Promise<LlmChatResult> {
-  const s = loadSession(sessionId);
+  // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）
+  const restored = restoreArchivedSession(sessionId);
+  const s = restored ?? loadSession(sessionId);
   if (!s) {
-    return { ok: false, message: "会话不存在或已过期（TTL 90 天）" };
+    return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
   }
   const messages: LlmChatMessage[] = [
     { role: "system", content: s.system },
@@ -169,22 +209,27 @@ export async function chatSessionAsk(sessionId: string, userMessage: string): Pr
   return result;
 }
 
-/** 会话列表（未过期） */
-export function listChatSessions(): { id: string; module: string; turns: number; droppedTurns: number; createdAt: number; lastAt: number }[] {
+/** 会话列表（含状态：active/archived；过期清理） */
+export function listChatSessions(): { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; createdAt: number; lastAt: number }[] {
   const rows = kvListAll(SESSION_PREFIX);
-  const out: { id: string; module: string; turns: number; droppedTurns: number; createdAt: number; lastAt: number }[] = [];
+  const out: { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; createdAt: number; lastAt: number }[] = [];
   for (const r of rows) {
     const s = r.value as ChatSession;
     if (!s || typeof s.system !== "string") continue;
-    if (isExpired(s)) {
-      kvDelete(r.key);
+    const age = Date.now() - s.lastAt;
+    if (age > ARCHIVE_TTL_MS) {
+      kvDelete(r.key); // 超归档期：清理
       continue;
+    }
+    if (age > ACTIVE_TTL_MS && !s.archived) {
+      archiveSessionInternal(s); // 进入归档期：折叠历史为摘要
     }
     out.push({
       id: s.id,
       module: s.module,
       turns: Math.round(s.history.length / 2),
       droppedTurns: s.droppedTurns,
+      status: s.archived ? "archived" : "active",
       createdAt: s.createdAt,
       lastAt: s.lastAt,
     });
