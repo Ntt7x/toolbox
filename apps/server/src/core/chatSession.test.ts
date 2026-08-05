@@ -177,6 +177,38 @@ test("delete：存在删除 true，不存在 false", () => {
   assert.equal(deleteChatSession(s.id), false);
 });
 
+test("业务确定性 id：幂等复用（system 相同保留历史）；system 变更重建", async () => {
+  deleteChatSession("biz-demo-2026-08"); // 自洁：清除可能残留的固定 id 会话
+  const s1 = createChatSession({ id: "biz-demo-2026-08", module: "test.chat", system: "系统A" });
+  await chatSessionAsk(s1.id, "问1");
+  // 相同 system → 复用（历史保留）
+  const s2 = createChatSession({ id: "biz-demo-2026-08", module: "test.chat", system: "系统A" });
+  assert.equal(s2.id, s1.id);
+  assert.equal(raw(s2.id).history.length, 2);
+  // system 变更 → 重建（历史作废）
+  const s3 = createChatSession({ id: "biz-demo-2026-08", module: "test.chat", system: "系统B" });
+  assert.equal(s3.id, s1.id);
+  assert.equal(raw(s3.id).history.length, 0);
+  deleteChatSession("biz-demo-2026-08");
+});
+
+test("业务确定性 id：非法 id 抛错", () => {
+  assert.throws(() => createChatSession({ id: "bad id/../", module: "test.chat", system: "s" }), /非法业务会话 id/);
+});
+
+test("temperature 透传：创建时指定则传给 chat", async () => {
+  const s = make("test.chat", "sys", { temperature: 0.2 });
+  await chatSessionAsk(s.id, "问");
+  assert.equal(seenOpts!.temperature, 0.2);
+});
+
+test("signal 透传：askOpts.signal 传给 chat", async () => {
+  const s = make();
+  const ac = new AbortController();
+  await chatSessionAsk(s.id, "问", { signal: ac.signal });
+  assert.equal(seenOpts!.signal, ac.signal);
+});
+
 test("compactSession 手动触发：直接压缩并落盘", async () => {
   replyLen = 6000;
   const s = make();

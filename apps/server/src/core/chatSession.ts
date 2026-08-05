@@ -62,6 +62,8 @@ export interface ChatSession {
   model?: string;
   search?: boolean;
   json?: boolean;
+  /** 温度（固定，避免中途变更破坏前缀语义） */
+  temperature?: number;
   /** 已交换的 user/assistant 消息（append-only） */
   history: LlmChatMessage[];
   /** 压缩时丢弃的轮次计数（统计用） */
@@ -80,26 +82,48 @@ export interface CreateSessionOptions {
   model?: string;
   search?: boolean;
   json?: boolean;
+  /** 温度（固定） */
+  temperature?: number;
+  /** 业务确定性 id（幂等复用）：存在且 system 相同 → 复用；system 不同 → 旧会话作废重建 */
+  id?: string;
 }
 
 function genId(): string {
   return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** 业务确定性 id 合法性（KV key 段安全） */
+const BIZ_ID_RE = /^[A-Za-z0-9._-]{1,80}$/;
+
 function keyOf(id: string): string {
   return `${SESSION_PREFIX}${id}`;
 }
 
-/** 新建会话（KV 持久化） */
+/** 新建会话（KV 持久化）；opts.id 提供时幂等复用（system 一致）或重建（system 变更） */
 export function createChatSession(opts: CreateSessionOptions): ChatSession {
   const now = Date.now();
+  if (opts.id) {
+    if (!BIZ_ID_RE.test(opts.id)) throw new Error(`非法业务会话 id：${opts.id}`);
+    const existing = kvGet<ChatSession>(keyOf(opts.id));
+    if (existing && typeof existing.system === "string") {
+      if (existing.system === opts.system) {
+        // 幂等复用：刷新活跃时间，保留历史（前缀缓存友好）
+        existing.lastAt = now;
+        kvSet(keyOf(opts.id), existing);
+        return existing;
+      }
+      // system 变更（提示词升级）：旧会话作废重建
+      kvDelete(keyOf(opts.id));
+    }
+  }
   const session: ChatSession = {
-    id: genId(),
+    id: opts.id ?? genId(),
     module: opts.module,
     system: opts.system,
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.search !== undefined ? { search: opts.search } : {}),
     ...(opts.json !== undefined ? { json: opts.json } : {}),
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     history: [],
     droppedTurns: 0,
     createdAt: now,
@@ -189,8 +213,13 @@ export function compactSession(id: string, loaded?: ChatSession): ChatSession | 
 /**
  * 会话追加一轮查询（append-only，前缀稳定）：
  * messages = [system, ...history, user]；成功才 append，失败不动历史。
+ * askOpts.signal 透传给 LLM（任务取消中断）。
  */
-export async function chatSessionAsk(sessionId: string, userMessage: string): Promise<LlmChatResult> {
+export async function chatSessionAsk(
+  sessionId: string,
+  userMessage: string,
+  askOpts: { signal?: AbortSignal } = {},
+): Promise<LlmChatResult> {
   // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）；restore 内部已 loadSession
   const s = restoreArchivedSession(sessionId);
   if (!s) {
@@ -206,6 +235,8 @@ export async function chatSessionAsk(sessionId: string, userMessage: string): Pr
     ...(s.model ? { model: s.model } : {}),
     ...(s.search ? { search: true } : {}),
     ...(s.json ? { json: true } : {}),
+    ...(s.temperature !== undefined ? { temperature: s.temperature } : {}),
+    ...(askOpts.signal ? { signal: askOpts.signal } : {}),
   };
   const result = await chatImpl(messages, opts);
   if (result.ok) {
