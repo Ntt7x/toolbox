@@ -158,6 +158,18 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 6. git 规范
 
+### 6.1 分支工作流（强制，2026-08-05 起）
+
+- **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
+  `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
+- 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
+- **必须等待用户验收通过后**才能合并到 main：`git switch main && git merge <分支>` → `git push origin main`
+- 合并后删除远程分支（`git push origin --delete <分支>`）与本地分支（可选）
+- 用户明确要求直接改 main 的情况（如紧急修复）除外
+- 新 Agent 开工前：`git status` / `git branch -a` 确认当前分支与是否有待验收分支
+
+### 6.2 提交与推送
+
 - 身份：`kk <kk@localhost>`（全局已配）
 - 提交信息：`feat(scope): 摘要` + 空行 + 要点列表；中文
 - 每完成一个功能批提交一次；`.env`、`.vscode/`、`.file/` 不入库（已 gitignore）
@@ -165,11 +177,11 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
   本会话若产生了新的经验/约定/架构变化/文件改名，先更新 dev.md 再提交，
   提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
-- **每次 commit 后必须自动 push 到 origin**（提交即推送，保持 origin/main 同步）：
+- **每次 commit 后必须自动 push 到 origin**（提交即推送）：
   - 远程已配置：`origin = https://github.com/Ntt7x/toolbox.git`，本地凭证可用；
-  - 流程固定为：`git add -A` → `git commit` → `git push`（一条龙，commit 后立即执行 push）；
+  - 分支上：`git add -A` → `git commit` → `git push -u origin <分支>`（一条龙）；
   - push 失败（认证/网络）时：保留本地提交、报告失败原因，下次可重推，不得丢弃提交；
-  - push 成功后确认 `git status --short --branch` 显示 `## main...origin/main`（无 ahead/behind）。
+  - push 成功后确认 `git status --short --branch` 显示 `## <分支>...origin/<分支>`（无 ahead/behind）。
 
 ## 7. 验证清单（每功能必过）
 
