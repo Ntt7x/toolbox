@@ -12,6 +12,8 @@ import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
+import RehabMedicalTool from "./tools/RehabMedicalTool";
+import RehabMuscleTool from "./tools/RehabMuscleTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
@@ -26,6 +28,8 @@ const toolPages: Record<string, ComponentType> = {
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
+  "rehab-medical": RehabMedicalTool,
+  "rehab-muscle": RehabMuscleTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页 */
@@ -50,6 +54,7 @@ const MENU_GROUPS: MenuGroup[] = [
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
   { label: "小工具", toolIds: ["deepseek-share", "books"] },
+  { label: "康复", toolIds: ["rehab-medical", "rehab-muscle"] },
 ];
 
 /** 菜单顺序服务端设置 key（本地设置数据：settings:menu.order） */

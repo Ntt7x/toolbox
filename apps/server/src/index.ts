@@ -24,6 +24,7 @@ import * as treasuryFxFeature from "./features/treasuryFx/index.js";
 import * as reverseRepoFeature from "./features/reverseRepo/index.js";
 import * as watchlistFeature from "./features/watchlist/index.js";
 import * as kellyFeature from "./features/kelly/index.js";
+import * as rehabFeature from "./features/rehab/index.js";
 import * as memoFeature from "./features/memo/index.js";
 import * as booksFeature from "./features/books/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
@@ -51,6 +52,8 @@ const tools: ToolMeta[] = [
   reverseRepoFeature.meta,
   watchlistFeature.meta,
   kellyFeature.meta,
+  rehabFeature.meta,
+  rehabFeature.muscleMeta,
   booksFeature.meta,
   deepseekShareFeature.meta,
 ];
@@ -74,6 +77,7 @@ treasuryFxFeature.register(app);
 reverseRepoFeature.register(app);
 watchlistFeature.register(app);
 kellyFeature.register(app);
+rehabFeature.register(app);
 memoFeature.register(app);
 booksFeature.register(app);
 deepseekShareFeature.register(app);

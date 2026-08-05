@@ -47,6 +47,8 @@
   type KellyHistoryListResult,
   type KellyRequest,
   type KellyResult,
+  type RehabNoteResult,
+  type RehabNoteUpdateRequest,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -92,6 +94,11 @@ export const api = {
   kellyHistoryDetail: (id: string) => request<KellyHistoryDetailResult>(`/tools/kelly/history/${encodeURIComponent(id)}`),
   kellyHistoryDelete: (id: string) =>
     request<KellyHistoryDeleteResult>(`/tools/kelly/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  // 康复笔记
+  rehabGet: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`),
+  rehabSave: (id: string, patch: RehabNoteUpdateRequest) =>
+    request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  rehabReset: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}/reset`, jsonInit("POST", {})),
   /** 历史网格计划（列表/详情/删除） */
   gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
   gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),
