@@ -109,11 +109,9 @@ export default function BookSearchTool() {
   };
 
   const download = (item: BookItem) => {
-    if (item.downloadPath) {
-      openZlib(`${base}${item.downloadPath.startsWith("/") ? item.downloadPath : `/${item.downloadPath}`}`);
-    } else if (item.detailUrl) {
-      openZlib(item.detailUrl);
-    }
+    // zlib 下载强制登录会话：服务端匿名拿到的 /dl/ 短链无效（404）。
+    // 在浏览器打开该书的搜索结果页，登录态下直接可见下载入口。
+    openZlib(`${config?.zlibBase ?? base}/s/?q=${encodeURIComponent(item.title)}`);
   };
 
   return (
@@ -125,8 +123,8 @@ export default function BookSearchTool() {
         <div style={{ fontSize: "0.85rem", color: "#92400e", lineHeight: 1.7 }}>
           <b>使用须知：</b>
           <br />① zlib 站点需科学上网：服务端经本机代理 <code style={{ background: "#fef3c7", padding: "0 4px", borderRadius: 4 }}>{config?.proxy ?? "http://127.0.0.1:10808"}</code> 访问（可在「本地数据管理」改 books.proxy / books.zlibBase）。
-          <br />② 匿名搜索每日有限额，超限返回 429，可稍后再试或用下方「🚀 浏览器打开」直接搜索。
-          <br />③ 下载/在线阅读需要浏览器登录 zlib 账号（免费账号每日限量下载）。
+          <br />② 搜索免费匿名可用，但每日有限额（429 时可稍后再试或点「🚀 浏览器打开」）。
+          <br />③ <b>下载需登录 zlib 账号</b>：点「⬇ 打开下载」会在浏览器打开该书搜索页，登录后点书进入详情页下载（免费账号每日限量）。
           <br />④ 请遵守版权法规，仅下载你有权获取的内容。
         </div>
       </div>
@@ -203,8 +201,8 @@ export default function BookSearchTool() {
                     </span>
                     <span style={{ color: "#475569", fontSize: "0.78rem" }}>{item.filesizeString ?? (item.filesize ? `${(item.filesize / 1024 / 1024).toFixed(1)} MB` : "")}</span>
                     <span style={{ flex: 1 }} />
-                    <button style={{ ...btnSmall, background: "#3b82f6", color: "#fff" }} onClick={() => download(item)} type="button">
-                      ⬇ 下载
+                    <button style={{ ...btnSmall, background: "#3b82f6", color: "#fff" }} onClick={() => download(item)} type="button" title="浏览器打开该书 zlib 搜索结果页，登录后点击下载">
+                      ⬇ 打开下载
                     </button>
                     {item.detailUrl && (
                       <button style={btnSmall} onClick={() => item.detailUrl && openZlib(item.detailUrl)} type="button" title="打开 zlib 书籍详情页">
