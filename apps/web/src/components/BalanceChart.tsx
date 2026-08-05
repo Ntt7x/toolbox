@@ -104,8 +104,8 @@ export default function BalanceChart({ series, operations = [], height = 330 }: 
         },
       ],
       dataZoom: [
+        // 仅保留滚轮/拖拽缩放（inside），不显示底部拉伸轴
         { type: "inside", xAxisIndex: 0, filterMode: "none" },
-        { type: "slider", xAxisIndex: 0, bottom: 6, height: 18, filterMode: "none" },
       ],
       series: [
         {

@@ -72,13 +72,22 @@ export function getMonthlyData(): ReverseRepoMonthlyResponse {
 // ============================================================
 
 /** 逐笔投放 → 逐月投放/到期流量（到期按投放日 + term 自然月归属） */
-function buildMonthlyFlows(operations: ReverseRepoOperation[]): { put: Map<string, number>; mat: Map<string, number> } {
+/**
+ * 逐月流量：
+ * - 投放 put：以 rows 月度汇总的 operationTotal 为权威（与月度表/触发更新一致；
+ *   个别月份媒体口径与公告逐笔有差异时以月度表为准，如 2025-11 公告 8000 vs 媒体 15000）
+ * - 到期 mat：仅能逐笔推算（操作日 + 3/6 自然月）
+ */
+function buildMonthlyFlows(
+  rows: ReverseRepoMonthlyRow[],
+  operations: ReverseRepoOperation[],
+): { put: Map<string, number>; mat: Map<string, number> } {
   const put = new Map<string, number>();
+  for (const r of rows) put.set(r.month, r.operationTotal);
   const mat = new Map<string, number>();
   for (const o of operations) {
-    const m = o.date.slice(0, 7);
-    put.set(m, (put.get(m) ?? 0) + o.amount);
     const [y, mm] = o.date.split("-").map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(mm)) continue;
     const n = o.term === "3M" ? 3 : 6;
     const t = y * 12 + (mm - 1) + n;
     const em = `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
@@ -90,14 +99,14 @@ function buildMonthlyFlows(operations: ReverseRepoOperation[]): { put: Map<strin
 /**
  * 生成连续余额曲线：
  * - 权威月份（rows.cumulativeNet 非空）用权威值（estimated=false），并重置推算基线
- * - 缺失月份用模型推算（累计净投放 = Σ投放 − Σ到期），estimated=true
+ * - 缺失月份用模型推算（累计净投放 = Σ月度投放 − Σ逐笔到期），estimated=true
  * 全月份连续（不再断开），推算段前端以空心/浅色区分
  */
 export function deriveBalanceSeries(
   rows: ReverseRepoMonthlyRow[],
   operations: ReverseRepoOperation[],
 ): { month: string; balance: number; estimated?: boolean }[] {
-  const { put, mat } = buildMonthlyFlows(operations);
+  const { put, mat } = buildMonthlyFlows(rows, operations);
   const anchors = new Map(
     rows.filter((r) => r.cumulativeNet !== null && r.cumulativeNet !== undefined).map((r) => [r.month, r.cumulativeNet as number]),
   );
@@ -159,22 +168,32 @@ export function missingMonths(rows: ReverseRepoMonthlyResponse["rows"], now = ne
 
 interface UpdateState {
   state: "idle" | "running" | "done" | "failed";
+  /** 本次尝试更新的缺失月份 */
   months?: string[];
+  /** 后台任务 id（可取消/查进度） */
+  taskId?: string;
   startedAt?: string;
   finishedAt?: string;
   message?: string;
   updated?: ReverseRepoMonthlyUpdateStatus["updated"];
 }
 
-/** 读取当前月度更新状态（无记录视为 idle） */
+/** 更新任务最长运行时间：15 分钟（LLM 搜索耗时常态 8~10 分钟） */
+const UPDATE_RUN_MAX_MS = 15 * 60 * 1000;
+
+/** 读取当前月度更新状态；running 超时（进程残留）降级为 failed，避免卡死 */
 export function getUpdateState(): UpdateState {
-  return kvGet<UpdateState>(UPDATE_STATE_KEY) ?? { state: "idle" };
+  const st = kvGet<UpdateState>(UPDATE_STATE_KEY) ?? { state: "idle" };
+  if (st.state === "running" && st.startedAt && Date.now() - Date.parse(st.startedAt) > UPDATE_RUN_MAX_MS) {
+    return { ...st, state: "failed", message: "更新任务超时（进程残留），可重新触发" };
+  }
+  return st;
 }
 
 /** 执行月度数据更新（LLM 搜索补全缺失月份）；成功返回更新摘要，失败抛错 */
-export async function runMonthlyUpdate(months: string[], signal?: AbortSignal): Promise<UpdateState> {
+export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, taskId?: string): Promise<UpdateState> {
   const startedAt = new Date().toISOString();
-  kvSet(UPDATE_STATE_KEY, { state: "running", months, startedAt } satisfies UpdateState);
+  kvSet(UPDATE_STATE_KEY, { state: "running", months, startedAt, ...(taskId ? { taskId } : {}) } satisfies UpdateState);
 
   try {
     const template = getPromptTemplate("reverse-repo.monthly-update");

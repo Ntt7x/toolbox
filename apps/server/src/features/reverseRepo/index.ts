@@ -34,6 +34,13 @@ registerDataSource({
   tag: "分析数据",
   description: "买断式逆回购每日变动探查缓存（Key-结构化 Value）",
 });
+registerDataSource({
+  kind: "kv",
+  name: "reverseRepo:monthlyUpdate",
+  page: "买断式逆回购余额",
+  tag: "运行状态",
+  description: "月度数据触发式更新状态（running/done/failed，可手动重置）",
+});
 
 export const meta: ToolMeta = {
   id: "reverse-repo",
@@ -50,7 +57,9 @@ export function register(app: Hono): void {
     if (stale.length > 0 && getUpdateState().state !== "running") {
       // 触发式更新：后台异步执行（LLM 搜索补全，耗时数分钟），不阻塞响应；
       // 进度经 /monthly/update-status 查询，防重（running 中不重复触发）
-      createTask(async (signal) => runMonthlyUpdate(stale, signal), { timeoutMs: 15 * 60 * 1000 });
+      let taskId = "";
+      const created = createTask(async (signal) => runMonthlyUpdate(stale, signal, taskId), { timeoutMs: 15 * 60 * 1000 });
+      taskId = created.taskId;
     }
     return c.json({ ...body, stale: stale.length > 0, staleMonths: stale });
   });
@@ -69,7 +78,9 @@ export function register(app: Hono): void {
     if (getUpdateState().state === "running") {
       return c.json({ ok: true, state: "running", months: stale, message: "已有更新任务进行中" });
     }
-    const { taskId } = createTask(async (signal) => runMonthlyUpdate(stale, signal), { timeoutMs: 15 * 60 * 1000 });
+    let taskId = "";
+    const created = createTask(async (signal) => runMonthlyUpdate(stale, signal, taskId), { timeoutMs: 15 * 60 * 1000 });
+    taskId = created.taskId;
     return c.json({ ok: true, state: "running", months: stale, taskId });
   });
 

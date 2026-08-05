@@ -177,7 +177,9 @@ export default function ReverseRepoTool() {
               <tbody>
                 {monthly.operations.map((op: ReverseRepoOperation, i: number) => (
                   <tr key={i}>
-                    <td style={thTd}><b>{op.date}</b></td>
+                    <td style={thTd}>
+                      <b>{op.date.length === 7 ? `${op.date}（月内）` : op.date}</b>
+                    </td>
                     <td style={thTd}>{op.term}</td>
                     <td style={thTd}>{op.amount}</td>
                     <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>

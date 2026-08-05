@@ -4,7 +4,7 @@
 //    seedMonthlyData() 幂等 seed 到本地数据管理 KV（reverseRepo:monthly），
 //    运行时从 KV 读取；用户可在「本地数据管理」页编辑/删除，删除后自动重新 seed。
 // 来源：中国人民银行买断式逆回购业务公告 + 每日经济新闻公开报道（推算补充）
-// - 逐笔操作流水：精确到年月日（43 笔，2024.10.28 启用 - 2026.08.05）
+// - 逐笔操作流水：精确到年月日（41 笔，2024.10.28 启用 - 2026.08.05）
 // - 月度汇总：当月投放 / 当月净投放 / 累计净投放（= 存量余额）
 // 余额口径：存量余额 = 累计净投放（Σ投放 − Σ到期；2026-03 锚点 7.2 万亿，
 // 与央行公告/每日经济新闻披露一致，2026-07 累计 6.2 万亿 ≈ 对话中存量 6.3 万亿）
@@ -12,33 +12,33 @@
 
 import type { ReverseRepoMonthlyRow, ReverseRepoOperation } from "@toolbox/shared";
 
-/** 逐笔操作流水（精确到年月日；"月内"为央行公告未披露具体日期） */
+/** 逐笔操作流水（精确到年月日；无具体日期的“月内”操作为 YYYY-MM） */
 export const REVERSE_REPO_OPERATIONS: ReverseRepoOperation[] = [
   { date: "2024-10-28", term: "6M", amount: 5000, source: "央行公告〔2024〕第1号" },
-  { date: "2024-11-（月内）", term: "3M", amount: 8000, source: "央行公告〔2024〕第2号" },
-  { date: "2024-12-（月内）", term: "3M", amount: 7000, source: "央行公告〔2024〕第3号" },
-  { date: "2024-12-（月内）", term: "6M", amount: 7000, source: "央行公告〔2024〕第3号" },
-  { date: "2025-01-（月内）", term: "3M", amount: 12000, source: "央行公告〔2025〕第1号" },
-  { date: "2025-01-（月内）", term: "6M", amount: 5000, source: "央行公告〔2025〕第1号" },
-  { date: "2025-02-（月内）", term: "3M", amount: 9000, source: "央行公告" },
-  { date: "2025-02-（月内）", term: "6M", amount: 5000, source: "央行公告" },
-  { date: "2025-03-（月内）", term: "3M", amount: 5000, source: "央行公告" },
-  { date: "2025-03-（月内）", term: "6M", amount: 3000, source: "央行公告" },
-  { date: "2025-04-（月内）", term: "3M", amount: 7000, source: "央行公告〔2025〕第4号" },
-  { date: "2025-04-（月内）", term: "6M", amount: 5000, source: "央行公告〔2025〕第4号" },
-  { date: "2025-05-（月内）", term: "3M", amount: 4000, source: "央行公告〔2025〕第5号" },
-  { date: "2025-05-（月内）", term: "6M", amount: 3000, source: "央行公告〔2025〕第5号" },
+  { date: "2024-11", term: "3M", amount: 8000, source: "央行公告〔2024〕第2号" },
+  { date: "2024-12", term: "3M", amount: 7000, source: "央行公告〔2024〕第3号" },
+  { date: "2024-12", term: "6M", amount: 7000, source: "央行公告〔2024〕第3号" },
+  { date: "2025-01", term: "3M", amount: 12000, source: "央行公告〔2025〕第1号" },
+  { date: "2025-01", term: "6M", amount: 5000, source: "央行公告〔2025〕第1号" },
+  { date: "2025-02", term: "3M", amount: 9000, source: "央行公告" },
+  { date: "2025-02", term: "6M", amount: 5000, source: "央行公告" },
+  { date: "2025-03", term: "3M", amount: 5000, source: "央行公告" },
+  { date: "2025-03", term: "6M", amount: 3000, source: "央行公告" },
+  { date: "2025-04", term: "3M", amount: 7000, source: "央行公告〔2025〕第4号" },
+  { date: "2025-04", term: "6M", amount: 5000, source: "央行公告〔2025〕第4号" },
+  { date: "2025-05", term: "3M", amount: 4000, source: "央行公告〔2025〕第5号" },
+  { date: "2025-05", term: "6M", amount: 3000, source: "央行公告〔2025〕第5号" },
   { date: "2025-06-06", term: "3M", amount: 10000, source: "央行公告（首次月内两次操作）" },
   { date: "2025-06-16", term: "6M", amount: 4000, source: "央行公告" },
-  { date: "2025-07-（月内）", term: "3M", amount: 8000, source: "央行公告" },
-  { date: "2025-07-（月内）", term: "6M", amount: 6000, source: "央行公告" },
+  { date: "2025-07", term: "3M", amount: 8000, source: "央行公告" },
+  { date: "2025-07", term: "6M", amount: 6000, source: "央行公告" },
   { date: "2025-08-08", term: "3M", amount: 7000, source: "央行公告" },
   { date: "2025-08-15", term: "6M", amount: 5000, source: "央行公告" },
   { date: "2025-09-05", term: "3M", amount: 10000, source: "央行公告" },
   { date: "2025-09-15", term: "6M", amount: 6000, source: "央行公告" },
   { date: "2025-10-09", term: "3M", amount: 11000, source: "人民网 / 央行公告" },
   { date: "2025-10-15", term: "6M", amount: 6000, source: "人民网 / 央行公告" },
-  { date: "2025-11-17", term: "6M", amount: 8000, source: "公告〔2025〕第11号" },
+  { date: "2025-11-17", term: "6M", amount: 8000, source: "公告〔2025〕第11号（当月媒体口径投放 15000 亿，差异见月度表）" },
   { date: "2025-12-05", term: "3M", amount: 10000, source: "公告〔2025〕第12号" },
   { date: "2025-12-15", term: "6M", amount: 6000, source: "央行公告" },
   { date: "2026-01-08", term: "3M", amount: 11000, source: "公告〔2026〕第1号" },
@@ -66,8 +66,8 @@ export const REVERSE_REPO_MONTHLY: ReverseRepoMonthlyRow[] = [
   { month: "2024-11", opDate: "月内", operationTotal: 8000, m3: 8000, m6: 0, netChange: 8000, cumulativeNet: 13000, note: "当月无到期" },
   { month: "2024-12", opDate: "月内", operationTotal: 14000, m3: 7000, m6: 7000, netChange: 14000, cumulativeNet: 27000, note: "当月无到期" },
   { month: "2025-01", opDate: "月内", operationTotal: 17000, m3: 12000, m6: 5000, netChange: 17000, cumulativeNet: 44000, note: "当月无到期" },
-  { month: "2025-02", opDate: "月内", operationTotal: 14000, m3: 9000, m6: 6000, netChange: 14000, cumulativeNet: null, note: "3M 9000 亿 + 6M 5000 亿（注：2025-02 起无权威累计净投放，余额曲线该段为模型推算）" },
-  { month: "2025-03", opDate: "月内", operationTotal: 8000, m3: 5000, m6: 3000, netChange: 8000, cumulativeNet: null, note: "3M 5000 亿 + 6M 3000 亿（无权威累计净投放，见曲线推算段）" },
+  { month: "2025-02", opDate: "月内", operationTotal: 14000, m3: 9000, m6: 5000, netChange: null, cumulativeNet: null, note: "3M 9000 亿 + 6M 5000 亿（2025-02 起无权威累计净投放，余额曲线该段为模型推算）" },
+  { month: "2025-03", opDate: "月内", operationTotal: 8000, m3: 5000, m6: 3000, netChange: null, cumulativeNet: null, note: "3M 5000 亿 + 6M 3000 亿（无权威累计净投放，见曲线推算段）" },
   { month: "2025-04", opDate: "月内", operationTotal: 12000, m3: 7000, m6: 5000, netChange: null, cumulativeNet: null, note: "4月开展12000亿元（净投放未披露）" },
   { month: "2025-05", opDate: "月内", operationTotal: 7000, m3: 4000, m6: 3000, netChange: null, cumulativeNet: null, note: "5月开展7000亿元（净投放未披露）" },
   { month: "2025-06", opDate: "6-06 / 6-16", operationTotal: 14000, m3: 10000, m6: 4000, netChange: 2000, cumulativeNet: null, note: "首次月内两次操作；6月 MLF 及买断式逆回购均维持净投放" },
