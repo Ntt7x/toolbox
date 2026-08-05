@@ -64,6 +64,18 @@ export default function BookSearchTool() {
   const [imgFailed, setImgFailed] = useState<Set<number>>(new Set());
   // 历史搜索记录
   const [history, setHistory] = useState<{ q: string; ts: string; hits?: number }[]>([]);
+  // 收藏
+  const [favorites, setFavorites] = useState<BookItem[]>([]);
+  const [showFav, setShowFav] = useState(false);
+
+  const loadFavorites = useCallback(async () => {
+    try {
+      const r = await api.booksFavorites();
+      if (r.ok) setFavorites(r.items ?? []);
+    } catch {
+      // 静默
+    }
+  }, []);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -73,6 +85,33 @@ export default function BookSearchTool() {
       // 静默
     }
   }, []);
+
+  /** 收藏/取消收藏 */
+  const toggleFavorite = async (item: BookItem) => {
+    const fav = favorites.some((f) => f.id === item.id);
+    try {
+      if (fav) {
+        await api.booksFavoriteDelete(item.id);
+      } else {
+        await api.booksFavoriteAdd(item);
+      }
+      void loadFavorites();
+    } catch {
+      // 静默
+    }
+  };
+
+  /** 清空收藏 */
+  const clearFavorites = async () => {
+    if (favorites.length === 0) return;
+    if (!window.confirm("确定清空全部收藏？")) return;
+    try {
+      await api.booksFavoriteDelete();
+      void loadFavorites();
+    } catch {
+      // 静默
+    }
+  };
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -85,7 +124,8 @@ export default function BookSearchTool() {
   useEffect(() => {
     void refreshConfig();
     void loadHistory();
-  }, [refreshConfig, loadHistory]);
+    void loadFavorites();
+  }, [refreshConfig, loadHistory, loadFavorites]);
 
   const runSearch = async (page = 1) => {
     const query = q.trim();
@@ -206,6 +246,46 @@ export default function BookSearchTool() {
           </div>
         )}
 
+        {/* 收藏列表 */}
+        {favorites.length > 0 && (
+          <div style={{ marginTop: "0.7rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.6rem" }}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.85rem", fontWeight: 600, color: "#334155" }}
+              onClick={() => setShowFav((v) => !v)}
+            >
+              📌 收藏的书（{favorites.length}）{showFav ? " ▾" : " ▸"}
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 400, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); void clearFavorites(); }}>
+                清空
+              </span>
+            </div>
+            {showFav && (
+              <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                {favorites.map((f) => (
+                  <div key={f.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", padding: "0.4rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fffbeb", fontSize: "0.82rem" }}>
+                    <span style={{ fontWeight: 600, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.title}>
+                      {f.title}
+                    </span>
+                    <span style={{ background: "#fef3c7", color: "#92400e", borderRadius: 4, padding: "0.05rem 0.4rem", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>
+                      {(f.extension ?? "?").toUpperCase()}
+                    </span>
+                    <span style={{ color: "#64748b", fontSize: "0.75rem" }}>{f.filesizeString ?? ""}</span>
+                    <span style={{ flex: 1 }} />
+                    {f.detailUrl && (
+                      <button style={btnSmall} onClick={() => openZlib(f.detailUrl as string)} type="button">
+                        📖 详情页
+                      </button>
+                    )}
+                    <button style={{ ...btnSmall, background: "#dc2626", color: "#fff" }} onClick={() => void toggleFavorite(f)} type="button">
+                      取消收藏
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 历史搜索记录 */}
         {history.length > 0 && (
           <div style={{ marginTop: "0.7rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
@@ -296,6 +376,14 @@ export default function BookSearchTool() {
                     </span>
                     <span style={{ color: "#475569", fontSize: "0.78rem" }}>{item.filesizeString ?? (item.filesize ? `${(item.filesize / 1024 / 1024).toFixed(1)} MB` : "")}</span>
                     <span style={{ flex: 1 }} />
+                    <button
+                      style={{ ...btnSmall, background: favorites.some((f) => f.id === item.id) ? "#f59e0b" : "#e2e8f0", color: favorites.some((f) => f.id === item.id) ? "#fff" : "#475569" }}
+                      onClick={() => void toggleFavorite(item)}
+                      type="button"
+                      title={favorites.some((f) => f.id === item.id) ? "取消收藏" : "收藏这本书（标记要下载）"}
+                    >
+                      {favorites.some((f) => f.id === item.id) ? "★ 已收藏" : "☆ 收藏"}
+                    </button>
                     {item.detailUrl && (
                       <button style={btnSmall} onClick={() => item.detailUrl && openZlib(item.detailUrl)} type="button" title="打开 zlib 书籍详情页">
                         📖 详情页

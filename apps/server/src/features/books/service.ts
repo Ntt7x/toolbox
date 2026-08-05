@@ -37,6 +37,58 @@ export function bookConfigResult(): BookConfig {
 }
 
 // ============================================================
+// 收藏（KV：books:favorites，上限 100 条，以 book id 去重）
+// ============================================================
+
+export interface BookFavoriteEntry extends BookItem {
+  ts: string;
+}
+
+const FAV_KEY = "books:favorites";
+const FAV_MAX = 100;
+
+function readFavorites(): BookFavoriteEntry[] {
+  const saved = kvGet<{ items?: unknown[] }>(FAV_KEY);
+  if (!Array.isArray(saved?.items)) return [];
+  return saved.items
+    .filter((e): e is BookFavoriteEntry => !!e && typeof (e as BookFavoriteEntry).id === "number")
+    .slice(0, FAV_MAX);
+}
+
+function writeFavorites(items: BookFavoriteEntry[]): void {
+  kvSet(FAV_KEY, { items });
+}
+
+/** 收藏一本书（同 id 已收藏则更新时间提到最前；返回是否新增） */
+export function addFavorite(item: BookItem): { added: boolean; count: number } {
+  const items = readFavorites();
+  const existed = items.some((e) => e.id === item.id);
+  const next = items.filter((e) => e.id !== item.id);
+  next.unshift({ ...item, ts: new Date().toISOString() });
+  writeFavorites(next.slice(0, FAV_MAX));
+  return { added: !existed, count: next.length };
+}
+
+/** 取消收藏（按 book id）；返回是否移除 */
+export function removeFavorite(id: number): boolean {
+  const items = readFavorites();
+  const next = items.filter((e) => e.id !== id);
+  if (next.length === items.length) return false;
+  writeFavorites(next);
+  return true;
+}
+
+/** 收藏列表（最新在前） */
+export function listFavorites(): BookFavoriteEntry[] {
+  return readFavorites();
+}
+
+/** 清空收藏 */
+export function clearFavorites(): void {
+  writeFavorites([]);
+}
+
+// ============================================================
 // 历史搜索记录（KV 持久化，本地数据管理可见：books:）
 // ============================================================
 

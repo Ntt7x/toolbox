@@ -7,12 +7,16 @@
 // ============================================================
 
 import { Hono } from "hono";
-import { API_PREFIX, type BookSearchResult, type ToolMeta } from "@toolbox/shared";
+import { API_PREFIX, type BookItem, type BookSearchResult, type ToolMeta } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import {
+  addFavorite,
   bookConfigResult,
+  clearFavorites,
   clearSearchHistory,
+  listFavorites,
   listSearchHistory,
+  removeFavorite,
   removeSearchHistory,
   saveBookConfig,
   searchBooks,
@@ -50,7 +54,7 @@ export function register(app: Hono): void {
     return c.json({ ok: true, items: listSearchHistory() });
   });
 
-  // 删除单条历史（?q=关键词）
+  // 删除单条历史（?q=关键词）或清空（无 q）
   app.delete(`${API_PREFIX}/tools/books/history`, (c) => {
     const q = c.req.query("q")?.trim() ?? "";
     if (!q) {
@@ -58,6 +62,34 @@ export function register(app: Hono): void {
       return c.json({ ok: true, cleared: true });
     }
     const removed = removeSearchHistory(q);
+    return c.json({ ok: true, removed });
+  });
+
+  // 收藏列表
+  app.get(`${API_PREFIX}/tools/books/favorites`, (c) => {
+    return c.json({ ok: true, items: listFavorites() });
+  });
+
+  // 收藏一本书（POST body: 完整 BookItem）
+  app.post(`${API_PREFIX}/tools/books/favorites`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as Partial<BookItem> | null;
+    if (!raw || typeof raw.id !== "number" || typeof raw.title !== "string") {
+      return c.json({ ok: false, message: "收藏数据无效（需 id 与 title）" }, 400);
+    }
+    const item = raw as BookItem;
+    const r = addFavorite(item);
+    return c.json({ ok: true, added: r.added, count: r.count });
+  });
+
+  // 取消收藏（?id=bookId）或清空（无 id）
+  app.delete(`${API_PREFIX}/tools/books/favorites`, (c) => {
+    const idRaw = c.req.query("id");
+    const id = idRaw ? Number(idRaw) : NaN;
+    if (!Number.isFinite(id)) {
+      clearFavorites();
+      return c.json({ ok: true, cleared: true });
+    }
+    const removed = removeFavorite(id);
     return c.json({ ok: true, removed });
   });
 

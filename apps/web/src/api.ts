@@ -40,8 +40,11 @@
   type MemoListResult,
   type MemoUpdateRequest,
   type BookConfig,
+  type BookFavoritesResult,
   type BookHistoryResult,
+  type BookItem,
   type BookSearchResult,
+  type ShareHistoryResult,
   type KellyHistoryDeleteResult,
   type KellyHistoryDetailResult,
   type KellyHistoryListResult,
@@ -159,6 +162,13 @@ export const api = {
   booksHistory: () => request<BookHistoryResult>("/tools/books/history"),
   booksHistoryDelete: (q?: string) =>
     request<BookHistoryResult>(`/tools/books/history${q ? `?q=${encodeURIComponent(q)}` : ""}`, jsonInit("DELETE", {})),
+  booksFavorites: () => request<BookFavoritesResult>("/tools/books/favorites"),
+  booksFavoriteAdd: (item: BookItem) => request<BookFavoritesResult>("/tools/books/favorites", jsonInit("POST", item)),
+  booksFavoriteDelete: (id?: number) =>
+    request<BookFavoritesResult>(`/tools/books/favorites${id !== undefined ? `?id=${id}` : ""}`, jsonInit("DELETE", {})),
+  // DeepSeek Share 提取历史
+  shareHistory: () => request<ShareHistoryResult>("/tools/deepseek-share/history"),
+  shareHistoryClear: () => request<ShareHistoryResult>("/tools/deepseek-share/history", jsonInit("DELETE", {})),
   reverseRepoDailyTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）
