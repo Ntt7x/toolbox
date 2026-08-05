@@ -198,8 +198,9 @@ export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, t
   try {
     const template = getPromptTemplate("reverse-repo.monthly-update");
     const messages = [
-      { role: "system" as const, content: template.replace("{months}", months.join("、")) },
-      { role: "user" as const, content: "请联网搜索并输出缺失月份的买断式逆回购数据 JSON。" },
+      // 前缀稳定（缓存友好）：{months} 在 system 内替换为固定文本，月份清单放 user
+      { role: "system" as const, content: template.replace("{months}", "（需补全月份清单见用户消息）") },
+      { role: "user" as const, content: `本次需联网补全的月份：${months.join("、")}。请联网搜索并输出缺失月份的买断式逆回购数据 JSON。` },
     ];
     const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.monthly-update", ...(signal ? { signal } : {}) });
     if (!result.ok) throw new Error(result.message);
@@ -296,9 +297,11 @@ function mergeMonthlyUpdate(p: Record<string, unknown>, expected: string[]): Non
 
 /** 每日变动探查（增量）：LLM 搜索当日/最近变动 + 当月说明 */
 export async function probeDaily(signal?: AbortSignal): Promise<ReverseRepoDailyResult> {
+  const today = todayStr();
   const messages = [
-    { role: "system" as const, content: getPromptTemplate("reverse-repo.daily").replace("{date}", todayStr()) },
-    { role: "user" as const, content: "请按上述要求执行探查并输出 JSON。" },
+    // 前缀稳定（缓存友好）：system 内动态占位符替换为固定文本，实际日期放 user
+    { role: "system" as const, content: getPromptTemplate("reverse-repo.daily").replace("{date}", "（探查日期见用户消息）") },
+    { role: "user" as const, content: `探查日期：${today}。请按上述要求执行探查并输出 JSON。` },
   ];
   const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.daily", ...(signal ? { signal } : {}) });
   if (!result.ok) return { ok: false, message: result.message };

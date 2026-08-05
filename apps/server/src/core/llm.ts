@@ -108,7 +108,14 @@ function buildSignal(opts: ChatOptions, timeoutMs: number): AbortSignal {
 interface DeepSeekResponse {
   choices?: { message?: { content?: string } }[];
   model?: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    /** DeepSeek 前缀缓存字段：命中/未命中输入 token（prompt_tokens = hit + miss） */
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  };
   error?: { message?: string };
 }
 
@@ -162,6 +169,8 @@ async function chatCompletion(messages: LlmChatMessage[], opts: ChatOptions): Pr
               promptTokens: data.usage.prompt_tokens ?? 0,
               completionTokens: data.usage.completion_tokens ?? 0,
               totalTokens: data.usage.total_tokens ?? 0,
+              cacheHitTokens: data.usage.prompt_cache_hit_tokens ?? 0,
+              cacheMissTokens: data.usage.prompt_cache_miss_tokens ?? 0,
             },
           }
         : {}),
@@ -211,7 +220,13 @@ async function chatSearch(messages: LlmChatMessage[], opts: ChatOptions): Promis
         content?: { type?: string; text?: string }[];
         action?: { queries?: unknown };
       }[];
-      usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+        /** Responses API 前缀缓存：命中输入 token */
+        input_tokens_details?: { cached_tokens?: number };
+      };
     } | null;
     if (!res.ok) {
       const msg = data?.error?.message ?? `DeepSeek API HTTP ${res.status}`;
@@ -243,6 +258,8 @@ async function chatSearch(messages: LlmChatMessage[], opts: ChatOptions): Promis
               promptTokens: data.usage.input_tokens ?? 0,
               completionTokens: data.usage.output_tokens ?? 0,
               totalTokens: data.usage.total_tokens ?? 0,
+              cacheHitTokens: data.usage.input_tokens_details?.cached_tokens ?? 0,
+              cacheMissTokens: Math.max(0, (data.usage.input_tokens ?? 0) - (data.usage.input_tokens_details?.cached_tokens ?? 0)),
             },
           }
         : {}),
@@ -308,6 +325,10 @@ interface UsageEntry {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /** 命中缓存输入 token（DeepSeek 前缀缓存） */
+  cacheHitTokens: number;
+  /** 未命中缓存输入 token */
+  cacheMissTokens: number;
 }
 
 function readUsageEntries(): UsageEntry[] {
@@ -319,7 +340,11 @@ function readUsageEntries(): UsageEntry[] {
 }
 
 /** 记录一次 LLM 用量（失败不影响主流程） */
-function recordLlmUsage(module: string, model: string, usage: { promptTokens?: number; completionTokens?: number }): void {
+function recordLlmUsage(
+  module: string,
+  model: string,
+  usage: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number },
+): void {
   try {
     const mod = module || "unknown";
     if (mod === "unknown") {
@@ -333,6 +358,8 @@ function recordLlmUsage(module: string, model: string, usage: { promptTokens?: n
       model: model || "unknown",
       promptTokens: usage.promptTokens ?? 0,
       completionTokens: usage.completionTokens ?? 0,
+      cacheHitTokens: usage.cacheHitTokens ?? 0,
+      cacheMissTokens: usage.cacheMissTokens ?? 0,
     });
     if (entries.length > USAGE_MAX) entries.splice(0, entries.length - USAGE_MAX);
     kvSet(LLM_USAGE_KEY, { entries });
@@ -351,42 +378,63 @@ function localDay(iso: string): string {
 /** 用量汇总（总数 + 按模块 + 按天；按天含当日模块明细，供单日扇形图） */
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
-  const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-  const byModule = new Map<string, { calls: number; totalTokens: number }>();
+  const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+  const byModule = new Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const byDay = new Map<
     string,
-    { calls: number; totalTokens: number; byModule: Map<string, { calls: number; totalTokens: number }> }
+    {
+      calls: number;
+      totalTokens: number;
+      cacheHitTokens: number;
+      cacheMissTokens: number;
+      cacheRate: number;
+      byModule: Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>;
+    }
   >();
   for (const e of entries) {
     total.promptTokens += e.promptTokens;
     total.completionTokens += e.completionTokens;
     total.totalTokens += e.promptTokens + e.completionTokens;
-    const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0 };
+    total.cacheHitTokens += e.cacheHitTokens ?? 0;
+    total.cacheMissTokens += e.cacheMissTokens ?? 0;
+    const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
     m.calls++;
     m.totalTokens += e.promptTokens + e.completionTokens;
+    m.cacheHitTokens += e.cacheHitTokens ?? 0;
+    m.cacheMissTokens += e.cacheMissTokens ?? 0;
     byModule.set(e.module, m);
     const day = localDay(e.ts);
-    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, byModule: new Map() };
+    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, byModule: new Map() };
     d.calls++;
     d.totalTokens += e.promptTokens + e.completionTokens;
-    const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0 };
+    d.cacheHitTokens += e.cacheHitTokens ?? 0;
+    d.cacheMissTokens += e.cacheMissTokens ?? 0;
+    const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
     dm.calls++;
     dm.totalTokens += e.promptTokens + e.completionTokens;
+    dm.cacheHitTokens += e.cacheHitTokens ?? 0;
+    dm.cacheMissTokens += e.cacheMissTokens ?? 0;
     d.byModule.set(e.module, dm);
     byDay.set(day, d);
   }
+  const rate = (hit: number, miss: number): number => (hit + miss > 0 ? hit / (hit + miss) : 0);
   const sortDesc = (a: { totalTokens: number }, b: { totalTokens: number }) => b.totalTokens - a.totalTokens;
   return {
     ok: true,
-    total,
-    byModule: [...byModule.entries()].map(([module, v]) => ({ module, label: moduleLabel(module), ...v })).sort(sortDesc),
+    total: { ...total, cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens) },
+    byModule: [...byModule.entries()]
+      .map(([module, v]) => ({ module, label: moduleLabel(module), ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) }))
+      .sort(sortDesc),
     byDay: [...byDay.entries()]
       .map(([day, v]) => ({
         day,
         calls: v.calls,
         totalTokens: v.totalTokens,
+        cacheHitTokens: v.cacheHitTokens,
+        cacheMissTokens: v.cacheMissTokens,
+        cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens),
         byModule: [...v.byModule.entries()]
-          .map(([module, m]) => ({ module, label: moduleLabel(module), ...m }))
+          .map(([module, m]) => ({ module, label: moduleLabel(module), ...m, cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens) }))
           .sort(sortDesc),
       }))
       .sort((a, b) => (a.day < b.day ? 1 : -1)),

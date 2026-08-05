@@ -565,7 +565,15 @@ export interface LlmChatResponse {
   ok: true;
   content: string;
   model: string;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    /** 命中 DeepSeek 前缀缓存的输入 token 数 */
+    cacheHitTokens?: number;
+    /** 未命中缓存的输入 token 数 */
+    cacheMissTokens?: number;
+  };
   /** 联网搜索实际执行的查询词（search 模式） */
   searchQueries?: string[];
 }
@@ -580,10 +588,20 @@ export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
 /** LLM 用量汇总（服务端切面记录，按模块/按天聚合） */
 export interface LlmUsageSummary {
   ok: true;
-  total: { calls: number; promptTokens: number; completionTokens: number; totalTokens: number };
-  byModule: { module: string; label: string; calls: number; totalTokens: number }[];
+  total: {
+    calls: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    /** 命中缓存输入 token / 未命中输入 token */
+    cacheHitTokens: number;
+    cacheMissTokens: number;
+    /** 缓存命中率（0~1；无输入时 0） */
+    cacheRate: number;
+  };
+  byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   /** 逐日（倒序）；byModule 为该日各模块明细（单日扇形图用） */
-  byDay: { day: string; calls: number; totalTokens: number; byModule: { module: string; label: string; calls: number; totalTokens: number }[] }[];
+  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
 }
 
 /** DeepSeek 平台余额查询结果 */

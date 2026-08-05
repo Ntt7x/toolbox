@@ -62,13 +62,14 @@ export async function fundamentalAnalysis(
   const name = opts.name?.trim() || (await resolveStockName(stockCode));
 
   const today = todayStr();
+  // 前缀稳定（缓存友好）：{code}/{name}/{date} 在 system 内替换为固定文本，标的与日期放 user
   const template = getPromptTemplate("watchlist.fundamental")
-    .replace("{code}", stockCode)
-    .replace("{name}", name || stockCode)
-    .replace("{date}", today);
+    .replace("{code}", "（标的代码见用户消息）")
+    .replace("{name}", "（标的名称见用户消息）")
+    .replace("{date}", "（日期见用户消息）");
   const messages = [
     { role: "system" as const, content: template },
-    { role: "user" as const, content: "请联网搜索该股票最新财报并输出 JSON。" },
+    { role: "user" as const, content: `请分析标的 ${name || stockCode}（代码 ${stockCode}），今天是 ${today}。请联网搜索该股票最新财报并输出 JSON。` },
   ];
 
   const result = await chat(messages, { temperature: 0.3, search: true, module: "watchlist.fundamental", ...(opts.signal ? { signal: opts.signal } : {}) });
