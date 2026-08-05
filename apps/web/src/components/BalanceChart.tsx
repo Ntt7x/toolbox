@@ -1,8 +1,9 @@
 // ============================================================
 // 余额曲线组件（ECharts）：买断式逆回购存量余额
-// - 余额折线：月度累计净投放（= 存量余额），x 轴精确到月；缺失月份置 null 断开
+// - 余额折线：月度累计净投放（= 存量余额），x 轴精确到月；
+//   数据缺失段【拆分为独立 series】——折线与面积都真实断开，不跨 null 假连接
 // - 投放量柱：逐笔操作（精确到日期），右侧副轴展示
-// - 支持 tooltip 十字准星、框选/滑块缩放、双 y 轴、峰谷标注
+// - 交互：tooltip（日期格式化）、框选/滑块缩放、峰谷标注、渐变面积
 // ============================================================
 
 import { useEffect, useRef } from "react";
@@ -17,21 +18,42 @@ interface Props {
   height?: number;
 }
 
-/** 补全月份序列：首尾之间的每个月都有位（缺失置 null，折线断开） */
-function expandMonths(series: { month: string; balance: number }[]): (string | number | null)[][] {
-  if (series.length === 0) return [];
-  const sorted = [...series].sort((a, b) => (a.month < b.month ? -1 : 1));
-  const start = new Date(sorted[0].month + "-01");
-  const end = new Date(sorted[sorted.length - 1].month + "-01");
-  const byMonth = new Map(sorted.map((s) => [s.month, s.balance]));
-  const out: (string | number | null)[][] = [];
-  for (const d = new Date(start); d <= end; d.setMonth(d.getMonth() + 1)) {
-    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const v = byMonth.get(ym);
-    out.push([ym + "-01", v === undefined ? null : v]);
-  }
-  return out;
+const MONTH_RE = /^(\d{4})-(\d{2})$/;
+
+/** a 的下一个月是否等于 b（用于判断连续性） */
+function isNextMonth(a: string, b: string): boolean {
+  const ma = MONTH_RE.exec(a);
+  const mb = MONTH_RE.exec(b);
+  if (!ma || !mb) return false;
+  const [ya, moa] = [Number(ma[1]), Number(ma[2])];
+  const [yb, mob] = [Number(mb[1]), Number(mb[2])];
+  if (ya === yb) return mob === moa + 1;
+  if (yb === ya + 1) return moa === 12 && mob === 1;
+  return false;
 }
+
+/** 按连续月份拆段：缺失处断开（每段独立 series，折线与面积都不跨断档） */
+function splitSegments(series: { month: string; balance: number }[]): (string | number)[][][] {
+  const sorted = [...series].sort((a, b) => (a.month < b.month ? -1 : 1));
+  const segs: (string | number)[][][] = [];
+  let cur: (string | number)[][] = [];
+  let prev: string | null = null;
+  for (const s of sorted) {
+    if (prev !== null && !isNextMonth(prev, s.month)) {
+      segs.push(cur);
+      cur = [];
+    }
+    cur.push([s.month + "-01", s.balance]);
+    prev = s.month;
+  }
+  if (cur.length > 0) segs.push(cur);
+  return segs;
+}
+
+const fmtYM = (v: number): string => {
+  const d = new Date(v);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
 
 export default function BalanceChart({ series, operations = [], height = 330 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -40,18 +62,57 @@ export default function BalanceChart({ series, operations = [], height = 330 }: 
     const el = ref.current;
     if (!el) return;
     const chart = echarts.init(el);
-    const balanceData = expandMonths(series);
+
+    const segments = splitSegments(series);
     const opData = operations
       .filter((o) => o.amount > 0)
       .sort((a, b) => (a.date < b.date ? -1 : 1))
       .map((o) => [o.date, o.amount] as (string | number)[]);
 
+    const lineSeries = segments.map((seg, i) => ({
+      name: "存量余额",
+      type: "line" as const,
+      data: seg,
+      connectNulls: false,
+      showSymbol: true,
+      symbol: "circle" as const,
+      symbolSize: 6,
+      lineStyle: { width: 2.5, color: "#2563eb" },
+      itemStyle: { color: "#2563eb", borderColor: "#fff", borderWidth: 1.5 },
+      areaStyle: {
+        color: {
+          type: "linear" as const,
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: "rgba(37,99,235,0.22)" },
+            { offset: 1, color: "rgba(37,99,235,0.02)" },
+          ],
+        },
+      },
+      // 只在最后一段标注峰谷，避免重复
+      ...(i === segments.length - 1
+        ? {
+            markPoint: {
+              data: [
+                { type: "max" as const, name: "峰值", itemStyle: { color: "#dc2626" } },
+                { type: "min" as const, name: "最低", itemStyle: { color: "#16a34a" } },
+              ],
+            },
+          }
+        : {}),
+      z: 3,
+    }));
+
     chart.setOption({
       animation: true,
-      animationDuration: 500,
+      animationDuration: 400,
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "cross", label: { backgroundColor: "#334155" } },
+        valueFormatter: (v: unknown) => (typeof v === "number" ? v.toLocaleString() : `${v ?? "—"}`),
       },
       legend: { data: ["存量余额", "投放量"], top: 0, textStyle: { color: "#475569" } },
       grid: { left: 70, right: 74, top: 34, bottom: 66 },
@@ -59,10 +120,8 @@ export default function BalanceChart({ series, operations = [], height = 330 }: 
         type: "time",
         axisLabel: {
           color: "#64748b",
-          formatter: (v: number) => {
-            const d = new Date(v);
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-          },
+          hideOverlap: true,
+          formatter: fmtYM,
         },
         splitLine: { show: false },
       },
@@ -90,37 +149,7 @@ export default function BalanceChart({ series, operations = [], height = 330 }: 
         { type: "slider", xAxisIndex: 0, bottom: 6, height: 18, filterMode: "none" },
       ],
       series: [
-        {
-          name: "存量余额",
-          type: "line",
-          data: balanceData,
-          connectNulls: false,
-          showSymbol: true,
-          symbol: "circle",
-          symbolSize: 6,
-          lineStyle: { width: 2.5, color: "#2563eb" },
-          itemStyle: { color: "#2563eb", borderColor: "#fff", borderWidth: 1.5 },
-          areaStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(37,99,235,0.25)" },
-                { offset: 1, color: "rgba(37,99,235,0.02)" },
-              ],
-            },
-          },
-          markPoint: {
-            data: [
-              { type: "max", name: "峰值", itemStyle: { color: "#dc2626" } },
-              { type: "min", name: "最低", itemStyle: { color: "#16a34a" } },
-            ],
-          },
-          z: 3,
-        },
+        ...lineSeries,
         {
           name: "投放量",
           type: "bar",
