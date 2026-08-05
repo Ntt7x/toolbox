@@ -18,8 +18,8 @@ import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
 /** KV key 前缀 */
 export const SESSION_PREFIX = "chatSession:";
 
-/** 默认会话 TTL：30 分钟（DeepSeek 缓存 TTL 数小时，会话不宜跨天） */
-const DEFAULT_TTL_MS = 30 * 60 * 1000;
+/** 默认会话 TTL：90 天（状态持久化优先；缓存命中收益在 DeepSeek 缓存 TTL 内有效，状态保持则跨天/跨周） */
+const DEFAULT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 /** 历史压缩触发阈值（估算 tokens；借鉴 Reasonix compact：达到预算即压缩） */
 const COMPACT_TRIGGER_TOKENS = 6000;
 /** 压缩后保留的 verbatim 尾部预算（tokens） */
@@ -145,7 +145,7 @@ export function compactSession(id: string): ChatSession | null {
 export async function chatSessionAsk(sessionId: string, userMessage: string): Promise<LlmChatResult> {
   const s = loadSession(sessionId);
   if (!s) {
-    return { ok: false, message: "会话不存在或已过期（TTL 30 分钟）" };
+    return { ok: false, message: "会话不存在或已过期（TTL 90 天）" };
   }
   const messages: LlmChatMessage[] = [
     { role: "system", content: s.system },

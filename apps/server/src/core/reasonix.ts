@@ -162,7 +162,8 @@ function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000)
 // ---------- 会话注册表（KV 持久化，服务端状态） ----------
 
 const REG_PREFIX = "reasonixSession:";
-const REG_TTL_MS = 30 * 60 * 1000;
+/** 注册表 TTL：90 天（会话状态持久化；reasonix 侧 transcript 同样持久化于磁盘） */
+const REG_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export interface ReasonixSessionReg {
   /** 业务会话 id（注册表 key 段，对外暴露） */
@@ -235,7 +236,7 @@ export async function reasonixAsk(
   opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
   const reg = loadReg(regId);
-  if (!reg) return { ok: false, message: "会话不存在或已过期（TTL 30 分钟）" };
+  if (!reg) return { ok: false, message: "会话不存在或已过期（TTL 90 天）" };
 
   const doAsk = async (sid: string): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> => {
     const client = getAcp();
