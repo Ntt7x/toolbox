@@ -142,10 +142,11 @@ export default function WatchlistTool() {
     }
   }, []);
 
-  // 挂载：加载专题列表 + 自动捕获剪贴板（Chat 导入链接）
+  // 挂载：加载专题列表 + 自动捕获剪贴板（Chat 导入 / Chat 补充链接）
   useEffect(() => {
     void refreshList();
     void readImportClipboard();
+    void readAppendClipboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -328,6 +329,19 @@ export default function WatchlistTool() {
   };
 
   /** Chat 补充：分享链接 → LLM 整理 → 追加个股到当前专题（后台任务轮询） */
+  /** 从剪贴板读取 DeepSeek 分享链接并自动填入（仅当符合格式且输入框为空） */
+  const readAppendClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const url = text.trim();
+      if (/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url) && !appendUrl.trim()) {
+        setAppendUrl(url);
+      }
+    } catch {
+      // 剪贴板无权限/不可用：静默，可手动粘贴或点按钮
+    }
+  };
+
   const appendChat = async () => {
     if (!topic) return;
     const url = appendUrl.trim();
@@ -640,6 +654,14 @@ export default function WatchlistTool() {
                     onChange={(e) => setAppendUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void appendChat(); }}
                   />
+                  <button
+                    style={{ ...btn, background: "#64748b", padding: "0.4rem 0.8rem", fontSize: "0.82rem" }}
+                    onClick={() => void readAppendClipboard()}
+                    title="读取剪贴板中的分享链接并自动填入"
+                    type="button"
+                  >
+                    📋
+                  </button>
                   <button style={{ ...btn, background: "#7c3aed", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => void appendChat()} disabled={appending} type="button">
                     {appending ? "🔄 补充中…" : "补充"}
                   </button>

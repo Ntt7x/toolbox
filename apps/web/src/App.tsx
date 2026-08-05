@@ -39,7 +39,7 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     label: "设置",
     staticItems: [
-      { name: "LLM 设置", path: "/settings/llm", icon: "🤖" },
+      { name: "LLM 管理", path: "/settings/llm", icon: "🤖" },
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
