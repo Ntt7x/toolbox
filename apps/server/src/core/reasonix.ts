@@ -17,9 +17,10 @@
 //   → session/close；通知 _reasonix.io/session/status_update（phase/usage/completion）
 // ============================================================
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
@@ -43,10 +44,16 @@ function resolveBinary(): string | null {
 
 // ---------- ACP 连接（惰性单例，崩溃自动重建） ----------
 
+interface PendingEntry {
+  resolve: (msg: { result?: unknown; error?: { message?: string } }) => void;
+  timer: NodeJS.Timeout;
+}
+
 interface AcpClient {
   child: ChildProcess;
   nextId: number;
-  pending: Map<number, (msg: { result?: unknown; error?: { message?: string } }) => void>;
+  /** 未决请求（含超时定时器引用，响应/退出/超时时统一清理，避免定时器泄漏） */
+  pending: Map<number, PendingEntry>;
   buffer: string;
   /** 按 reasonix sessionId 分发的通知监听（多会话并发互不干扰） */
   promptListeners: Map<string, (params: AcpSessionUpdate) => void>;
@@ -86,6 +93,7 @@ let acp: AcpClient | null = null;
 function startAcp(): AcpClient {
   const bin = resolveBinary();
   if (!bin) throw new Error("reasonix 二进制未找到：请配置 llm.reasonixBin 或安装 @reasonix/cli-<platform>-<arch>");
+  if (!existsSync(bin)) throw new Error(`reasonix 二进制不存在：${bin}`);
   const apiKey = loadApiKey();
   if (!apiKey) throw new Error("未配置 DeepSeek API key（模式 3 需 DEEPSEEK_API_KEY）");
   const child = spawn(bin, ["acp"], {
@@ -94,6 +102,15 @@ function startAcp(): AcpClient {
     windowsHide: true,
   });
   const client: AcpClient = { child, nextId: 0, pending: new Map(), buffer: "", promptListeners: new Map() };
+  // spawn 运行时错误（权限/被杀等）：拒绝未决请求并标记重建，避免 uncaughtException
+  child.on("error", (err) => {
+    for (const entry of client.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.resolve({ error: { message: `reasonix 启动失败：${err.message}` } });
+    }
+    client.pending.clear();
+    acp = null;
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     client.buffer += chunk;
@@ -109,9 +126,10 @@ function startAcp(): AcpClient {
         continue;
       }
       if (msg.id !== undefined && client.pending.has(msg.id)) {
-        const resolve = client.pending.get(msg.id)!;
+        const entry = client.pending.get(msg.id)!;
         client.pending.delete(msg.id);
-        resolve(msg);
+        clearTimeout(entry.timer);
+        entry.resolve(msg);
       }
       if (msg.method === "session/update" || msg.method === "_reasonix.io/session/status_update") {
         const params = msg.params as AcpSessionUpdate & AcpStatusUpdate;
@@ -131,7 +149,10 @@ function startAcp(): AcpClient {
     if (text && !text.includes("bash not found")) console.warn(`[reasonix-acp] ${text.slice(0, 200)}`);
   });
   child.on("exit", () => {
-    for (const resolve of client.pending.values()) resolve({ error: { message: "reasonix acp 进程已退出" } });
+    for (const entry of client.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.resolve({ error: { message: "reasonix acp 进程已退出" } });
+    }
     client.pending.clear();
     acp = null; // 下次调用自动重建
   });
@@ -145,17 +166,26 @@ function getAcp(): AcpClient {
 }
 
 function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000): Promise<{ result?: unknown; error?: { message?: string } }> {
-  const client = getAcp();
+  let client: AcpClient;
+  try {
+    client = getAcp();
+  } catch (e) {
+    // 二进制缺失 / API key 缺失等：转为 error 返回，调用方无需 try/catch
+    return Promise.resolve({ error: { message: e instanceof Error ? e.message : String(e) } });
+  }
   const id = ++client.nextId;
   return new Promise((resolve) => {
-    client.pending.set(id, resolve);
+    const entry: PendingEntry = {
+      resolve,
+      timer: setTimeout(() => {
+        if (client.pending.has(id)) {
+          client.pending.delete(id);
+          resolve({ error: { message: `ACP ${method} 超时（${timeoutMs}ms）` } });
+        }
+      }, timeoutMs),
+    };
+    client.pending.set(id, entry);
     client.child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-    setTimeout(() => {
-      if (client.pending.has(id)) {
-        client.pending.delete(id);
-        resolve({ error: { message: `ACP ${method} 超时（${timeoutMs}ms）` } });
-      }
-    }, timeoutMs);
   });
 }
 
@@ -239,10 +269,15 @@ export async function reasonixAsk(
   opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
   const reg = loadReg(regId);
-  if (!reg) return { ok: false, message: "会话不存在或已过期（TTL 90 天）" };
+  if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
 
   const doAsk = async (sid: string): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> => {
-    const client = getAcp();
+    let client: AcpClient;
+    try {
+      client = getAcp();
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
     const chunks: string[] = [];
     let usage: ReasonixUsageShape | undefined;
     const listener = (params: AcpSessionUpdate & AcpStatusUpdate) => {
@@ -267,7 +302,8 @@ export async function reasonixAsk(
       const res = await rpc("session/prompt", { sessionId: sid, prompt: [{ type: "text", text }] }, opts.timeoutMs ?? 90000);
       if (res.error) {
         const msg = res.error.message ?? "";
-        return { ok: false, message: `reasonix prompt 失败：${msg}`, sessionGone: /unknown session|not found|no such/i.test(msg) };
+        // 会话丢失（reasonix 侧失效）或 ACP 进程崩溃退出 → 标记 sessionGone，走 resume 恢复
+        return { ok: false, message: `reasonix prompt 失败：${msg}`, sessionGone: /unknown session|not found|no such|进程已退出|exited/i.test(msg) };
       }
       // usage：从本次 prompt 的 status_update 采集（在 listener 内不好同步，这里补一次 status 查询兜底可选）
       const content = chunks.join("");
@@ -306,7 +342,12 @@ export async function closeReasonixSession(regId: string): Promise<void> {
 export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] {
   const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] = [];
   for (const r of kvListRaw(REG_PREFIX, 200)) {
-    const reg = r.value ? (JSON.parse(r.value) as ReasonixSessionReg) : null;
+    let reg: ReasonixSessionReg | null = null;
+    try {
+      reg = r.value ? (JSON.parse(r.value) as ReasonixSessionReg) : null;
+    } catch {
+      continue; // 损坏数据跳过
+    }
     if (!reg || typeof reg.reasonixSessionId !== "string") continue;
     const age = Date.now() - reg.lastAt;
     if (age > ARCHIVE_MS) {
@@ -327,6 +368,14 @@ export function shutdownReasonix(): void {
   if (acp && acp.child.exitCode === null) {
     try {
       acp.child.kill();
+      // Windows：kill 进程树（reasonix 可能派生子进程，需一并终止以释放 stdio 管道）
+      if (process.platform === "win32" && acp.child.pid) {
+        try {
+          spawnSync("taskkill", ["/pid", String(acp.child.pid), "/T", "/F"], { stdio: "ignore" });
+        } catch {
+          // taskkill 不可用时忽略
+        }
+      }
     } catch {
       // 忽略
     }

@@ -15,6 +15,19 @@ import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { chat, type ChatOptions } from "./llm.js";
 import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
 
+/** chat 实现（可注入，测试用 mock；生产保持 chat） */
+let chatImpl: (messages: LlmChatMessage[], opts?: ChatOptions) => Promise<LlmChatResult> = chat;
+
+/** 测试注入：替换 chat 实现（返回 ok 的假结果） */
+export function __setChatImplForTest(fn: (messages: LlmChatMessage[], opts?: ChatOptions) => Promise<LlmChatResult>): void {
+  chatImpl = fn;
+}
+
+/** 恢复默认 chat 实现 */
+export function __resetChatImplForTest(): void {
+  chatImpl = chat;
+}
+
 /** KV key 前缀 */
 export const SESSION_PREFIX = "chatSession:";
 
@@ -55,7 +68,6 @@ export interface ChatSession {
   droppedTurns: number;
   createdAt: number;
   lastAt: number;
-  ttlMs: number;
   /** 已归档（活跃期后自动折叠历史为摘要；归档期内可恢复/续用） */
   archived?: boolean;
   /** 归档时折叠的历史摘要（最近内容 + 折叠标记） */
@@ -68,7 +80,6 @@ export interface CreateSessionOptions {
   model?: string;
   search?: boolean;
   json?: boolean;
-  ttlMs?: number;
 }
 
 function genId(): string {
@@ -93,7 +104,6 @@ export function createChatSession(opts: CreateSessionOptions): ChatSession {
     droppedTurns: 0,
     createdAt: now,
     lastAt: now,
-    ttlMs: opts.ttlMs ?? ACTIVE_TTL_MS,
   };
   kvSet(keyOf(session.id), session);
   return session;
@@ -148,8 +158,8 @@ export function restoreArchivedSession(id: string): ChatSession | null {
 /** 压缩历史（借鉴 Reasonix compact：按 token 预算）：
  * 超触发阈值时保留 system + 最近 verbatim tail（预算内且至少 MIN_RECENT_TURNS 轮），
  * 更早轮次折叠为一行标记（机械折叠，不调 LLM）。system 恒定为前缀锚点，永不删除。 */
-export function compactSession(id: string): ChatSession | null {
-  const s = loadSession(id);
+export function compactSession(id: string, loaded?: ChatSession): ChatSession | null {
+  const s = loaded ?? loadSession(id);
   if (!s) return null;
   const total = s.history.reduce((sum, m) => sum + estTokens(m.content), 0);
   if (total <= COMPACT_TRIGGER_TOKENS) return s; // 未达触发阈值，无需压缩
@@ -181,9 +191,8 @@ export function compactSession(id: string): ChatSession | null {
  * messages = [system, ...history, user]；成功才 append，失败不动历史。
  */
 export async function chatSessionAsk(sessionId: string, userMessage: string): Promise<LlmChatResult> {
-  // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）
-  const restored = restoreArchivedSession(sessionId);
-  const s = restored ?? loadSession(sessionId);
+  // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）；restore 内部已 loadSession
+  const s = restoreArchivedSession(sessionId);
   if (!s) {
     return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
   }
@@ -198,13 +207,13 @@ export async function chatSessionAsk(sessionId: string, userMessage: string): Pr
     ...(s.search ? { search: true } : {}),
     ...(s.json ? { json: true } : {}),
   };
-  const result = await chat(messages, opts);
+  const result = await chatImpl(messages, opts);
   if (result.ok) {
     s.history.push({ role: "user", content: userMessage }, { role: "assistant", content: result.content });
     s.lastAt = Date.now();
     kvSet(keyOf(s.id), s);
     // 历史超预算 → 压缩（保留 verbatim tail）
-    compactSession(s.id);
+    compactSession(s.id, s);
   }
   return result;
 }
@@ -246,5 +255,13 @@ export function deleteChatSession(id: string): boolean {
 
 // 复用 kvListRaw（前缀列举）
 function kvListAll(prefix: string): { key: string; value: unknown }[] {
-  return kvListRaw(prefix, 500).map((r) => ({ key: r.key, value: r.value ? JSON.parse(r.value) : undefined }));
+  return kvListRaw(prefix, 500).map((r) => {
+    let v: unknown = undefined;
+    try {
+      v = r.value ? JSON.parse(r.value) : undefined;
+    } catch {
+      v = undefined; // 损坏数据视为空
+    }
+    return { key: r.key, value: v };
+  });
 }
