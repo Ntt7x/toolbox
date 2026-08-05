@@ -10,6 +10,7 @@ import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
+import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 
@@ -40,6 +41,7 @@ const MENU_GROUPS: MenuGroup[] = [
     staticItems: [
       { name: "LLM 设置", path: "/settings/llm", icon: "🤖" },
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
+      { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
@@ -154,6 +156,7 @@ export default function App() {
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
             <Route path="/settings/llm" element={<LlmSettings />} />
             <Route path="/settings/local-data" element={<LocalData />} />
+            <Route path="/settings/memo" element={<MemoTool />} />
             {tools.map((t) => (
               <Route key={t.id} path={t.path} element={<ToolPage t={t} />} />
             ))}

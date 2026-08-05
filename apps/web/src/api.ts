@@ -26,6 +26,11 @@
   type WatchlistFundamentalResult,
   type WatchlistListResult,
   type WatchlistUpdateRequest,
+  type MemoCreateResult,
+  type MemoDeleteResult,
+  type MemoDetailResult,
+  type MemoListResult,
+  type MemoUpdateRequest,
   type ShareExtractRequest,
   type ShareExtractResult,
   type ToolListResponse,
@@ -100,6 +105,12 @@ export const api = {
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,
     ),
+  // 改进备忘录（TODO list）
+  memoList: () => request<MemoListResult>("/tools/memo"),
+  memoCreate: (text: string) => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text })),
+  memoUpdate: (id: string, patch: MemoUpdateRequest) =>
+    request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   reverseRepoDailyTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）

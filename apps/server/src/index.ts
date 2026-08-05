@@ -23,6 +23,7 @@ import * as cbRateFeature from "./features/cbRate/index.js";
 import * as treasuryFxFeature from "./features/treasuryFx/index.js";
 import * as reverseRepoFeature from "./features/reverseRepo/index.js";
 import * as watchlistFeature from "./features/watchlist/index.js";
+import * as memoFeature from "./features/memo/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
 import * as localDataFeature from "./features/localData/index.js";
 
@@ -67,6 +68,7 @@ cbRateFeature.register(app);
 treasuryFxFeature.register(app);
 reverseRepoFeature.register(app);
 watchlistFeature.register(app);
+memoFeature.register(app);
 deepseekShareFeature.register(app);
 // 设置页模块（本地数据管理，非工具）
 localDataFeature.register(app);

@@ -844,5 +844,57 @@ export type WatchlistResult =
   | WatchlistFundamentalResult
   | WatchlistErrorResult;
 
+// ============================================================
+// 改进备忘录（memo）：TODO list（用户记录问题 → Agent 驱动修复）
+// ============================================================
+
+/** 备忘录条目状态 */
+export type MemoStatus = "open" | "doing" | "done";
+
+export interface MemoItem {
+  id: string;
+  text: string;
+  status: MemoStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoListResult {
+  ok: true;
+  items: MemoItem[];
+}
+
+export interface MemoCreateRequest {
+  text: string;
+}
+
+export interface MemoCreateResult {
+  ok: true;
+  item: MemoItem;
+}
+
+/** 更新：改文本 / 改状态 */
+export interface MemoUpdateRequest {
+  text?: string;
+  status?: MemoStatus;
+}
+
+export interface MemoDetailResult {
+  ok: true;
+  item: MemoItem;
+}
+
+export interface MemoDeleteResult {
+  ok: true;
+  deleted: number;
+}
+
+export interface MemoErrorResult {
+  ok: false;
+  message: string;
+}
+
+export type MemoResult = MemoListResult | MemoCreateResult | MemoDetailResult | MemoDeleteResult | MemoErrorResult;
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
