@@ -285,16 +285,28 @@ export default function LlmSettings() {
             <span style={{ color: "#94a3b8" }}>加载中…</span>
           ) : balance.ok ? (
             <div>
-              {(balance.balance ?? []).map((b) => (
-                <div key={b.currency} style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap" }}>
-                  <span><b>{b.currency}</b> 总余额 <b>{b.totalBalance}</b></span>
-                  <span style={{ color: "#64748b" }}>充值 {b.toppedUpBalance} · 赠送 {b.grantedBalance}</span>
-                  <span style={{ color: balance.isAvailable ? "#15803d" : "#b91c1c" }}>
-                    {balance.isAvailable ? "✓ 可用" : "✗ 不可用"}
-                  </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap" }}>
+                  {(balance.balance ?? []).map((b) => (
+                    <div key={b.currency} style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap" }}>
+                      <span><b>{b.currency}</b> 总余额 <b>{b.totalBalance}</b></span>
+                      <span style={{ color: "#64748b" }}>充值 {b.toppedUpBalance} · 赠送 {b.grantedBalance}</span>
+                      <span style={{ color: balance.isAvailable ? "#15803d" : "#b91c1c" }}>
+                        {balance.isAvailable ? "✓ 可用" : "✗ 不可用"}
+                      </span>
+                    </div>
+                  ))}
+                  {(balance.balance ?? []).length === 0 && <span style={{ color: "#94a3b8" }}>无余额信息</span>}
                 </div>
-              ))}
-              {(balance.balance ?? []).length === 0 && <span style={{ color: "#94a3b8" }}>无余额信息</span>}
+                <a
+                  href="https://platform.deepseek.com/top_up"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...btn, background: "#f59e0b", textDecoration: "none", display: "inline-block" }}
+                >
+                  💳 去充值
+                </a>
+              </div>
             </div>
           ) : (
             <span style={{ color: "#b91c1c" }}>{balance.message}</span>
