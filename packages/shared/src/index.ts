@@ -764,6 +764,8 @@ export interface WatchlistTopic {
 export interface WatchlistSummary {
   id: string;
   name: string;
+  /** 专题介绍（列表悬浮展示用） */
+  description?: string;
   stockCount: number;
   updatedAt: string;
 }

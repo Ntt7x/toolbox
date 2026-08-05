@@ -38,7 +38,13 @@ export function listTopics(): WatchlistSummary[] {
     if (!KEY_RE.test(r.key)) continue;
     const t = r.value ? (JSON.parse(r.value) as WatchlistTopic) : null;
     if (!t || typeof t.name !== "string") continue;
-    out.push({ id: t.id, name: t.name, stockCount: Array.isArray(t.stocks) ? t.stocks.length : 0, updatedAt: t.updatedAt });
+    out.push({
+      id: t.id,
+      name: t.name,
+      ...(typeof t.description === "string" && t.description ? { description: t.description } : {}),
+      stockCount: Array.isArray(t.stocks) ? t.stocks.length : 0,
+      updatedAt: t.updatedAt,
+    });
   }
   return out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }

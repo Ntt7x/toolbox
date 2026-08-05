@@ -91,8 +91,9 @@ export default function WatchlistTool() {
   // 新建专题
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
-  // 新建面板折叠
+  // 新建面板折叠 + 内部 tab（manual / chat）
   const [showCreate, setShowCreate] = useState(false);
+  const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   // Chat 导入
@@ -145,6 +146,7 @@ export default function WatchlistTool() {
       if (r.ok) {
         setNewName("");
         setNewDesc("");
+        setShowCreate(false);
         setSelectedId(r.topic.id);
         await refreshList();
       }
@@ -288,6 +290,7 @@ export default function WatchlistTool() {
           const st = await api.watchlistImportTaskStatus(t.taskId).catch(() => null);
           if (st?.ok && st.status === "done" && st.result) {
             setImportUrl("");
+            setShowCreate(false);
             setSelectedId(st.result.id);
             await refreshList();
             return;
@@ -358,43 +361,62 @@ export default function WatchlistTool() {
             </button>
           </div>
 
-          {/* 新建专题聚合面板（与列表/导入区分：独立底色边框） */}
+          {/* 新建专题聚合面板（手动创建 / Chat 导入 同属"新建专题"，tab 切换） */}
           {showCreate && (
             <div style={{ marginBottom: "0.7rem", padding: "0.6rem", background: "#eff6ff", borderRadius: 8, border: "1px solid #bfdbfe" }}>
-              <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.35rem", color: "#1d4ed8" }}>🆕 新建专题</div>
-              <input
-                style={{ ...input, width: "100%", boxSizing: "border-box", marginBottom: "0.35rem", fontSize: "0.82rem" }}
-                placeholder="专题名称（如 商业航天）"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") void createTopic(); }}
-              />
-              <textarea
-                style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
-                placeholder="专题介绍（可选）"
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-              />
-              <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem" }} onClick={() => void createTopic()} disabled={loading} type="button">
-                ✓ 创建专题
-              </button>
+              <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.4rem", color: "#1d4ed8" }}>🆕 新建专题</div>
+              {/* tab：手动 / Chat */}
+              <div style={{ display: "flex", gap: "0.3rem", marginBottom: "0.45rem" }}>
+                <button
+                  style={{ ...btn, flex: 1, padding: "0.32rem", fontSize: "0.8rem", background: createTab === "manual" ? "#2563eb" : "#93c5fd" }}
+                  onClick={() => setCreateTab("manual")}
+                  type="button"
+                >
+                  ✍️ 手动创建
+                </button>
+                <button
+                  style={{ ...btn, flex: 1, padding: "0.32rem", fontSize: "0.8rem", background: createTab === "chat" ? "#7c3aed" : "#c4b5fd" }}
+                  onClick={() => setCreateTab("chat")}
+                  type="button"
+                >
+                  🤖 Chat 导入
+                </button>
+              </div>
+              {createTab === "manual" ? (
+                <>
+                  <input
+                    style={{ ...input, width: "100%", boxSizing: "border-box", marginBottom: "0.35rem", fontSize: "0.82rem" }}
+                    placeholder="专题名称（如 商业航天）"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void createTopic(); }}
+                  />
+                  <textarea
+                    style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
+                    placeholder="专题介绍（可选，鼠标悬浮专题名可见）"
+                    value={newDesc}
+                    onChange={(e) => setNewDesc(e.target.value)}
+                  />
+                  <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem" }} onClick={() => void createTopic()} disabled={loading} type="button">
+                    ✓ 创建专题
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input
+                    style={{ ...input, width: "100%", fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
+                    placeholder="https://chat.deepseek.com/share/<id>"
+                    value={importUrl}
+                    onChange={(e) => setImportUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void importChat(); }}
+                  />
+                  <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem", background: "#7c3aed" }} onClick={() => void importChat()} disabled={importing} type="button">
+                    {importing ? "🔄 提取对话并整理中…" : "📥 从 Chat 导入"}
+                  </button>
+                </>
+              )}
             </div>
           )}
-
-          {/* Chat 导入 */}
-          <div style={{ marginBottom: "0.7rem", padding: "0.55rem 0.6rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-            <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.35rem" }}>🤖 Chat 导入（分享链接 → 自动建专题）</div>
-            <input
-              style={{ ...input, width: "100%", fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }}
-              placeholder="https://chat.deepseek.com/share/<id>"
-              value={importUrl}
-              onChange={(e) => setImportUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void importChat(); }}
-            />
-            <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem", background: "#7c3aed" }} onClick={() => void importChat()} disabled={importing} type="button">
-              {importing ? "🔄 提取对话并整理中…" : "📥 从 Chat 导入"}
-            </button>
-          </div>
 
           {topics.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>还没有专题，先新建或导入一个。</div>}
           {topics.map((t) => (
@@ -411,9 +433,16 @@ export default function WatchlistTool() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
+                gap: "0.3rem",
               }}
             >
-              <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{t.name}</span>
+              <span
+                style={{ fontWeight: 600, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                title={t.description ? `📖 ${t.description}` : undefined}
+              >
+                {t.name}
+                {t.description ? <span style={{ color: "#94a3b8", marginLeft: "0.25rem", fontSize: "0.8rem" }}>ℹ️</span> : null}
+              </span>
               <span style={{ color: "#94a3b8", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{t.stockCount} 只</span>
             </div>
           ))}
