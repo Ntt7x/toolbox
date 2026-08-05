@@ -186,6 +186,24 @@ export interface BookHistoryResult {
   cleared?: boolean;
 }
 
+/** 书籍下载收藏结果 */
+export interface BookFavoritesResult {
+  ok: boolean;
+  items?: (BookItem & { ts: string })[];
+  added?: boolean;
+  removed?: boolean;
+  cleared?: boolean;
+  count?: number;
+  message?: string;
+}
+
+/** DeepSeek Share 提取历史 */
+export interface ShareHistoryResult {
+  ok: boolean;
+  items?: { url: string; shareId: string; ts: string; messageCount: number }[];
+  cleared?: boolean;
+}
+
 // ============================================================
 // 交易网格计划工具（grid-plan）
 // ============================================================

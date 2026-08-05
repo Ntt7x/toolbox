@@ -57,6 +57,47 @@ export default function DeepSeekShareTool() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [copied, setCopied] = useState(false);
   const [clipHint, setClipHint] = useState(false);
+  // 提取历史
+  const [history, setHistory] = useState<{ url: string; shareId: string; ts: string; messageCount: number }[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const loadHistory = async () => {
+    try {
+      const r = await api.shareHistory();
+      if (r.ok) setHistory(r.items ?? []);
+    } catch {
+      // 静默
+    }
+  };
+
+  /** 清空提取历史 */
+  const clearHistory = async () => {
+    if (history.length === 0) return;
+    if (!window.confirm("确定清空全部提取历史？")) return;
+    try {
+      await api.shareHistoryClear();
+      void loadHistory();
+    } catch {
+      // 静默
+    }
+  };
+
+  /** 从历史重新提取 */
+  const extractUrl = async (url: string) => {
+    setUrlInput(url);
+    setErr(null);
+    setLoading(true);
+    setResult(null);
+    setExpanded(new Set());
+    try {
+      setResult(await api.shareExtract(url));
+      void loadHistory();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   /** 从剪贴板读取并自动填入（仅当符合链接格式且输入框为空） */
   const readClipboard = async () => {
@@ -75,6 +116,7 @@ export default function DeepSeekShareTool() {
   // 挂载时自动读取剪贴板：符合链接则自动填入
   useEffect(() => {
     void readClipboard();
+    void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -90,6 +132,7 @@ export default function DeepSeekShareTool() {
     setExpanded(new Set());
     try {
       setResult(await api.shareExtract(url));
+      void loadHistory();
     } catch (e) {
       setErr(errMsg(e));
     } finally {
@@ -150,6 +193,43 @@ export default function DeepSeekShareTool() {
         {clipHint && (
           <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
             📋 已检测到剪贴板中的 DeepSeek 分享链接并自动填入，点击「提取对话」即可。
+          </div>
+        )}
+
+        {/* 提取历史 */}
+        {history.length > 0 && (
+          <div style={{ marginTop: "0.7rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.6rem" }}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.85rem", fontWeight: 600, color: "#334155" }}
+              onClick={() => setShowHistory((v) => !v)}
+            >
+              🕘 提取历史（{history.length}）{showHistory ? " ▾" : " ▸"}
+              <span style={{ flex: 1 }} />
+              <span
+                style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 400, cursor: "pointer", textDecoration: "underline" }}
+                onClick={(e) => { e.stopPropagation(); void clearHistory(); }}
+              >
+                清空
+              </span>
+            </div>
+            {showHistory && (
+              <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {history.map((h) => (
+                  <div
+                    key={h.url}
+                    style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", padding: "0.4rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc", fontSize: "0.8rem", cursor: "pointer" }}
+                    onClick={() => void extractUrl(h.url)}
+                    title="点击重新提取"
+                  >
+                    <span style={{ fontFamily: "monospace", color: "#4338ca" }}>{h.shareId}</span>
+                    <span style={{ color: "#64748b" }}>{h.messageCount} 条消息</span>
+                    <span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>{fmtTime(h.ts)}</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>↻ 重提</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
