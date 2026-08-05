@@ -8,7 +8,24 @@
 
 import { Hono } from "hono";
 import { API_PREFIX, type BookSearchResult, type ToolMeta } from "@toolbox/shared";
-import { bookConfigResult, saveBookConfig, searchBooks } from "./service.js";
+import { registerDataSource } from "../../core/dataRegistry.js";
+import {
+  bookConfigResult,
+  clearSearchHistory,
+  listSearchHistory,
+  removeSearchHistory,
+  saveBookConfig,
+  searchBooks,
+} from "./service.js";
+
+// 注册数据源：历史搜索记录（本地数据管理页展示）
+registerDataSource({
+  kind: "kv",
+  name: "books:",
+  page: "书籍下载",
+  tag: "历史记录",
+  description: "书籍下载历史搜索记录（books:history，上限 50 条）",
+});
 
 export const meta: ToolMeta = {
   id: "books",
@@ -26,6 +43,22 @@ export function register(app: Hono): void {
     const limit = Number(c.req.query("limit")) || 20;
     const r: BookSearchResult = await searchBooks(q, { page, limit });
     return c.json(r, r.ok ? 200 : 429);
+  });
+
+  // 历史搜索记录
+  app.get(`${API_PREFIX}/tools/books/history`, (c) => {
+    return c.json({ ok: true, items: listSearchHistory() });
+  });
+
+  // 删除单条历史（?q=关键词）
+  app.delete(`${API_PREFIX}/tools/books/history`, (c) => {
+    const q = c.req.query("q")?.trim() ?? "";
+    if (!q) {
+      clearSearchHistory();
+      return c.json({ ok: true, cleared: true });
+    }
+    const removed = removeSearchHistory(q);
+    return c.json({ ok: true, removed });
   });
 
   // 配置读取

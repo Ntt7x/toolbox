@@ -9,7 +9,6 @@ import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
 import type { BookConfig, BookItem } from "@toolbox/shared";
-
 const card: CSSProperties = {
   background: "#fff",
   border: "1px solid #e2e8f0",
@@ -63,6 +62,17 @@ export default function BookSearchTool() {
   const [err, setErr] = useState<string | null>(null);
   const [config, setConfig] = useState<BookConfig | null>(null);
   const [imgFailed, setImgFailed] = useState<Set<number>>(new Set());
+  // 历史搜索记录
+  const [history, setHistory] = useState<{ q: string; ts: string; hits?: number }[]>([]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await api.booksHistory();
+      if (r.ok) setHistory(r.items ?? []);
+    } catch {
+      // 静默
+    }
+  }, []);
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -74,7 +84,8 @@ export default function BookSearchTool() {
 
   useEffect(() => {
     void refreshConfig();
-  }, [refreshConfig]);
+    void loadHistory();
+  }, [refreshConfig, loadHistory]);
 
   const runSearch = async (page = 1) => {
     const query = q.trim();
@@ -91,6 +102,7 @@ export default function BookSearchTool() {
         setItems(r.items ?? []);
         setTotal(r.total);
         setBase(r.base ?? "");
+        void loadHistory(); // 刷新历史（已记录本次搜索）
       } else {
         setItems([]);
         setTotal(undefined);
@@ -106,6 +118,54 @@ export default function BookSearchTool() {
   const browserSearch = () => {
     const query = q.trim();
     openZlib(`${config?.zlibBase ?? "https://z-library.bz"}/s/?q=${encodeURIComponent(query || "book")}`);
+  };
+
+  /** 点击历史：填入并重搜 */
+  const historySearch = (hq: string) => {
+    setQ(hq);
+    setItems([]);
+    setTotal(undefined);
+    setErr(null);
+    void (async () => {
+      setLoading(true);
+      try {
+        const r = await api.booksSearch(hq, 1);
+        if (r.ok) {
+          setItems(r.items ?? []);
+          setTotal(r.total);
+          setBase(r.base ?? "");
+          void loadHistory();
+        } else {
+          setErr(r.message || "搜索失败");
+        }
+      } catch (e) {
+        setErr(errMsg(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  };
+
+  /** 删除单条历史 */
+  const removeHistory = async (hq: string) => {
+    try {
+      await api.booksHistoryDelete(hq);
+      void loadHistory();
+    } catch {
+      // 静默
+    }
+  };
+
+  /** 清空历史 */
+  const clearHistory = async () => {
+    if (history.length === 0) return;
+    if (!window.confirm("确定清空全部历史搜索记录？")) return;
+    try {
+      await api.booksHistoryDelete();
+      void loadHistory();
+    } catch {
+      // 静默
+    }
   };
 
   return (
@@ -143,6 +203,47 @@ export default function BookSearchTool() {
         {items.length > 0 && (
           <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "0.5rem" }}>
             {total !== undefined ? <>共命中 <b>{total}</b> 条，显示前 {items.length} 条（zlib 匿名限额展示）。</> : <>返回 <b>{items.length}</b> 条结果。</>}
+          </div>
+        )}
+
+        {/* 历史搜索记录 */}
+        {history.length > 0 && (
+          <div style={{ marginTop: "0.7rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>🕘 历史：</span>
+            {history.map((h) => (
+              <span
+                key={h.q}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.25rem",
+                  padding: "0.15rem 0.6rem",
+                  borderRadius: 999,
+                  background: "#f1f5f9",
+                  border: "1px solid #e2e8f0",
+                  fontSize: "0.78rem",
+                  color: "#334155",
+                  cursor: "pointer",
+                }}
+                title={`${h.hits !== undefined ? `命中 ${h.hits} 条 · ` : ""}${new Date(h.ts).toLocaleString()}`}
+                onClick={() => historySearch(h.q)}
+              >
+                {h.q}
+                <span
+                  style={{ color: "#94a3b8", fontSize: "0.85rem", lineHeight: 1, cursor: "pointer" }}
+                  onClick={(e) => { e.stopPropagation(); void removeHistory(h.q); }}
+                  title="删除该条历史"
+                >
+                  ×
+                </span>
+              </span>
+            ))}
+            <span
+              style={{ fontSize: "0.75rem", color: "#94a3b8", cursor: "pointer", textDecoration: "underline" }}
+              onClick={() => void clearHistory()}
+            >
+              清空
+            </span>
           </div>
         )}
       </div>

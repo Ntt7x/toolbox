@@ -7,6 +7,7 @@
 
 import type { BookItem, BookConfig, BookSearchResult } from "@toolbox/shared";
 import { proxyFetch } from "../../core/httpProxy.js";
+import { kvGet, kvSet } from "../../core/kvStore.js";
 import { getSetting, setSetting } from "../../core/settingsStore.js";
 
 const DEFAULT_ZLIB_BASE = "https://z-library.bz";
@@ -33,6 +34,62 @@ export function saveBookConfig(patch: { zlibBase?: string; proxy?: string }): { 
 export function bookConfigResult(): BookConfig {
   const c = getBookConfig();
   return { ok: true, ...c };
+}
+
+// ============================================================
+// 历史搜索记录（KV 持久化，本地数据管理可见：books:）
+// ============================================================
+
+export interface BookHistoryEntry {
+  q: string;
+  ts: string;
+  /** 该次搜索命中条数 */
+  hits?: number;
+}
+
+const HISTORY_KEY = "books:history";
+const HISTORY_MAX = 50;
+
+function readHistory(): BookHistoryEntry[] {
+  const saved = kvGet<{ items?: unknown[] }>(HISTORY_KEY);
+  if (!Array.isArray(saved?.items)) return [];
+  return saved.items
+    .filter((e): e is BookHistoryEntry => !!e && typeof (e as BookHistoryEntry).q === "string")
+    .slice(0, HISTORY_MAX);
+}
+
+function writeHistory(items: BookHistoryEntry[]): void {
+  kvSet(HISTORY_KEY, { items });
+}
+
+/** 搜索成功后记录历史（同关键词去重提前，上限 50 条截断） */
+export function addSearchHistory(q: string, hits?: number): void {
+  const qs = q.trim().slice(0, 100);
+  if (!qs) return;
+  const items = readHistory().filter((e) => e.q !== qs);
+  items.unshift({ q: qs, ts: new Date().toISOString(), ...(typeof hits === "number" ? { hits } : {}) });
+  writeHistory(items.slice(0, HISTORY_MAX));
+}
+
+/** 历史列表（倒序） */
+export function listSearchHistory(): BookHistoryEntry[] {
+  return readHistory();
+}
+
+/** 删除单条历史（同关键词全部删除） */
+export function removeSearchHistory(q: string): boolean {
+  const qs = q.trim();
+  if (!qs) return false;
+  const items = readHistory();
+  const next = items.filter((e) => e.q !== qs);
+  if (next.length === items.length) return false;
+  writeHistory(next);
+  return true;
+}
+
+/** 清空历史 */
+export function clearSearchHistory(): void {
+  writeHistory([]);
 }
 
 /** 归一化 zlib 书籍条目 */
@@ -106,6 +163,7 @@ export async function searchBooks(qInput: string, opts: { page?: number; limit?:
       return { ok: false, message: "zlib 返回结构异常，请稍后重试" };
     }
     const items = j.books.map((b) => normalizeBook(b as Record<string, unknown>, zlibBase)).filter((x): x is BookItem => !!x);
+    addSearchHistory(q, items.length);
     return {
       ok: true,
       items,

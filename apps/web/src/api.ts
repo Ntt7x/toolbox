@@ -40,6 +40,7 @@
   type MemoListResult,
   type MemoUpdateRequest,
   type BookConfig,
+  type BookHistoryResult,
   type BookSearchResult,
   type ShareExtractRequest,
   type ShareExtractResult,
@@ -142,6 +143,9 @@ export const api = {
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),
   booksConfig: () => request<BookConfig>("/tools/books/config"),
   booksSaveConfig: (patch: { zlibBase?: string; proxy?: string }) => request<BookConfig>("/tools/books/config", jsonInit("PUT", patch)),
+  booksHistory: () => request<BookHistoryResult>("/tools/books/history"),
+  booksHistoryDelete: (q?: string) =>
+    request<BookHistoryResult>(`/tools/books/history${q ? `?q=${encodeURIComponent(q)}` : ""}`, jsonInit("DELETE", {})),
   reverseRepoDailyTaskStatus: (taskId: string) =>
     request<AsyncTaskResult<ReverseRepoDailyResponse>>(`/tools/reverse-repo/daily/task/${encodeURIComponent(taskId)}`),
   // 任务取消（中止服务端 LLM 调用与资源）

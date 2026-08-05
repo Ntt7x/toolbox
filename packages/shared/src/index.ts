@@ -85,6 +85,14 @@ export interface BookConfig {
   message?: string;
 }
 
+/** 书籍下载历史搜索记录 */
+export interface BookHistoryResult {
+  ok: boolean;
+  items?: { q: string; ts: string; hits?: number }[];
+  removed?: boolean;
+  cleared?: boolean;
+}
+
 // ============================================================
 // 交易网格计划工具（grid-plan）
 // ============================================================
