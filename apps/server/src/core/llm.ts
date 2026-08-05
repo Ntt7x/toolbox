@@ -341,6 +341,13 @@ function recordLlmUsage(module: string, model: string, usage: { promptTokens?: n
   }
 }
 
+/** 本地时区日期（YYYY-MM-DD，服务器本地时区=用户机器时区；避免 UTC 跨天错位） */
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 /** 用量汇总（总数 + 按模块 + 按天；按天含当日模块明细，供单日扇形图） */
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
@@ -358,7 +365,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     m.calls++;
     m.totalTokens += e.promptTokens + e.completionTokens;
     byModule.set(e.module, m);
-    const day = e.ts.slice(0, 10);
+    const day = localDay(e.ts);
     const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, byModule: new Map() };
     d.calls++;
     d.totalTokens += e.promptTokens + e.completionTokens;
