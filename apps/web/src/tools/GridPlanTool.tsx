@@ -225,6 +225,8 @@ export default function GridPlanTool() {
         type,
         boll: [bolls[0], bolls[1], bolls[2]],
         ...(amt !== "" ? { maxAmount: Number(amt) } : {}),
+        ...(codeInput.trim() ? { code: codeInput.trim() } : {}),
+        ...(quoteInfo?.name ? { name: quoteInfo.name } : {}),
       };
       setResult(await api.gridPlan(req));
       await loadHistory();
@@ -415,6 +417,8 @@ export default function GridPlanTool() {
               historyList.map((e) => (
                 <div key={e.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", padding: "0.45rem 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.82rem" }}>
                   <span style={{ color: "#64748b", whiteSpace: "nowrap" }}>{new Date(e.createdAt).toLocaleString()}</span>
+                  {e.summary.name ? <span style={{ fontWeight: 700 }}>{e.summary.name}</span> : null}
+                  {e.summary.code ? <span style={{ color: "#64748b" }}>{e.summary.code}</span> : null}
                   <span style={{ fontWeight: 600 }}>{e.summary.typeName}</span>
                   <span style={{ color: "#94a3b8" }}>U{e.summary.U} / M{e.summary.M} / L{e.summary.L}</span>
                   <span style={{ color: "#94a3b8" }}>{e.summary.rows} 档</span>

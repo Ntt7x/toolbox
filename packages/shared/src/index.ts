@@ -48,6 +48,10 @@ export interface GridPlanRequest {
    * 不传时保持 K=1000 份基准。
    */
   maxAmount?: number;
+  /** 可选：股票代码（历史记录关联，如 sh600519 / 600519） */
+  code?: string;
+  /** 可选：股票名称（历史记录展示用） */
+  name?: string;
 }
 
 /** 单档风格的完整结果 */
@@ -141,7 +145,7 @@ export interface GridPlanHistoryEntry {
   /** 生成时间（ISO 时间戳） */
   createdAt: string;
   /** 输入参数 */
-  request: { type: number; boll: [number, number, number]; maxAmount?: number };
+  request: { type: number; boll: [number, number, number]; maxAmount?: number; code?: string; name?: string };
   /** 摘要（列表展示用） */
   summary: {
     typeName: string;
@@ -153,6 +157,8 @@ export interface GridPlanHistoryEntry {
     maxAmount?: number;
     /** 均衡档单档买入金额（styles[first].amount.buyAmount） */
     perBuy?: number;
+    code?: string;
+    name?: string;
   };
   /** 完整结果（查看详情用） */
   result: GridPlanResult;

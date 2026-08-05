@@ -67,8 +67,17 @@ export function register(app: Hono): void {
       return c.json(body, 400);
     }
     const result = generateGridPlan(type as GridTrendType, boll as [number, number, number], maxAmount);
-    // 成功时自动保存历史（时间戳 + 输入 + 完整结果）
-    if (result.ok) saveHistory({ type: type as GridTrendType, boll: boll as [number, number, number], ...(maxAmount ? { maxAmount } : {}) }, result);
+    // 成功时自动保存历史（时间戳 + 输入 + 完整结果；含股票代码/名称）
+    if (result.ok) {
+      const req: GridPlanRequest = {
+        type: type as GridTrendType,
+        boll: boll as [number, number, number],
+        ...(maxAmount ? { maxAmount } : {}),
+        ...(typeof raw.code === "string" && raw.code.trim() ? { code: raw.code.trim() } : {}),
+        ...(typeof raw.name === "string" && raw.name.trim() ? { name: raw.name.trim() } : {}),
+      };
+      saveHistory(req, result);
+    }
     // 业务失败统一 400（compute 的 format 错误已被上方校验拦截，不会到达此处）
     return c.json(result, result.ok ? 200 : 400);
   });

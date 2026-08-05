@@ -42,6 +42,8 @@ function summarize(req: GridPlanRequest, result: GridPlanResult): GridPlanHistor
     rows: Object.keys(styles).length,
     ...(result.maxAmount !== undefined ? { maxAmount: result.maxAmount } : {}),
     perBuy: styles[firstKey]?.amount?.buyAmount,
+    ...(req.code ? { code: req.code } : {}),
+    ...(req.name ? { name: req.name } : {}),
   };
 }
 
@@ -53,7 +55,13 @@ export function saveHistory(req: GridPlanRequest, result: GridPlanResult): GridP
   const entry: GridPlanHistoryEntry = {
     id: genId(),
     createdAt: new Date().toISOString(),
-    request: { type: req.type, boll: [...req.boll] as [number, number, number], ...(req.maxAmount ? { maxAmount: req.maxAmount } : {}) },
+    request: {
+      type: req.type,
+      boll: [...req.boll] as [number, number, number],
+      ...(req.maxAmount ? { maxAmount: req.maxAmount } : {}),
+      ...(req.code ? { code: req.code } : {}),
+      ...(req.name ? { name: req.name } : {}),
+    },
     summary,
     result,
   };
