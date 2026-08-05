@@ -49,6 +49,7 @@ const tools: ToolMeta[] = [
   treasuryFxFeature.meta,
   reverseRepoFeature.meta,
   watchlistFeature.meta,
+  booksFeature.meta,
   deepseekShareFeature.meta,
 ];
 
