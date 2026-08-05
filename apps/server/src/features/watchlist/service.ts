@@ -8,7 +8,7 @@ import { chat } from "../../core/llm.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
-import { queryMonthlyBoll } from "../../core/quote.js";
+import { getQuoteSnapshot } from "../../core/quote.js";
 import type { WatchlistFundamentalResult } from "@toolbox/shared";
 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
@@ -21,10 +21,10 @@ function todayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-/** 用标准行情工具解析股票名称（失败静默返回空） */
+/** 用标准行情工具解析股票名称（快照接口，多源 failover；失败静默返回空） */
 export async function resolveStockName(code: string): Promise<string> {
   try {
-    const q = await queryMonthlyBoll(code);
+    const q = await getQuoteSnapshot(code);
     if (q.ok && q.name) return q.name;
   } catch {
     // 行情接口失败静默：名称留空由用户/LLM 补

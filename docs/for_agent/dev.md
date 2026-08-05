@@ -139,8 +139,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 5. 外部数据源经验
 
-- **A/H 股行情**：腾讯 `web.ifzq.gtimg.cn`（param=sh600519,month,,,60,qfq），前复权月 K，
-  排除未完成当月；**东财 push2his 不稳（TLS 断开）已弃用**
+- **A/H 股行情（多源，2026-08 实测选型）**：`core/quote.ts` 提供两个能力——
+  - `getQuoteSnapshot(code)`：**实时快照**（现价/涨跌/换手/PE/PB/市值/52周区间/币种），
+    腾讯 `qt.gtimg.cn` 主源（A/H 一体、字段最全、GBK 需 TextDecoder('gbk') 转码），
+    东财 `push2.eastmoney.com`（JSON 干净，secid=1.600519/0.000858/116.00700）与新浪
+    `hq.sinajs.cn`（需 Referer，字段贫乏）自动降级；KV 缓存 `quote:s:` 5 分钟（行情时效短）
+  - `queryMonthlyBoll(code)`：月 K → 月线 BOLL（网格计划用，腾讯 `web.ifzq.gtimg.cn` qfqmonth，
+    排除未完成当月）
+  - **腾讯快照字段表**（~ 分隔，A/H 前段同构）：3=价 4=昨收 5=开 31=涨跌 32=涨跌幅 33=高
+    34=低 36=量 37=额（A 股万元/港股元，均转亿）39=PE 45=总市值；**A 股** 38=换手 46=PB
+    47/48=52周高低；**港股** 46=TENCENT 占位 → PB=47、52周=48/49
 - **DeepSeek 分享提取**：`GET https://chat.deepseek.com/api/v0/share/content?share_id={id}`
   （UA + Accept: application/json），消息含 role/content/thinking/inserted_at/accumulated_token_usage
 - 测试用真实分享 id：`u5myqtvktzo5gal4qi`；测试行情：`600519` / `hk00700`

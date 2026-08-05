@@ -160,6 +160,50 @@ export interface QuoteErrorResponse {
 
 export type QuoteResult = QuoteResponse | QuoteErrorResponse;
 
+/** 行情快照（实时报价）：腾讯为主源，东财/新浪自动降级 */
+export interface QuoteSnapshot {
+  ok: boolean;
+  /** 标准代码（sh600519 / hk00700） */
+  code: string;
+  /** 股票名称 */
+  name?: string;
+  /** 最新价 */
+  price?: number;
+  /** 昨收 */
+  prevClose?: number;
+  /** 今开 */
+  open?: number;
+  /** 涨跌额 */
+  change?: number;
+  /** 涨跌幅（%） */
+  pct?: number;
+  /** 最高/最低 */
+  high?: number;
+  low?: number;
+  /** 成交量（手） */
+  volume?: number;
+  /** 成交额（亿元） */
+  amount?: number;
+  /** 换手率（%） */
+  turnover?: number;
+  /** 市盈率 TTM */
+  pe?: number;
+  /** 市净率 */
+  pb?: number;
+  /** 总市值（亿元） */
+  marketCap?: number;
+  /** 52 周最高/最低 */
+  high52?: number;
+  low52?: number;
+  /** 币种（CNY / HKD） */
+  currency?: string;
+  /** 数据源（tencent / eastmoney / sina） */
+  source?: string;
+  /** 快照时间（ISO） */
+  ts?: string;
+  message?: string;
+}
+
 // ============================================================
 // LLM 能力模块（DeepSeek）
 // ============================================================

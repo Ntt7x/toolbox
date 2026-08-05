@@ -15,6 +15,7 @@ import {
 } from "@toolbox/shared";
 import { DEFAULT_MODEL, chat, clearApiKey, loadApiKey, saveApiKey, testConnection } from "./llm.js";
 import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./prompts.js";
+import { getQuoteSnapshot } from "./quote.js";
 
 export function registerLlmRoutes(app: Hono): void {
   app.get(`${API_PREFIX}/llm/status`, (c) => {
@@ -56,6 +57,17 @@ export function registerLlmRoutes(app: Hono): void {
       temperature: raw.temperature,
       ...(raw.search ? { search: true } : {}),
     });
+    return c.json(result, result.ok ? 200 : 400);
+  });
+}
+
+/** 行情快照路由（公共能力：A/H 实时报价，多源 failover + 缓存） */
+export function registerQuoteRoutes(app: Hono): void {
+  app.get(`${API_PREFIX}/quote`, async (c) => {
+    const code = c.req.query("code")?.trim() ?? "";
+    if (!code) return c.json({ ok: false, code, message: "缺少 code 参数" }, 400);
+    const force = c.req.query("force") === "1";
+    const result = await getQuoteSnapshot(code, { force });
     return c.json(result, result.ok ? 200 : 400);
   });
 }
