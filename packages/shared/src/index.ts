@@ -27,6 +27,44 @@ export interface ToolListResponse {
 }
 
 // ============================================================
+// 康复（个人经验笔记：rehab）
+// ============================================================
+
+/** 康复笔记条目（证型/要点 → 方剂链/说明） */
+export interface RehabNoteItem {
+  name?: string;
+  detail: string;
+}
+
+/** 康复笔记分区 */
+export interface RehabNoteSection {
+  title: string;
+  items: RehabNoteItem[];
+}
+
+/** 康复笔记（KV 持久化：rehab:<id>） */
+export interface RehabNote {
+  id: string;
+  title: string;
+  /** 末次更新时间 */
+  updatedAt: string;
+  sections: RehabNoteSection[];
+}
+
+/** 康复笔记读写结果 */
+export interface RehabNoteResult {
+  ok: boolean;
+  note?: RehabNote;
+  message?: string;
+}
+
+/** 康复笔记保存请求 */
+export interface RehabNoteUpdateRequest {
+  title?: string;
+  sections?: RehabNoteSection[];
+}
+
+// ============================================================
 // 凯利仓位助手（kelly）
 // ============================================================
 
