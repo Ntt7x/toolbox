@@ -157,6 +157,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   llm.test）归属；`GET /api/llm/usage` 聚合（总数+按模块+按天）、`GET /api/llm/balance`
   查询 DeepSeek 平台余额（/user/balance，API key 即授权）；LLM 设置页展示；
   platform.deepseek.com/usage 网页明细需登录无法程序化抓取，用本地记录为主
+- **数据删除红线（2026-08-06 教训）**：**删除/清空任何用户可见数据必须先征得用户同意**——
+  即便为"整理/迁移"目的也不得擅自 DELETE KV（历史违规：重构用量切面时直接清空
+  `llmUsage:log`，页面"用量管理"变空；旧数据本可兼容展示（mode/scene 有推断兜底））。
+  需清理时：先说明影响与兼容方案，用户确认后再删；或保留数据仅改展示。
 
 - **业务数据一律进「本地数据管理」**（SQLite KV/表，`core/kvStore`/`tableStore`），
   运行时从库里读取；**禁止在代码中硬编码运行时数据**（表格、流水、配置、分析/探查结果等）
