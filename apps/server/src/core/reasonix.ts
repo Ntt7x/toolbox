@@ -19,11 +19,13 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
+import { DATA_DIR } from "./db.js";
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
+import { kbSyncFromDir, kbSyncToDir, KB_ROOT_DIR } from "./knowledge.js";
 
 const require_ = createRequire(import.meta.url);
 
@@ -90,6 +92,48 @@ interface ReasonixUsageShape {
 
 let acp: AcpClient | null = null;
 
+// ---------- 知识库目录 watcher（Reasonix ACP 适配） ----------
+// Agent 通过 read_file/write_file 访问 /k/{key}（物理映射 cwd/k/）；
+// 会话写 /k/ 后由 watcher 防抖写回知识库 KV。
+
+let kbWatcher: FSWatcher | null = null;
+let kbWatcherTimer: NodeJS.Timeout | null = null;
+let kbWatcherCwd = "";
+
+function ensureKbWatcher(): void {
+  if (kbWatcher && kbWatcherCwd === KB_ROOT_DIR) return;
+  try {
+    kbWatcher?.close();
+    kbWatcher = null;
+    kbWatcher = watch(KB_ROOT_DIR, () => {
+      // 防抖 1s：批量写回（kbSyncFromDir 内部按内容比对，幂等）
+      if (kbWatcherTimer) clearTimeout(kbWatcherTimer);
+      kbWatcherTimer = setTimeout(() => {
+        try {
+          kbSyncFromDir();
+        } catch {
+          // 写回失败静默（下次事件重试）
+        }
+      }, 1000);
+    });
+    kbWatcherCwd = KB_ROOT_DIR;
+  } catch {
+    // 目录不存在等：忽略（read_file 会失败，写回同步由 ask/close 兜底）
+  }
+}
+
+/** 关闭知识库 watcher（服务端退出/测试清理用） */
+export function closeKbWatcher(): void {
+  try {
+    kbWatcher?.close();
+  } catch {
+    // 忽略
+  }
+  kbWatcher = null;
+  if (kbWatcherTimer) clearTimeout(kbWatcherTimer);
+  kbWatcherTimer = null;
+}
+
 function startAcp(): AcpClient {
   const bin = resolveBinary();
   if (!bin) throw new Error("reasonix 二进制未找到：请配置 llm.reasonixBin 或安装 @reasonix/cli-<platform>-<arch>");
@@ -134,12 +178,41 @@ function startAcp(): AcpClient {
       if (msg.method === "session/update" || msg.method === "_reasonix.io/session/status_update") {
         const params = msg.params as AcpSessionUpdate & AcpStatusUpdate;
         const listener = params.sessionId ? client.promptListeners.get(params.sessionId) : undefined;
+        if (process.env.REASONIX_ACP_DEBUG) {
+          console.log(`[reasonix-acp] ${msg.method}`, JSON.stringify(params).slice(0, 2000));
+        }
         if (listener) {
           try {
             listener(params);
           } catch {
             // 监听器异常不影响主流程
           }
+        }
+        // ACP 精细控制：host 拦截 Agent 的内置 fs 工具调用（read/write/edit/delete），
+        // 仅允许知识库目录（/.file/k）内的访问，其余一律拒绝。host 执行后回 tool_result。
+        if (params.update?.sessionUpdate === "tool_call" && params.sessionId) {
+          void handleToolCall(client, params);
+        }
+      }
+      // Reasonix 权限请求兜底：默认拒绝（防止 Agent 卡在 bash 等权限等待；知识库访问走 read_file 无需权限）
+      if (msg.method === "session/request_permission") {
+        const p = msg.params as {
+          sessionId?: string;
+          toolCall?: {
+            name?: string;
+            rawInput?: Record<string, unknown>;
+            locations?: { path?: string }[];
+            _meta?: { "reasonix.io"?: { approvalId?: string; tool?: string } };
+          };
+        };
+        const approvalId = p.toolCall?._meta?.["reasonix.io"]?.approvalId;
+        const sessionId = p.sessionId;
+        // 权限决策（本地个人站点：文件类工具全放行；bash/网络等非文件类拒绝）
+        const tool = p.toolCall?._meta?.["reasonix.io"]?.tool ?? p.toolCall?.name ?? "";
+        const isFileOp = ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool);
+        if (approvalId && sessionId) {
+          // fire-and-forget：决策后 Agent 继续（不阻塞主流程）
+          void rpc("session/grant_permission", { sessionId, permissionID: approvalId, allow: isFileOp }, 8000).catch(() => {});
         }
       }
     }
@@ -163,6 +236,82 @@ function startAcp(): AcpClient {
 function getAcp(): AcpClient {
   if (acp && acp.child.exitCode === null) return acp;
   return startAcp();
+}
+
+/** 路径是否位于根目录内（resolve 后前缀匹配，防 ../ 穿越） */
+function isInsidePath(p: string | undefined, root: string): boolean {
+  if (!p) return false;
+  try {
+    const full = resolve(p);
+    const rootAbs = resolve(root);
+    return full === rootAbs || full.startsWith(rootAbs + sep);
+  } catch {
+    return false;
+  }
+}
+
+/** ACP 工具调用拦截（本地个人站点：文件权限全放行）：
+ * Agent 的 fs 工具（read/write/edit/delete）以 tool_call(pending) 发来，
+ * reasonix 处于 waiting_permission——host 用 session/grant_permission 批准，
+ * 随后回 session/update tool_result（执行结果）供 Agent 继续 prompt 循环。
+ * 文件类工具一律批准（host 在 cwd 内执行）；bash/网络等非文件类拒绝。 */
+async function handleToolCall(client: AcpClient, params: AcpSessionUpdate & AcpStatusUpdate): Promise<void> {
+  const sessionId = params.sessionId ?? "";
+  const tc = params.update as {
+    toolCallId?: string;
+    title?: string;
+    kind?: string;
+    rawInput?: { path?: string; content?: string };
+    locations?: { path?: string }[];
+    _meta?: { "reasonix.io"?: { tool?: string } };
+  };
+  const toolCallId = tc.toolCallId ?? "";
+  if (!sessionId || !toolCallId) return;
+  // 工具名：优先 _meta 内嵌，其次 title（如 write_file），再次 kind（read/edit）
+  const tool = tc._meta?.["reasonix.io"]?.tool ?? tc.title ?? tc.kind ?? "";
+  const targetPath = tc.locations?.[0]?.path ?? tc.rawInput?.path ?? "";
+  // 文件类工具全放行（本地站点不做路径白名单）；非文件类拒绝
+  const allowed = ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool);
+  if (!allowed) {
+    console.warn(`[reasonix-acp] 拒绝非文件工具 ${tool}（路径 ${targetPath}）`);
+  }
+
+  // 1) 批准/拒绝权限（解除 reasonix waiting_permission）
+  await rpc("session/grant_permission", { sessionId, permissionID: toolCallId, allow: allowed }, 8000).catch(() => {});
+
+  // 2) 回 tool_result（执行结果；reasonix 批准后由 host 执行或自行执行，结果喂回 Agent）
+  let text = allowed ? "ok" : `拒绝：非文件类工具 ${tool}`;
+  let isError = !allowed;
+  if (allowed) {
+    try {
+      const abs = resolve(targetPath);
+      const content = tc.rawInput?.content;
+      if (tool === "read_file" || tool === "fs.readTextFile") {
+        if (!existsSync(abs)) throw new Error("文件不存在");
+        text = readFileSync(abs, "utf8");
+      } else if (tool === "delete_file" || tool === "fs.deleteFile") {
+        if (existsSync(abs)) unlinkSync(abs);
+        text = "deleted";
+      } else {
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, content ?? "", "utf8");
+        text = "ok";
+      }
+    } catch (e) {
+      isError = true;
+      text = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const resp = {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_result",
+      toolCallId,
+      content: [{ type: "content", content: { type: "text", text } }],
+      isError,
+    },
+  };
+  client.child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: resp }) + "\n");
 }
 
 function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000): Promise<{ result?: unknown; error?: { message?: string } }> {
@@ -232,20 +381,26 @@ function saveReg(r: ReasonixSessionReg): void {
   kvSet(regKey(r.id), r);
 }
 
-/** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复） */
+/** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复）
+ * 默认 cwd = 数据目录 /.file（git 隔离）：Agent 的 /k/{key} 即知识库目录，
+ * 文件访问天然限制在 .file 内，服务端经 watcher 精细控制。 */
 export async function createReasonixSession(opts: { cwd?: string; module?: string } = {}): Promise<{ ok: boolean; id?: string; message?: string }> {
   try {
     const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: {} }, 15000);
     if (init.error) return { ok: false, message: `reasonix initialize 失败：${init.error.message}` };
-    const res = await rpc("session/new", { cwd: opts.cwd ?? process.cwd() }, 15000);
+    const cwd = opts.cwd ?? DATA_DIR;
+    const res = await rpc("session/new", { cwd }, 15000);
     if (res.error) return { ok: false, message: `reasonix session/new 失败：${res.error.message}` };
     const reasonixSessionId = (res.result as { sessionId?: string } | undefined)?.sessionId;
     if (!reasonixSessionId) return { ok: false, message: "reasonix 未返回 sessionId" };
+    // 本地个人站点：工具批准全自动（yolo）——Agent 可自由读写文件（含 /k/ 知识库），
+    // 不再逐次等待 host 批准；非文件类（bash/网络）仍由 request_permission 兜底拒绝。
+    await rpc("session/set_config_option", { sessionId: reasonixSessionId, configId: "tool_approval", value: "yolo" }, 10000).catch(() => {});
     const now = Date.now();
     const reg: ReasonixSessionReg = {
       id: genRegId(),
       reasonixSessionId,
-      cwd: opts.cwd ?? process.cwd(),
+      cwd,
       module: opts.module ?? "reasonix",
       createdAt: now,
       lastAt: now,
@@ -266,10 +421,21 @@ export async function createReasonixSession(opts: { cwd?: string; module?: strin
 export async function reasonixAsk(
   regId: string,
   text: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; knowledge?: boolean } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
+  const cwd = reg.cwd ?? process.cwd();
+
+  // 知识库适配：prompt 前把知识库同步为 /.file/k/（Agent 可 read_file 访问 /k/{key}），并启动目录 watcher
+  if (opts.knowledge) {
+    try {
+      kbSyncToDir();
+      ensureKbWatcher();
+    } catch {
+      // 同步失败不阻断主流程
+    }
+  }
 
   const doAsk = async (sid: string): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> => {
     let client: AcpClient;
@@ -319,6 +485,14 @@ export async function reasonixAsk(
   if (!r.ok && r.sessionGone) {
     const resume = await rpc("session/resume", { sessionId: reg.reasonixSessionId }, 15000).catch(() => ({ error: { message: "resume failed" } }));
     if (!resume.error) r = await doAsk(reg.reasonixSessionId);
+  }
+  // 知识库适配：prompt 后把目录变化写回知识库（Agent 若写了 /k/ 新条目或删除）
+  if (opts.knowledge) {
+    try {
+      kbSyncFromDir();
+    } catch {
+      // 写回失败静默
+    }
   }
   if (r.ok) {
     reg.lastAt = Date.now();

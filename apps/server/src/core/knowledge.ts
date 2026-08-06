@@ -1,0 +1,295 @@
+// ============================================================
+// 下层公共模块：知识库（core/knowledge）
+// 去 RAG 化的极简设计（对齐「对话即知识」思路）：
+// - 存储：复用 SQLite KV（前缀 knowledge:），value = { value, source, updatedAt }
+// - 检索：精确 key + 包含匹配（key/value 关键词），不做向量化
+// - 内化：kbImportFromChat —— DeepSeek 分享对话 → LLM 提取 {key,value} 事实 → 批量写入
+// - 问答：kbAsk —— 按问题关键词检索相关条目 → 知识注入提示词 → LLM 回答
+// 成本：提取/问答按需调 LLM；平时只读 KV 零成本。
+// ============================================================
+
+import { readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
+import { chat } from "./llm.js";
+import { getPromptTemplate } from "./prompts.js";
+import { robustJsonParse } from "./jsonParse.js";
+import { extractShare } from "./deepseekShare.js";
+import { registerDataSource } from "./dataRegistry.js";
+import { DATA_DIR } from "./db.js";
+import type { KnowledgeAskResult, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
+
+// 数据源注册（本地数据管理可见；知识库为服务端公共数据）
+registerDataSource({
+  kind: "kv",
+  name: "knowledge:",
+  page: "知识库",
+  tag: "知识数据",
+  description: "知识库条目（SQLite KV 精确存储；Reasonix Agent 经 /k/ 虚拟路径读写，服务端精细控制）",
+});
+
+/** KV 前缀（数据源注册名） */
+export const KB_PREFIX = "knowledge:";
+
+/** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
+export const KB_ROOT_DIR = join(DATA_DIR, "k");
+
+/** key 规范：分层点分隔（project.module.attribute）；仅字母数字、点、短横线、下划线 */
+const KEY_RE = /^[a-zA-Z0-9._-]{1,120}$/;
+
+export interface KnowledgeEntry {
+  key: string;
+  value: string;
+  /** 来源（对话分享 id / 文件名 / 用户标注） */
+  source?: string;
+  updatedAt: string;
+}
+
+function keyOf(key: string): string {
+  return `${KB_PREFIX}${key}`;
+}
+
+/** 校验 key 规范（不合法抛错） */
+export function assertValidKey(key: string): void {
+  if (!key || !KEY_RE.test(key)) {
+    throw new Error(`知识 key 必须为分层点分隔（如 project.module.attribute），仅允许字母数字._-，当前：${key}`);
+  }
+}
+
+/** 写入/覆盖一条知识（key 冲突默认覆盖，Agent 纠错场景直接替换） */
+export function kbSet(key: string, value: string, source?: string): KnowledgeEntry {
+  assertValidKey(key);
+  const entry: KnowledgeEntry = {
+    key,
+    value: value.trim(),
+    ...(source && source.trim() ? { source: source.trim() } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+  kvSet(keyOf(key), entry);
+  return entry;
+}
+
+/** 读取一条知识；不存在返回 null */
+export function kbGet(key: string): KnowledgeEntry | null {
+  return kvGet<KnowledgeEntry>(keyOf(key));
+}
+
+/** 删除一条知识 */
+export function kbDelete(key: string): boolean {
+  if (!kvGet(keyOf(key))) return false;
+  kvDelete(keyOf(key));
+  return true;
+}
+
+/** 列举知识（按前缀/模糊搜索；limit 上限） */
+export function kbList(opts: { q?: string; limit?: number } = {}): KnowledgeEntry[] {
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
+  const q = (opts.q ?? "").trim().toLowerCase();
+  const rows = kvListRaw(KB_PREFIX, 5000);
+  const out: KnowledgeEntry[] = [];
+  for (const r of rows) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (!e || typeof e.value !== "string") continue;
+      if (q) {
+        const hay = `${e.key} ${e.value} ${e.source ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) continue;
+      }
+      out.push(e);
+      if (out.length >= limit) break;
+    } catch {
+      // 损坏条目跳过
+    }
+  }
+  return out;
+}
+
+/** 批量写入（import 用；返回实际写入条数） */
+export function kbSetMany(items: { key: string; value: string; source?: string }[]): number {
+  let n = 0;
+  for (const it of items) {
+    try {
+      kbSet(it.key, it.value, it.source);
+      n++;
+    } catch {
+      // 单条 key 非法跳过（不影响整体）
+    }
+  }
+  return n;
+}
+
+/** 知识总数（供数据源展示） */
+export function kbCount(): number {
+  return kvListRaw(KB_PREFIX, 1).length;
+}
+
+// ---------- 知识库 ↔ 真实目录同步（Reasonix ACP 适配） ----------
+// Agent（Reasonix）通过标准 read_file/write_file 访问 /k/{key}，解析为 KB_ROOT_DIR/{key}；
+// Host 在会话前后把知识库同步为目录文件（读路径）并把目录变化写回知识库（写路径）。
+// 目录位于项目根 /.file/k（git 隔离），由服务端（ACP Host）精细控制。
+
+/** 全量同步：知识库 → KB_ROOT_DIR/（文件内容 = value 纯文本；陈旧文件删除）；返回写入数 */
+export function kbSyncToDir(): number {
+  const kDir = KB_ROOT_DIR;
+  try {
+    mkdirSync(kDir, { recursive: true });
+  } catch {
+    return 0;
+  }
+  let written = 0;
+  const entries = kbList({ limit: 5000 });
+  const desired = new Set<string>();
+  for (const e of entries) {
+    const f = join(kDir, e.key);
+    desired.add(e.key);
+    try {
+      if (!existsSync(f) || readFileSync(f, "utf8") !== e.value) {
+        writeFileSync(f, e.value, "utf8");
+        written++;
+      }
+    } catch {
+      // 单文件失败跳过
+    }
+  }
+  // 清理知识库中已不存在的陈旧文件
+  try {
+    for (const f of readdirSync(kDir)) {
+      if (!desired.has(f)) {
+        try {
+          unlinkSync(join(kDir, f));
+        } catch {
+          // 忽略
+        }
+      }
+    }
+  } catch {
+    // 目录不存在则跳过
+  }
+  return written;
+}
+
+/** 写回同步：KB_ROOT_DIR/ 变化 → 知识库（新增/变更 kbSet，删除 kbDelete）；返回变更数 */
+export function kbSyncFromDir(): number {
+  const kDir = KB_ROOT_DIR;
+  if (!existsSync(kDir)) return 0;
+  let changed = 0;
+  const seen = new Set<string>();
+  for (const f of readdirSync(kDir)) {
+    // key 规范校验（防目录穿越/非法 key 写入 KV）
+    if (!/^[a-zA-Z0-9._-]{1,120}$/.test(f)) continue;
+    seen.add(f);
+    const filePath = join(kDir, f);
+    let content: string;
+    try {
+      content = readFileSync(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    const current = kbGet(f);
+    if (!current || current.value !== content) {
+      kbSet(f, content, "agent-write");
+      changed++;
+    }
+  }
+  // Agent 删除的文件 → 知识库同步删除
+  for (const e of kbList({ limit: 5000 })) {
+    if (!seen.has(e.key)) {
+      kbDelete(e.key);
+      changed++;
+    }
+  }
+  return changed;
+}
+
+/**
+ * 知识问答：检索与问题相关条目 → 知识注入提示词 → LLM 回答。
+ * 检索策略：问题按分隔符拆词，取命中的条目（key 匹配优先，其次 value 包含）；
+ * 最多注入 topN 条。question 保留原文供 LLM 判断。
+ */
+export async function kbAsk(
+  question: string,
+  opts: { signal?: AbortSignal; topN?: number } = {},
+): Promise<KnowledgeAskResult | KnowledgeErrorResult> {
+  const q = question.trim();
+  if (!q) return { ok: false, message: "请输入问题" };
+  const topN = Math.min(Math.max(opts.topN ?? 6, 1), 20);
+
+  // 1) 检索：拆词（中英文/数字），收集相关条目
+  const tokens = q.toLowerCase().split(/[\s,，。.!！?？;；:：、/\\()（）[\]{}"']+/).filter((t) => t.length >= 2);
+  const all = kbList({ limit: 1000 });
+  const scored: { e: KnowledgeEntry; score: number }[] = [];
+  for (const e of all) {
+    const keyL = e.key.toLowerCase();
+    const valL = e.value.toLowerCase();
+    let score = 0;
+    if (tokens.some((t) => keyL.includes(t))) score += 5;
+    if (tokens.some((t) => valL.includes(t))) score += 1;
+    if (score > 0) scored.push({ e, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const used = scored.slice(0, topN).map((s) => s.e);
+
+  // 2) 组装知识上下文 + 提问
+  const knowledgeText =
+    used.length > 0
+      ? used.map((e) => `- [${e.key}]${e.source ? `（来源：${e.source}）` : ""}\n  ${e.value}`).join("\n")
+      : "（知识库中未检索到相关内容，请如实说明）";
+  const system = getPromptTemplate("knowledge.ask");
+  const userMsg = `【问题】\n${q}\n\n【知识库检索结果】\n${knowledgeText}`;
+
+  const result = await chat(
+    [
+      { role: "system", content: system },
+      { role: "user", content: userMsg },
+    ],
+    { temperature: 0.3, module: "knowledge.ask" },
+  );
+  if (!result.ok) return { ok: false, message: result.message };
+  return { ok: true, answer: result.content.trim(), used };
+}
+
+/**
+ * 知识内化：从 DeepSeek 分享对话提取事实知识入库。
+ * 链路：extractShare（对话原文）→ LLM 提取 {key,value} 事实列表 → 批量写入。
+ * 返回写入条数 + 提取结果；失败抛错（调用方兜底）。
+ */
+export async function kbImportFromChat(
+  url: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KnowledgeImportResult> {
+  const extracted = await extractShare(url);
+  if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
+    throw new Error(!extracted.ok && "message" in extracted ? extracted.message : "对话提取为空，请检查链接");
+  }
+  const text = extracted.messages
+    .map((m) => {
+      const c = Array.isArray(m.content) ? m.content.map((x) => x.text ?? "").join(" ") : String(m.content ?? "");
+      return `【${m.role === "user" ? "用户" : "助手"}】\n${c}`;
+    })
+    .join("\n\n")
+    .slice(0, 30000); // 截断防超长
+
+  const template = getPromptTemplate("knowledge.extract");
+  const result = await chat(
+    [
+      { role: "system", content: template },
+      { role: "user", content: text },
+    ],
+    { temperature: 0.2, json: true, module: "knowledge.import" },
+  );
+  if (!result.ok) throw new Error(result.message);
+
+  const parsed = robustJsonParse(result.content.trim());
+  const facts = (Array.isArray(parsed) ? parsed : [])
+    .filter((f): f is { key?: unknown; value?: unknown } => !!f && typeof f === "object")
+    .map((f) => ({
+      key: typeof f.key === "string" ? f.key.trim() : "",
+      value: typeof f.value === "string" ? f.value.trim() : "",
+      ...(typeof f.source === "string" && f.source.trim() ? { source: f.source.trim() } : {}),
+    }))
+    .filter((f) => f.key && f.value);
+
+  const source = extracted.title && extracted.title !== "Shared Conversation" ? extracted.title : extracted.shareId;
+  const imported = kbSetMany(facts.map((f) => ({ key: f.key, value: f.value, source: f.source ?? source })));
+  return { ok: true, imported, facts, title: extracted.title, shareId: extracted.shareId };
+}

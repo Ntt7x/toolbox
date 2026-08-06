@@ -505,6 +505,31 @@ const PROMPTS: PromptDef[] = [
     defaultTemplate: WATCHLIST_IMPORT_PROMPT,
     render: (t) => t,
   },
+  {
+    id: "knowledge.extract",
+    key: "prompt.knowledge.extract",
+    description: "知识库：从对话内容提取结构化事实（输出 JSON 数组 [{key,value,source?}]，key 分层点分隔）",
+    defaultTemplate:
+      "你是一个知识提取助手。请阅读用户提供的对话内容，提取其中有长期价值的技术事实/决策/配置/结论，输出 JSON 数组。\n" +
+      "规则：\n" +
+      "1. 每条事实 = { \"key\": \"分层点分隔标识符（如 project.module.attribute，仅字母数字._-）\", \"value\": \"事实内容（简洁完整的一句话）\" }；可选 source 字段说明出处。\n" +
+      "2. 只提取明确、可复用的结论；忽略寒暄、重复、过程性讨论。\n" +
+      "3. 若对话无有价值事实，输出空数组 []。\n" +
+      "4. 只输出 JSON 数组，不要任何其他文字。",
+    render: (t) => t,
+  },
+  {
+    id: "knowledge.ask",
+    key: "prompt.knowledge.ask",
+    description: "知识库：基于检索到的知识条目回答用户问题（问题与知识随 user 消息提供）",
+    defaultTemplate:
+      "你是知识库问答助手。用户会提供【问题】和【知识库检索结果】。\n" +
+      "请严格依据检索结果回答问题：\n" +
+      "1. 检索结果与问题相关时：直接给出准确回答，可引用知识条目的 key 标注来源。\n" +
+      "2. 检索结果无关或为空时：如实说明「知识库中没有相关信息」，不要编造。\n" +
+      "3. 回答简洁、结构化，中文输出。",
+    render: (t) => t,
+  },
 ];
 
 const byId = new Map(PROMPTS.map((p) => [p.id, p]));

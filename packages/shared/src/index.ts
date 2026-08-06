@@ -1292,5 +1292,68 @@ export interface MemoErrorResult {
 
 export type MemoResult = MemoListResult | MemoCreateResult | MemoDetailResult | MemoDeleteResult | MemoErrorResult;
 
+// ============================================================
+// 知识库（knowledge）：SQLite KV 精确存储 + LLM 提取内化/问答
+// ============================================================
+
+/** 知识条目 */
+export interface KnowledgeEntry {
+  /** 分层点分隔 key（如 project.module.attribute） */
+  key: string;
+  /** 事实内容 */
+  value: string;
+  /** 来源（对话分享 id / 标题 / 用户标注） */
+  source?: string;
+  updatedAt: string;
+}
+
+/** 写入请求 */
+export interface KnowledgePutRequest {
+  key: string;
+  value: string;
+  source?: string;
+}
+
+/** 列表/搜索响应 */
+export interface KnowledgeListResponse {
+  ok: true;
+  entries: KnowledgeEntry[];
+  total: number;
+}
+
+/** Chat 分享导入请求（内化） */
+export interface KnowledgeImportRequest {
+  url: string;
+}
+
+/** Chat 分享导入结果 */
+export interface KnowledgeImportResult {
+  ok: true;
+  imported: number;
+  facts: { key: string; value: string; source?: string }[];
+  title: string;
+  shareId: string;
+}
+
+/** 知识问答请求 */
+export interface KnowledgeAskRequest {
+  question: string;
+}
+
+/** 知识问答结果 */
+export interface KnowledgeAskResult {
+  ok: true;
+  answer: string;
+  /** 命中的知识条目（供前端展示依据） */
+  used?: KnowledgeEntry[];
+}
+
+export interface KnowledgeErrorResult {
+  ok: false;
+  message: string;
+}
+
+export type KnowledgeResult = KnowledgeListResponse | KnowledgeImportResult | KnowledgeAskResult | KnowledgeErrorResult;
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
