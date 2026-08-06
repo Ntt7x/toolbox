@@ -134,16 +134,18 @@ body {
   border-radius: 6px;
 }
 
-/* 输入框 */
+/* 输入框（最小可读高度：≥40px 触控/视觉舒适） */
 .input,
 textarea.input {
   width: 100%;
-  padding: 0.45rem 0.7rem;
-  font-size: 0.82rem;
+  padding: 0.6rem 0.85rem;
+  min-height: 40px;
+  font-size: 0.9rem;
+  line-height: 1.6;
   color: var(--text);
   background: #fff;
   border: 1px solid #cbd5e1;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 .input:focus,

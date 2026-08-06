@@ -11,8 +11,9 @@ import { ErrorCard, PageHeader } from "../ui";
 import type { KnowledgeAskResult, KnowledgeEntry, KnowledgeImportResult } from "@toolbox/shared";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "1rem", marginBottom: "1rem" };
-const btn: React.CSSProperties = { padding: "0.45rem 1rem", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: "0.85rem" };
-const input: React.CSSProperties = { flex: 1, padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff" };
+const btn: React.CSSProperties = { padding: "0.55rem 1.1rem", background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", fontWeight: 500, transition: "background 150ms ease" };
+const input: React.CSSProperties = { flex: 1, padding: "0.65rem 0.85rem", border: "1px solid #cbd5e1", borderRadius: 10, fontSize: "0.9rem", background: "#fff", transition: "border-color 150ms ease, box-shadow 150ms ease" };
+const fieldLabel: React.CSSProperties = { fontSize: "0.8rem", fontWeight: 600, color: "#475569", marginBottom: "0.35rem" };
 
 /** 判断剪贴板文本是否符合 DeepSeek 分享链接 / share id 格式 */
 function isShareInput(text: string): boolean {
@@ -114,9 +115,10 @@ export default function MedicalKbTool() {
       {/* 知识导入 */}
       <div style={card}>
         <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>📥 导入知识（Chat 分享链接，支持批量）</div>
+        <div style={fieldLabel}>粘贴分享链接（每行一个）</div>
         <textarea
-          style={{ ...input, height: 64, resize: "vertical", fontFamily: "inherit", lineHeight: 1.7 }}
-          placeholder={"粘贴 DeepSeek 分享链接，每行一个（支持多条批量导入）：\nhttps://chat.deepseek.com/share/xxx\nhttps://chat.deepseek.com/share/yyy"}
+          style={{ ...input, width: "100%", height: 104, resize: "vertical", fontFamily: "inherit", lineHeight: 1.7 }}
+          placeholder={"https://chat.deepseek.com/share/xxx\nhttps://chat.deepseek.com/share/yyy"}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void doImport(); }}
@@ -157,6 +159,7 @@ export default function MedicalKbTool() {
       {/* 知识问答 */}
       <div style={card}>
         <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>💬 知识问答（仅检索 medical 实例）</div>
+        <div style={fieldLabel}>输入你的问题</div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input style={input} placeholder="如：感冒初发期应该用什么方子？" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doAsk(); }} />
           <button style={btn} onClick={() => void doAsk()} disabled={askTask.running} type="button">

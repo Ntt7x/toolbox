@@ -304,6 +304,21 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   业务不得反向依赖；LLM 三模式（direct/chatSession/reasonix）与 SQLite 数据层为显式带标签边。
 - **验证**：改完跑 `/api/dependency-graph` 看节点/边数量与新增模块是否出现。
 
+### 7.3 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
+
+所有页面交互控件遵守以下最小尺寸与细节（用户舒适度优先）：
+
+1. **输入框/文本域**：`padding ≥ 0.6rem 0.85rem`、`min-height ≥ 40px`、`font-size ≥ 0.9rem`、
+   `border-radius 10px`、边框 `#cbd5e1` + focus ring（`0 0 0 3px rgba(37,99,235,0.12)`）。
+   多行文本域高度 ≥ 96px（约 4 行），`line-height 1.7`。
+2. **按钮**：`padding ≥ 0.5rem 1rem`、`font-size ≥ 0.86rem`、圆角 ≥ 10px；主按钮品牌蓝 +
+   阴影 + hover 反馈；禁用态 opacity 0.55。
+3. **表单结构**：字段用 `.field-label`（0.8rem/600/深灰）标注，输入框与标签间距 ≥ 0.3rem；
+   不要只靠 placeholder 表达字段含义（placeholder 会消失，标签常驻）。
+4. **通用原则**：可读性优先——正文 ≥ 0.8rem、表格 ≥ 0.8rem；可点击元素有 hover 反馈；
+   卡片间距 ≥ 1rem；避免过小点击区（≥ 28px 高度）。
+5. 优先复用 `styles.css` 的 `.input`/`.btn`/`.field-label`/`.card` 工具类；内联样式不得低于上述最小尺寸。
+
 ## 8. 历史进度记录（必须遵守）
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。
