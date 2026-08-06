@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "../api";
+import Modal from "../Modal";
 import type { KnowledgeDomainMeta, KnowledgeInstanceInfo, VirtualKb } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -83,6 +84,11 @@ export default function KnowledgeHubTool() {
   const [nvName, setNvName] = useState("");
   const [nvDesc, setNvDesc] = useState("");
   const [nvSelDomains, setNvSelDomains] = useState<string[]>([]);
+  // 删除确认 Modal（输入名称精准确认）
+  const [delTarget, setDelTarget] = useState<KbEntry | null>(null);
+  const [delTyped, setDelTyped] = useState("");
+  // 医学模板重置确认 Modal
+  const [seedAsk, setSeedAsk] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -200,10 +206,13 @@ export default function KnowledgeHubTool() {
   };
 
   const seedMedical = async () => {
-    const hasCustom = !!tplAsk || !!tplExtract;
-    if (hasCustom && !confirm("当前领域已有自定义模板，重置将覆盖为内置医学模板，确定继续？")) return;
+    if ((!!tplAsk || !!tplExtract) && !seedAsk) {
+      setSeedAsk(true);
+      return;
+    }
+    setSeedAsk(false);
     try {
-      await api.knowledgeHubSeedMedical(hasCustom);
+      await api.knowledgeHubSeedMedical(!!tplAsk || !!tplExtract);
       setCfgMsg("✅ 已初始化内置医学模板");
       setTimeout(() => setCfgMsg(""), 3000);
       await load();
@@ -267,18 +276,18 @@ export default function KnowledgeHubTool() {
   }, [ov]);
   const domainCount = (name: string) => ov.instances.find((i) => i.instance === name)?.count ?? 0;
 
-  // ---------- 删除知识库（输入名称精准确认，防误删） ----------
-  const delEntry = async (e: KbEntry) => {
-    const typed = prompt(
-      e.type === "domain"
-        ? `删除领域知识库「${e.name}」将清空其全部 ${e.count} 条知识，且不可恢复。\n请输入名称「${e.name}」确认删除：`
-        : `删除虚拟知识库「${e.name}」仅移除组合配置，不影响领域库数据。\n请输入名称「${e.name}」确认删除：`,
-      "",
-    );
-    if (typed?.trim() !== e.name) {
-      if (typed !== null) setErr("名称不匹配，已取消删除");
+  // ---------- 删除知识库（Modal 输入名称精准确认，防误删） ----------
+  const confirmDelete = async () => {
+    if (!delTarget) return;
+    if (delTyped.trim() !== delTarget.name) {
+      setErr("名称不匹配，已取消删除");
+      setDelTarget(null);
+      setDelTyped("");
       return;
     }
+    const e = delTarget;
+    setDelTarget(null);
+    setDelTyped("");
     try {
       if (e.type === "domain") {
         const r = await api.knowledgeHubDeleteDomain(e.name);
@@ -306,7 +315,7 @@ export default function KnowledgeHubTool() {
       {/* 统一知识库列表 */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
-          <h4 style={{ margin: 0 }}>🗂️ 我的知识库</h4>
+          <h4 style={{ margin: 0 }}>🗂️ 知识库列表</h4>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <button style={{ ...btn, background: "#10b981", fontSize: "0.8rem", padding: "0.4rem 0.9rem" }} onClick={() => setShowNew(showNew === "domain" ? "" : "domain")}>
               ＋ 新建领域库
@@ -368,14 +377,14 @@ export default function KnowledgeHubTool() {
           {entries.map((e) => {
             const on = selName === e.name;
             return (
+              <div key={`${e.type}-${e.name}`}>
               <div
-                key={`${e.type}-${e.name}`}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: "0.8rem",
                   border: `1px solid ${on ? "#3b82f6" : "#e2e8f0"}`,
-                  borderRadius: 10,
+                  borderRadius: on ? "10px 10px 0 0" : 10,
                   padding: "0.7rem 1rem",
                   cursor: "pointer",
                   background: on ? "#f0f7ff" : "#fff",
@@ -390,86 +399,138 @@ export default function KnowledgeHubTool() {
                 <span style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: "auto" }}>{e.count} 条</span>
                 <button
                   style={{ fontSize: "0.75rem", padding: "0.2rem 0.6rem", borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer" }}
-                  onClick={(ev) => { ev.stopPropagation(); void delEntry(e); }}
+                  onClick={(ev) => { ev.stopPropagation(); setDelTarget(e); setDelTyped(""); }}
                   title="删除（需输入名称确认）"
                 >
                   🗑️
                 </button>
               </div>
-            );
+              {/* 选中行下方原地展开详情功能区 */}
+              {on && (
+                <div style={{ marginTop: "0.5rem", paddingTop: "0.8rem", borderTop: "1px dashed #cbd5e1" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
+                    {e.type === "virt" ? (
+                      <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                        组成：{e.virt.domains.map((d) => `${d}(${domainCount(d)})`).join("、")}
+                      </span>
+                    ) : (
+                      e.meta?.desc && <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{e.meta.desc}</span>
+                    )}
+                  </div>
+                  {/* 问答 */}
+                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem" }}>
+                    <input style={input} placeholder={`向「${e.name}」提问…`} value={askQ} onChange={(ev) => setAskQ(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void ask(); }} />
+                    <button style={btn} onClick={() => void ask()} disabled={busy}>🔍 问答</button>
+                  </div>
+                  {askRouted && (
+                    <div style={{ fontSize: "0.8rem", color: "#6d28d9", marginBottom: "0.4rem" }}>
+                      ⚡ 自动路由：该问题已匹配到「{askRouted}」领域，仅在该领域检索（更聚焦、更省）
+                    </div>
+                  )}
+                  {askA && <div style={{ whiteSpace: "pre-wrap", background: "#fff", borderRadius: 8, padding: "0.8rem 1rem", marginBottom: "0.8rem", lineHeight: 1.7, border: "1px solid #e2e8f0" }}>{askA}</div>}
+                  {/* 导入 */}
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <input style={input} placeholder="Chat 分享链接（导入此知识库）…" value={importUrl} onChange={(ev) => setImportUrl(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void doImport(); }} />
+                    <button style={btn} onClick={() => void doImport()} disabled={busy}>📥 导入</button>
+                  </div>
+                  {importMsg && <div style={{ color: "#0e7490", marginTop: "0.5rem", fontSize: "0.85rem" }}>{importMsg}</div>}
+                  {/* 领域库配置（折叠） */}
+                  {e.type === "domain" && (
+                    <details style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.7rem" }}>
+                      <summary style={{ cursor: "pointer", fontSize: "0.83rem", color: "#475569", fontWeight: 600 }}>⚙️ 领域配置（描述 / 关键词 / 模板）</summary>
+                      <div style={{ marginTop: "0.7rem" }}>
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
+                          <input style={{ ...input, maxWidth: 320 }} placeholder="领域描述" value={metaDesc} onChange={(ev) => setMetaDesc(ev.target.value)} />
+                          <input style={{ ...input }} placeholder="匹配关键词（逗号分隔）" value={metaKeywords} onChange={(ev) => setMetaKeywords(ev.target.value)} />
+                        </div>
+                        {e.name === "medical" && (
+                          <button style={{ ...btn, background: "#10b981", fontSize: "0.76rem", padding: "0.3rem 0.7rem", marginBottom: "0.6rem" }} onClick={() => void seedMedical()}>
+                            🔄 重置为内置医学模板
+                          </button>
+                        )}
+                        <div style={{ display: "grid", gap: "0.6rem" }}>
+                          <div>
+                            <div style={{ fontSize: "0.8rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>问答模板（system；留空用通用）</div>
+                            <textarea style={{ width: "100%", minHeight: 70, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplAsk} onChange={(ev) => setTplAsk(ev.target.value)} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: "0.8rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>导入提取模板（system；留空用通用）</div>
+                            <textarea style={{ width: "100%", minHeight: 70, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplExtract} onChange={(ev) => setTplExtract(ev.target.value)} />
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginTop: "0.6rem" }}>
+                          <button style={btn} onClick={() => void saveCfg()}>💾 保存配置</button>
+                          {cfgMsg && <span style={{ color: "#0e7490", fontSize: "0.83rem" }}>{cfgMsg}</span>}
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+          );
           })}
         </div>
       </div>
 
-      {/* 统一使用区 */}
-      {selected && (
-        <div style={card}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
-            <h4 style={{ margin: 0, fontSize: "1rem" }}>
-              {selected.type === "virt" ? "🧩" : "🏷️"} {selected.name}
-            </h4>
-            {selected.type === "virt" && (
-              <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                组成：{selected.virt.domains.map((d) => `${d}(${ov.instances.find((i) => i.instance === d)?.count ?? 0})`).join("、")}
-              </span>
+      {/* 知识库列表底部帮助 */}
+      <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginTop: "0.4rem" }}>
+        💡 点击知识库行可在下方展开 问答/导入/配置 功能区；点击另一行切换；删除需输入名称确认。
+      </div>
+
+      {/* 删除确认 Modal */}
+      <Modal
+        open={!!delTarget}
+        title={delTarget ? `🗑️ 删除${delTarget.type === "virt" ? "虚拟" : "领域"}知识库「${delTarget.name}」` : ""}
+        onClose={() => { setDelTarget(null); setDelTyped(""); }}
+        footer={
+          <>
+            <button style={{ ...btn, background: "#64748b" }} onClick={() => { setDelTarget(null); setDelTyped(""); }}>取消</button>
+            <button style={{ ...btn, background: "#ef4444" }} onClick={() => void confirmDelete()}>确认删除</button>
+          </>
+        }
+      >
+        {delTarget && (
+          <div>
+            {delTarget.type === "domain" ? (
+              <p style={{ margin: "0 0 0.8rem", color: "#b91c1c" }}>
+                将清空该领域全部 <b>{delTarget.count}</b> 条知识，且<b>不可恢复</b>。
+              </p>
+            ) : (
+              <p style={{ margin: "0 0 0.8rem", color: "#64748b" }}>
+                仅移除虚拟库组合配置，不影响领域库数据。
+              </p>
             )}
-            {selected.type === "domain" && selected.meta?.desc && (
-              <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{selected.meta.desc}</span>
+            <p style={{ margin: "0 0 0.5rem" }}>请输入名称「<b>{delTarget.name}</b>」确认删除：</p>
+            <input
+              style={{ ...input, width: "100%" }}
+              placeholder={delTarget.name}
+              value={delTyped}
+              onChange={(e) => setDelTyped(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void confirmDelete(); }}
+              autoFocus
+            />
+            {delTyped && delTyped.trim() !== delTarget.name && (
+              <div style={{ color: "#dc2626", fontSize: "0.8rem", marginTop: "0.4rem" }}>名称不匹配，无法删除</div>
             )}
           </div>
+        )}
+      </Modal>
 
-          {/* 问答（统一） */}
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem" }}>
-            <input style={input} placeholder={`向「${selected.name}」提问…`} value={askQ} onChange={(e) => setAskQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} />
-            <button style={btn} onClick={() => void ask()} disabled={busy}>🔍 问答</button>
-          </div>
-          {askRouted && (
-            <div style={{ fontSize: "0.8rem", color: "#6d28d9", marginBottom: "0.4rem" }}>
-              ⚡ 自动路由：该问题已匹配到「{askRouted}」领域，仅在该领域检索（更聚焦、更省）
-            </div>
-          )}
-          {askA && <div style={{ whiteSpace: "pre-wrap", background: "#f8fafc", borderRadius: 8, padding: "0.8rem 1rem", marginBottom: "0.9rem", lineHeight: 1.7 }}>{askA}</div>}
-
-          {/* 导入（统一） */}
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <input style={input} placeholder="Chat 分享链接（导入此知识库）…" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doImport(); }} />
-            <button style={btn} onClick={() => void doImport()} disabled={busy}>📥 导入</button>
-          </div>
-          {importMsg && <div style={{ color: "#0e7490", marginTop: "0.5rem", fontSize: "0.85rem" }}>{importMsg}</div>}
-
-          {/* 领域库配置（折叠） */}
-          {selected.type === "domain" && (
-            <details style={{ marginTop: "1rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
-              <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "#475569", fontWeight: 600 }}>⚙️ 领域配置（描述 / 关键词 / 模板）</summary>
-              <div style={{ marginTop: "0.8rem" }}>
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
-                  <input style={{ ...input, maxWidth: 340 }} placeholder="领域描述" value={metaDesc} onChange={(e) => setMetaDesc(e.target.value)} />
-                  <input style={{ ...input }} placeholder="匹配关键词（逗号分隔）" value={metaKeywords} onChange={(e) => setMetaKeywords(e.target.value)} />
-                </div>
-                {selected.name === "medical" && (
-                  <button style={{ ...btn, background: "#10b981", fontSize: "0.78rem", padding: "0.35rem 0.8rem", marginBottom: "0.6rem" }} onClick={() => void seedMedical()}>
-                    🔄 重置为内置医学模板
-                  </button>
-                )}
-                <div style={{ display: "grid", gap: "0.6rem" }}>
-                  <div>
-                    <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.3rem", color: "#475569" }}>问答模板（system；留空用通用）</div>
-                    <textarea style={{ width: "100%", minHeight: 80, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplAsk} onChange={(e) => setTplAsk(e.target.value)} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.3rem", color: "#475569" }}>导入提取模板（system；留空用通用）</div>
-                    <textarea style={{ width: "100%", minHeight: 80, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplExtract} onChange={(e) => setTplExtract(e.target.value)} />
-                  </div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginTop: "0.6rem" }}>
-                  <button style={btn} onClick={() => void saveCfg()}>💾 保存配置</button>
-                  {cfgMsg && <span style={{ color: "#0e7490", fontSize: "0.85rem" }}>{cfgMsg}</span>}
-                </div>
-              </div>
-            </details>
-          )}
-        </div>
-      )}
+      {/* 医学模板重置确认 Modal */}
+      <Modal
+        open={seedAsk}
+        title="🔄 重置为内置医学模板"
+        onClose={() => setSeedAsk(false)}
+        footer={
+          <>
+            <button style={{ ...btn, background: "#64748b" }} onClick={() => setSeedAsk(false)}>取消</button>
+            <button style={btn} onClick={() => void seedMedical()}>确认重置</button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>当前领域已有自定义模板，重置将<b>覆盖</b>为内置医学模板，确定继续？</p>
+      </Modal>
     </div>
   );
 }

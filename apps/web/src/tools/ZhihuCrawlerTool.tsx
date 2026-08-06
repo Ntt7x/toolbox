@@ -5,6 +5,7 @@
 // ============================================================
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import Modal from "../Modal";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import type { ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlRequest, ZhihuComment, ZhihuUserInfo } from "@toolbox/shared";
 import { card, PageHeader } from "../ui";
@@ -369,7 +370,13 @@ export default function ZhihuCrawlerTool() {
         {userErr && <p style={{ color: "#b91c1c", fontSize: "0.8rem", margin: "0.4rem 0 0" }}>{userErr}</p>}
         {user?.ok && (
           <div style={{ fontSize: "0.85rem", marginTop: "0.5rem", color: "#334155" }}>
-            <b>{user.name}</b>
+            {user.urlToken && user.urlToken !== "link" ? (
+              <a href={`https://www.zhihu.com/people/${user.urlToken}`} target="_blank" rel="noreferrer" style={{ fontWeight: 700, color: "#1d4ed8" }}>
+                🔗 {user.name}
+              </a>
+            ) : (
+              <b>{user.name}</b>
+            )}
             {user.headline ? ` · ${user.headline}` : ""}
             <span style={{ color: "#64748b", marginLeft: "0.5rem" }}>
               回答 {user.answerCount ?? "?"} · 文章 {user.articleCount ?? "?"} · 想法 {user.pinCount ?? "?"}
@@ -561,14 +568,23 @@ export default function ZhihuCrawlerTool() {
               ))}
             </tbody>
           </table>
-          {viewItems && (
-            <div style={{ marginTop: "0.8rem", borderTop: "1px solid #e2e8f0", paddingTop: "0.8rem" }}>
-              <h4 style={{ margin: "0 0 0.6rem", fontSize: "0.9rem" }}>📄 历史结果（{viewItems.length} 条）</h4>
-              <ResultItems items={viewItems} />
-            </div>
-          )}
         </div>
       )}
+
+      {/* 历史结果查看 Modal */}
+      <Modal
+        open={!!viewItems}
+        title={`📄 历史结果${viewItems ? `（${viewItems.length} 条）` : ""}`}
+        width={720}
+        onClose={() => { setViewItems(null); setViewResultId(null); }}
+        footer={<button style={{ padding: "0.5rem 1.1rem", borderRadius: 8, border: "none", background: "#3b82f6", color: "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" }} onClick={() => { setViewItems(null); setViewResultId(null); }}>关闭</button>}
+      >
+        {viewItems && (
+          <div style={{ maxHeight: "65vh", overflowY: "auto" }}>
+            <ResultItems items={viewItems} />
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
