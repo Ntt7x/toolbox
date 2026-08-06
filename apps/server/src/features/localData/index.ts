@@ -7,7 +7,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { API_PREFIX, type LocalDataResult } from "@toolbox/shared";
-import { listDataSources } from "../../core/dataRegistry.js";
+import { listDataSources, unmarkedKvEntries } from "../../core/dataRegistry.js";
 import { kvCount, kvDelete, kvGet, kvHas, kvListRaw, kvSet } from "../../core/kvStore.js";
 import { deleteRows, queryRows } from "../../core/tableStore.js";
 
@@ -65,7 +65,8 @@ export function register(app: Hono): void {
     const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 200) || 200, 1), 500);
     const offset = Math.max(Number(c.req.query("offset") ?? 0) || 0, 0);
     if (source !== undefined) {
-      const rows = kvListRaw(source, 2000);
+      // 「未标记」源：聚合所有未注册前缀的 key（不能按前缀 kvListRaw）
+      const rows = source === "未标记" || source === "(未标记)" ? unmarkedKvEntries() : kvListRaw(source, 2000);
       let filtered = rows;
       if (search) {
         filtered = rows.filter((r) => r.key.toLowerCase().includes(search) || r.value.toLowerCase().includes(search));
@@ -75,7 +76,7 @@ export function register(app: Hono): void {
       const entries = page.map((r) => {
         let preview = r.value;
         if (preview.length > 200) preview = `${preview.slice(0, 200)}…`;
-        return { key: r.key, updatedAt: r.updated_at, preview, size: Buffer.byteLength(r.value, "utf8") };
+        return { key: r.key, updatedAt: (r as { updated_at?: string }).updated_at, preview, size: Buffer.byteLength(r.value, "utf8") };
       });
       return c.json({ ok: true, source: { kind: "kv", name: source }, entries, total, offset, limit });
     }

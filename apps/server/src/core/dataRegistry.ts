@@ -76,3 +76,10 @@ export function listDataSources(): LocalDataSource[] {
 
   return out;
 }
+
+/** 未标记 KV 的全部条目（未注册前缀的 key+原始值，供「未标记」源查询；不解析 JSON 保持与 kvListRaw 一致） */
+export function unmarkedKvEntries(): { key: string; value: string }[] {
+  const registeredKvPrefixes = registered.filter((m) => m.kind === "kv").map((m) => m.name);
+  if (registeredKvPrefixes.length === 0) return [];
+  return kvListRaw("", 200000).filter((r) => !registeredKvPrefixes.some((p) => r.key.startsWith(p)));
+}
