@@ -14,6 +14,7 @@ import {
   listDomains,
   getDomainMeta,
   setDomainMeta,
+  createDomain,
   seedMedicalTemplates,
   askVirtKb,
   importToVirtKb,
@@ -50,7 +51,7 @@ export function register(app: Hono): void {
     const question = String(body.question ?? "").trim();
     if (!question) return c.json({ ok: false, message: "请输入问题" }, 400);
     const r = await askVirtKb(c.req.param("name") ?? "", question);
-    return c.json(r.ok ? { ok: true, answer: r.answer } : { ok: false, message: r.message }, r.ok ? 200 : 400);
+    return c.json(r.ok ? { ok: true, answer: r.answer, ...(r.routed ? { routed: r.routed } : {}) } : { ok: false, message: r.message }, r.ok ? 200 : 400);
   });
 
   // 虚拟库导入（自动匹配领域）
@@ -87,6 +88,17 @@ export function register(app: Hono): void {
     } catch (e) {
       return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, 400);
     }
+  });
+
+  // 新建领域知识库（显式建库；空库也可先建后导入）
+  route.post("/domain", async (c: Context) => {
+    const body = await c.req.json().catch(() => ({}));
+    const r = createDomain(String(body.name ?? ""), {
+      desc: body.desc ? String(body.desc) : undefined,
+      keywords: Array.isArray(body.keywords) ? body.keywords.map((k: unknown) => String(k)) : undefined,
+    });
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json({ ok: true, domain: r.domain });
   });
 
   // 领域元数据（描述/关键词/领域特化模板，供自动匹配导入与领域问答）

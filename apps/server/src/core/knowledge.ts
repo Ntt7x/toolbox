@@ -16,7 +16,7 @@ import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import type { KnowledgeAskResult, KnowledgeEntry, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
 
-/** 领域模板解析（读取 kbDomain:<instance> 的 ask/extract 模板；未配置返回 undefined → 调用方回退 medical/通用） */
+/** 领域模板解析（避免与 knowledgeHub 循环依赖，内联读取 kbDomain:<instance>） */
 function getInstanceTemplate(kind: "ask" | "extract", instance?: string): string | undefined {
   if (instance) {
     const meta = kvGet<{ askTemplate?: string; extractTemplate?: string }>(`kbDomain:${instance}`);

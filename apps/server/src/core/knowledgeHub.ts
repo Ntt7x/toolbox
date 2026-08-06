@@ -100,6 +100,20 @@ export function setDomainMeta(name: string, meta: { desc?: string; keywords?: st
   return d;
 }
 
+/** 新建领域知识库：创建领域元数据（显式建库；空库也可先建后导入） */
+export function createDomain(name: string, meta: { desc?: string; keywords?: string[] } = {}): { ok: boolean; message?: string; domain?: DomainMeta } {
+  const n = name.trim();
+  if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(n)) return { ok: false, message: "领域名称仅允许中英文/数字/._-" };
+  if (getDomainMeta(n)) return { ok: false, message: `领域「${n}」已存在` };
+  const d: DomainMeta = {
+    name: n,
+    desc: meta.desc?.trim() ?? "",
+    keywords: meta.keywords?.map((k) => k.trim()).filter(Boolean) ?? [],
+  };
+  kvSet(`${DOMAIN_PREFIX}${n}`, d);
+  return { ok: true, domain: d };
+}
+
 export function listDomains(): DomainMeta[] {
   const out: DomainMeta[] = [];
   for (const r of kvListRaw(DOMAIN_PREFIX, 200)) {
@@ -138,17 +152,24 @@ export function getInstanceTemplate(kind: "ask" | "extract", instance?: string):
   return undefined;
 }
 
-// ---------- 虚拟库聚合问答（多实例检索 → 单次 LLM） ----------
+// ---------- 虚拟库聚合问答（综合匹配：先领域路由 → 只检索最相关领域；未路由 → 全领域降级） ----------
 export async function askVirtKb(
   name: string,
   question: string,
   opts: { signal?: AbortSignal; topN?: number; module?: string } = {},
-): Promise<{ ok: boolean; answer?: string; message?: string }> {
+): Promise<{ ok: boolean; answer?: string; routed?: string; message?: string }> {
   const virt = getVirtKb(name);
   if (!virt) return { ok: false, message: `虚拟知识库「${name}」不存在` };
   if (virt.domains.length === 0) return { ok: false, message: "虚拟知识库未包含任何领域库" };
-  const r = await kbAsk(question, { ...opts, instances: virt.domains, module: opts.module ?? "knowledge-hub.ask" });
-  return r.ok ? { ok: true, answer: r.answer } : { ok: false, message: r.message };
+  // 综合匹配（低成本，纯静态）：问题关键词路由到最相关领域 → 只检索该领域（省 token、回答聚焦）；
+  // 无关键词命中 → 降级全领域检索（保证覆盖面）
+  const domains = virt.domains
+    .map((d) => ({ name: d, keywords: getDomainMeta(d)?.keywords ?? [] }))
+    .filter((d) => d.keywords.length > 0);
+  const routed = domains.length > 0 ? matchDomain(question, domains)?.domain : undefined;
+  const instances = routed ? [routed] : virt.domains;
+  const r = await kbAsk(question, { ...opts, instances, module: opts.module ?? "knowledge-hub.ask" });
+  return r.ok ? { ok: true, answer: r.answer, ...(routed ? { routed } : {}) } : { ok: false, message: r.message };
 }
 
 // ---------- 虚拟库导入（自动匹配领域） ----------

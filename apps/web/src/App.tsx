@@ -14,7 +14,6 @@ import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
-import RehabMedicalTool from "./tools/RehabMedicalTool";
 import KnowledgeHubTool from "./tools/KnowledgeHubTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
@@ -33,7 +32,6 @@ const toolPages: Record<string, ComponentType> = {
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
-  "rehab-medical": RehabMedicalTool,
   "knowledge-hub": KnowledgeHubTool,
 };
 
