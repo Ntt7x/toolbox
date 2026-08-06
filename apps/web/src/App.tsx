@@ -17,6 +17,7 @@ import RehabMedicalTool from "./tools/RehabMedicalTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
+import AgentSessions from "./settings/AgentSessions";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
@@ -47,6 +48,7 @@ const MENU_GROUPS: MenuGroup[] = [
     label: "设置",
     staticItems: [
       { name: "LLM 管理", path: "/settings/llm", icon: "🤖" },
+      { name: "Agent 会话管理", path: "/settings/agent-sessions", icon: "💬" },
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
@@ -342,6 +344,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
             <Route path="/settings/llm" element={<LlmSettings />} />
+            <Route path="/settings/agent-sessions" element={<AgentSessions />} />
             <Route path="/settings/local-data" element={<LocalData />} />
             <Route path="/settings/memo" element={<MemoTool />} />
             {tools.map((t) => (

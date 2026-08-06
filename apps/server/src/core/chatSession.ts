@@ -294,6 +294,13 @@ export function deleteChatSession(id: string): boolean {
   return true;
 }
 
+/** 会话详情（含 system/history；归档态返回折叠摘要） */
+export function getChatSessionDetail(id: string): (ChatSession & { turns: number }) | null {
+  const s = loadSession(id);
+  if (!s) return null;
+  return { ...s, turns: Math.round(s.history.length / 2) };
+}
+
 // 复用 kvListRaw（前缀列举）
 function kvListAll(prefix: string): { key: string; value: unknown }[] {
   return kvListRaw(prefix, 500).map((r) => {

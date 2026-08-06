@@ -623,6 +623,80 @@ export interface LlmBalanceResult {
 }
 
 // ============================================================
+// Agent 会话管理（chatSession 模式 2 / reasonix 模式 3）
+// ============================================================
+
+/** 会话列表项（两类统一形态） */
+export interface AgentSessionListItem {
+  id: string;
+  module: string;
+  status: "active" | "archived";
+  createdAt: number;
+  lastAt: number;
+  /** 已交换轮数（chatSession）；reasonix 无历史轮数，恒 0 */
+  turns: number;
+  /** system 提示词预览（≤60 字，reasonix 无） */
+  systemPreview?: string;
+  /** 会话工作目录（reasonix） */
+  cwd?: string;
+}
+
+export interface AgentSessionsResult {
+  ok: boolean;
+  chat: AgentSessionListItem[];
+  reasonix: AgentSessionListItem[];
+}
+
+export interface AgentSessionCreateRequest {
+  /** 归属模块（用量统计） */
+  module: string;
+  /** system 提示词（chatSession 必填） */
+  system?: string;
+  search?: boolean;
+  json?: boolean;
+  temperature?: number;
+  /** reasonix 工作目录 */
+  cwd?: string;
+}
+
+export interface AgentSessionCreateResult {
+  ok: boolean;
+  id?: string;
+  message?: string;
+}
+
+/** chatSession 详情（含完整 history） */
+export interface ChatSessionDetail {
+  ok: boolean;
+  id?: string;
+  module?: string;
+  system?: string;
+  history?: LlmChatMessage[];
+  turns?: number;
+  droppedTurns?: number;
+  archived?: boolean;
+  summary?: string;
+  createdAt?: number;
+  lastAt?: number;
+  message?: string;
+}
+
+export interface AgentSessionAskResult {
+  ok: boolean;
+  /** 回答内容 */
+  content?: string;
+  /** 用量（含缓存命中） */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+    estimatedCost?: number;
+  };
+  message?: string;
+}
+
+// ============================================================
 // DeepSeek 分享链接对话提取（deepseek-share）
 // ============================================================
 

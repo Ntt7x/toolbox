@@ -23,6 +23,11 @@
   type KnowledgeEntry,
   type KnowledgeImportResult,
   type LlmUsageSummary,
+  type AgentSessionsResult,
+  type AgentSessionCreateRequest,
+  type AgentSessionCreateResult,
+  type AgentSessionAskResult,
+  type ChatSessionDetail,
   type LocalDataResult,
   type LocalDataUpdateRequest,
   type PromptDetailResult,
@@ -230,6 +235,20 @@ export const api = {
   /** DeepSeek 平台余额（API key 授权） */
   llmBalance: () => request<LlmBalanceResult>("/llm/balance"),
   llmChat: (req: LlmChatRequest) => request<LlmChatResult>("/llm/chat", jsonInit("POST", req)),
+  // Agent 会话管理（chatSession / reasonix）
+  agentSessions: () => request<AgentSessionsResult>("/llm/agent-sessions"),
+  agentSessionCreate: (kind: "chat" | "reasonix", req: AgentSessionCreateRequest) =>
+    request<AgentSessionCreateResult>(`/llm/agent-sessions/${kind}`, jsonInit("POST", req)),
+  agentSessionDetail: (id: string) => request<ChatSessionDetail>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}`),
+  agentSessionRestore: (id: string) =>
+    request<{ ok: boolean; message: string }>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
+  agentSessionAsk: (kind: "chat" | "reasonix", id: string, text: string) =>
+    request<AsyncTaskResult<AgentSessionAskResult>>(
+      `/llm/agent-sessions/${kind}/${encodeURIComponent(id)}/ask`,
+      jsonInit("POST", kind === "chat" ? { message: text } : { text }),
+    ),
+  agentSessionDelete: (kind: "chat" | "reasonix", id: string) =>
+    request<{ ok: boolean; message: string }>(`/llm/agent-sessions/${kind}/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   // 提示词（统一存储于「本地设置数据」）
   prompts: () => request<PromptsListResult>("/prompts"),
   promptDetail: (id: string) => request<PromptDetailResult>(`/prompts/${encodeURIComponent(id)}`),

@@ -429,8 +429,8 @@ export async function closeReasonixSession(regId: string): Promise<void> {
 
 /** 会话注册表列表（两级生命周期：活跃 30 天 / 归档 360 天 / 过期清理）
  * 归档态（>30 天未用）自动 close reasonix 侧会话释放资源（注册表保留，续用时 resume） */
-export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] {
-  const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] = [];
+export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number; status: "active" | "archived" }[] {
+  const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number; status: "active" | "archived" }[] = [];
   for (const r of kvListRaw(REG_PREFIX, 200)) {
     let reg: ReasonixSessionReg | null = null;
     try {
@@ -448,7 +448,7 @@ export function listReasonixSessions(): { id: string; module: string; cwd: strin
       // 归档态：释放 reasonix 侧会话资源（fire-and-forget；失败静默，注册表保留）
       void rpc("session/close", { sessionId: reg.reasonixSessionId }, 8000).catch(() => {});
     }
-    out.push({ id: reg.id, module: reg.module, cwd: reg.cwd, createdAt: reg.createdAt, lastAt: reg.lastAt });
+    out.push({ id: reg.id, module: reg.module, cwd: reg.cwd, createdAt: reg.createdAt, lastAt: reg.lastAt, status: age > ACTIVE_MS ? "archived" : "active" });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }
