@@ -223,6 +223,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 5. 外部数据源经验
 
+- **知乎爬虫（多内容目标，2026-08 实测）**：
+  - 不局限用户：`parseZhihuTarget` 识别 **用户/问题/回答/文章/想法** 链接，或从分享文本自动提取链接（answer 路径须在 question 之前匹配：`question/{qid}/answer/{aid}`）
+  - 用户 → 浏览器拦截签名 API + 滚动（断点续爬）；问题 → 拦截 `/api/v4/questions/{qid}/answers` 抓回答流；回答/文章/想法 → 打开详情页 DOM 提取正文（`.RichContent-inner`/`.Post-RichTextContainer`）
+  - 断点续爬：进度存 `zhihuCrawl:progress:<id>`（seed/phaseIndex/commentsDone），数量上限 100/超时 20min 自动暂停、取消返回已抓结果、续爬 seed 去重
+  - 知乎新版评论 API：`/api/v4/comment_v5/{type}/{id}/root_comment`；入口是「N 条评论」按钮
+  - 风控 40362：临时限流，等待恢复；Chrome profile 锁残留 → launch 失败重试前 `rmSync(PROFILE_DIR)`
+- **知识库中心（虚拟知识库，2026-08）**：
+  - 领域知识库 = 实例前缀（`medical.`/`trading.`…）；虚拟知识库 = 多领域集合（KV `kbVirt:<name>`，名称支持中文）
+  - 虚拟库导入自动匹配：`kbImportFromChat(..., matchDomains)` 逐条静态关键词匹配（领域元数据 `kbDomain:<name>.keywords`）→ 写入 `medical.`/`trading.` 等前缀，无匹配归 `other.`（低成本；LLM 匹配可后续做兜底）
+  - 聚合问答：`kbAsk(question, { instances: [...] })` 多前缀检索 → 单次 LLM
+  - 数据源已注册：`kbVirt:`/`kbDomain:`（知识库中心）
 - **A/H 股行情（多源，2026-08 实测选型）**：`core/quote.ts` 提供两个能力——
   - `getQuoteSnapshot(code)`：**实时快照**（现价/涨跌/换手/PE/PB/市值/52周区间/币种），
     腾讯 `qt.gtimg.cn` 主源（A/H 一体、字段最全、GBK 需 TextDecoder('gbk') 转码），
