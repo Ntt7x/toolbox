@@ -30,6 +30,7 @@ import * as booksFeature from "./features/books/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
 import * as agentSessionsFeature from "./features/agentSessions/index.js";
 import * as localDataFeature from "./features/localData/index.js";
+import * as zhihuCrawlerFeature from "./features/zhihuCrawler/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -56,6 +57,7 @@ const tools: ToolMeta[] = [
   rehabFeature.meta,
   booksFeature.meta,
   deepseekShareFeature.meta,
+  zhihuCrawlerFeature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -85,6 +87,7 @@ deepseekShareFeature.register(app);
 agentSessionsFeature.register(app);
 // 设置页模块（本地数据管理，非工具）
 localDataFeature.register(app);
+zhihuCrawlerFeature.register(app);
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {

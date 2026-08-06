@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import GridPlanTool from "./tools/GridPlanTool";
 import KellyTool from "./tools/KellyTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
+import ZhihuCrawlerTool from "./tools/ZhihuCrawlerTool";
 import BookSearchTool from "./tools/BookSearchTool";
 import CbRateTool from "./tools/CbRateTool";
 import TreasuryFxTool from "./tools/TreasuryFxTool";
@@ -25,6 +26,7 @@ const toolPages: Record<string, ComponentType> = {
   "grid-plan": GridPlanTool,
   "kelly": KellyTool,
   "deepseek-share": DeepSeekShareTool,
+  "zhihu-crawler": ZhihuCrawlerTool,
   "books": BookSearchTool,
   "cb-rate": CbRateTool,
   "treasury-fx": TreasuryFxTool,
@@ -56,7 +58,7 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
-  { label: "小工具", toolIds: ["deepseek-share", "books"] },
+  { label: "小工具", toolIds: ["deepseek-share", "zhihu-crawler", "books"] },
   { label: "康复", toolIds: ["rehab-medical", "rehab-muscle"] },
 ];
 

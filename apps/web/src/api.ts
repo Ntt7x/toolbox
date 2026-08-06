@@ -274,4 +274,12 @@ export const api = {
     ),
   // 项目架构依赖图（扫描源码自动生成）
   dependencyGraph: () => request<{ ok: boolean; generatedAt: string; nodes: unknown[]; edges: unknown[] }>("/dependency-graph"),
+  // 知乎爬虫
+  zhihuCookie: () => request<{ ok: boolean; configured: boolean }>("/tools/zhihu-crawler/cookie"),
+  zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),
+  zhihuUser: (target: string) => request<import("@toolbox/shared").ZhihuUserInfo>(`/tools/zhihu-crawler/user?target=${encodeURIComponent(target)}`),
+  zhihuCrawl: (req: import("@toolbox/shared").ZhihuCrawlRequest) =>
+    request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/crawl", jsonInit("POST", req)),
+  zhihuHistory: () => request<{ ok: boolean; items: import("@toolbox/shared").ZhihuCrawlHistoryEntry[] }>("/tools/zhihu-crawler/history"),
+  zhihuHistoryDelete: (id: string) => request<{ ok: boolean }>(`/tools/zhihu-crawler/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
 };

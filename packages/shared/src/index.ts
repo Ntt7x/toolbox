@@ -1455,3 +1455,56 @@ export interface KnowledgeErrorResult {
 
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
+
+// ============================================================
+// 知乎爬虫（小工具）
+// ============================================================
+export interface ZhihuCrawlRequest {
+  /** 用户主页 URL 或 urlToken */
+  target: string;
+  /** 抓取类型：all / answers / articles / pins（默认 all） */
+  types?: ZhihuCrawlKind[];
+  /** 每类最大条数（0=不限制，默认 0） */
+  limit?: number;
+}
+
+export type ZhihuCrawlKind = "answer" | "article" | "pin";
+
+export interface ZhihuCrawlItem {
+  kind: ZhihuCrawlKind;
+  /** 问题标题 / 文章标题 / 想法首句 */
+  title: string;
+  /** 内容（markdown） */
+  content: string;
+  /** 发布时间（ISO） */
+  createdAt: string;
+  url: string;
+  voteupCount?: number;
+}
+
+export interface ZhihuUserInfo {
+  ok: boolean;
+  name?: string;
+  urlToken?: string;
+  headline?: string;
+  answerCount?: number;
+  articleCount?: number;
+  pinCount?: number;
+  message?: string;
+}
+
+export interface ZhihuCrawlResult {
+  ok: boolean;
+  user?: { name: string; urlToken: string; headline?: string };
+  items?: ZhihuCrawlItem[];
+  total?: number;
+  message?: string;
+}
+
+export interface ZhihuCrawlHistoryEntry {
+  id: string;
+  target: string;
+  name: string;
+  ts: string;
+  total: number;
+}
