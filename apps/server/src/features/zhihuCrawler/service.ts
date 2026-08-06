@@ -8,9 +8,9 @@
 // 合规：个人备份用途；仅抓取用户主动指定的目标；频率模拟人类
 // ============================================================
 import { getSetting, setSetting, deleteSetting } from "../../core/settingsStore.js";
-import type { ZhihuComment, ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlResult, ZhihuUserInfo } from "@toolbox/shared";
+import type { ZhihuComment, ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlProgress, ZhihuCrawlResult, ZhihuUserInfo } from "@toolbox/shared";
 import { chromium, type BrowserContext } from "playwright-core";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../../core/db.js";
 
@@ -112,23 +112,35 @@ function injectCookie(context: BrowserContext): void {
   if (entries.length > 0) context.addCookies(entries).catch(() => {});
 }
 
-async function launchZhihuContext(): Promise<BrowserContext> {
+async function launchZhihuContext(retries = 3): Promise<BrowserContext> {
   const exe = findBrowser();
   if (!exe) throw new Error("未找到系统 Chrome/Edge");
   mkdirSync(PROFILE_DIR, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-    executablePath: exe,
-    headless: true,
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    args: ["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"],
-  });
-  // 隐藏自动化指纹（navigator.webdriver）
-  await ctx.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-  });
-  injectCookie(ctx);
-  return ctx;
+  // Windows Chrome profile 独占锁：连续 launch 同 profile 可能因前一个未完全退出失败 → 等待重试
+  for (let i = 0; i < retries; i++) {
+    try {
+      const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+        executablePath: exe,
+        headless: true,
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        args: ["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"],
+      });
+      // 隐藏自动化指纹（navigator.webdriver）
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      });
+      injectCookie(ctx);
+      return ctx;
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      await sleep(1500 + i * 1000);
+      // 失败重试前清除 profile 锁：残留 Chrome 子进程锁文件导致同 profile 无法再启动；
+      // 删除 profile 目录重建（登录 cookie 经 injectCookie 注入，不影响授权）
+      rmSync(PROFILE_DIR, { recursive: true, force: true });
+    }
+  }
+  throw new Error("浏览器启动失败（多次重试）");
 }
 
 // ---------- 浏览器内登录授权 ----------
@@ -458,17 +470,64 @@ async function crawlKindWithBrowser(
   });
 }
 
-// ---------- 主抓取流程 ----------
+// ---------- 主抓取流程（支持断点续爬：数量上限/超时自动暂停、取消返回已抓结果、续爬 seed） ----------
 export interface CrawlProgress {
   kind: string;
   fetched: number;
   message: string;
 }
 
-export async function crawlUser(
-  target: string,
-  opts: { types?: ZhihuCrawlKind[]; limit?: number; dateFrom?: string; dateTo?: string; signal?: AbortSignal; onProgress?: (p: CrawlProgress) => void },
-): Promise<ZhihuCrawlResult> {
+export interface CrawlOptions {
+  types?: ZhihuCrawlKind[];
+  /** 总数目标上限（默认 20；硬上限 100） */
+  limit?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  signal?: AbortSignal;
+  onProgress?: (p: CrawlProgress) => void;
+  /** 断点 id（续爬时复用；暂停/取消后返回给前端） */
+  progressId?: string;
+  /** 续爬：已抓取的结果（按 url 去重，跳过已抓） */
+  seed?: ZhihuCrawlItem[];
+  /** 续爬：评论阶段是否已完成 */
+  commentsDone?: boolean;
+  /** 续爬起点类型下标（之前的类型已抓满/完成） */
+  phaseIndex?: number;
+  /** 单次任务数量硬上限（默认 100） */
+  maxTotal?: number;
+  /** 单次任务超时（默认 20 分钟；触碰后自动暂停） */
+  deadlineMs?: number;
+  /** 进度持久化回调（index 注入写 KV） */
+  saveProgress?: (snap: ZhihuCrawlProgress) => void;
+}
+
+function toItem(i: RawItem): ZhihuCrawlItem {
+  return {
+    kind: i.kind,
+    title: i.title || (i.content.split("\n")[0]?.slice(0, 40) ?? ""),
+    content: i.content,
+    createdAt: new Date(i.created * 1000).toISOString(),
+    url: i.url,
+    ...(i.voteup !== undefined ? { voteupCount: i.voteup } : {}),
+  };
+}
+
+function dateInRange(created: number, dateFrom?: string, dateTo?: string): boolean {
+  const d = new Date(created * 1000);
+  if (dateFrom) {
+    const from = new Date(dateFrom);
+    from.setHours(0, 0, 0, 0);
+    if (d < from) return false;
+  }
+  if (dateTo) {
+    const to = new Date(dateTo);
+    to.setHours(23, 59, 59, 999);
+    if (d > to) return false;
+  }
+  return true;
+}
+
+export async function crawlUser(target: string, opts: CrawlOptions = {}): Promise<ZhihuCrawlResult> {
   const token = extractUrlToken(target);
   if (!token) return { ok: false, message: "无法识别用户（请输入知乎主页 URL 或 urlToken）" };
   if (!hasCookie()) return { ok: false, message: "未配置知乎登录 cookie（浏览器登录授权或手动粘贴），请先在页面设置" };
@@ -477,77 +536,115 @@ export async function crawlUser(
   if (!info.ok) return { ok: false, message: info.message };
 
   const types = opts.types?.length ? opts.types : (["answer", "article", "pin"] as ZhihuCrawlKind[]);
-  const limit = Math.max(0, Math.min(opts.limit ?? 0, 500));
-  const all: RawItem[] = [];
+  // 每类目标（默认 20，上限 100）；单次任务总数硬上限（默认 100）
+  const perKindLimit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+  const maxTotal = Math.min(Math.max(opts.maxTotal ?? 100, 1), 500);
+  const progressId = opts.progressId ?? `zhp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const deadline = Date.now() + (opts.deadlineMs ?? 20 * 60 * 1000);
 
-  for (const kind of types) {
+  // 续爬：seed 作为已抓集合（去重 + 每类计数）
+  const seed = Array.isArray(opts.seed) ? opts.seed : [];
+  const seen = new Set(seed.map((s) => s.url));
+  const items: ZhihuCrawlItem[] = [...seed];
+  const kindCount = new Map<ZhihuCrawlKind, number>();
+  for (const s of seed) kindCount.set(s.kind, (kindCount.get(s.kind) ?? 0) + 1);
+  const commentsDone = opts.commentsDone === true;
+  const startPhase = Math.min(Math.max(opts.phaseIndex ?? 0, 0), Math.max(types.length - 1, 0));
+
+  const emitProgress = (kind: string, message: string) => opts.onProgress?.({ kind, fetched: items.length, message });
+  const snapshot = (phaseIndex: number): ZhihuCrawlProgress => ({
+    progressId,
+    token,
+    types,
+    limit: perKindLimit,
+    ...(opts.dateFrom ? { dateFrom: opts.dateFrom } : {}),
+    ...(opts.dateTo ? { dateTo: opts.dateTo } : {}),
+    items,
+    commentsDone,
+    phaseIndex,
+    startedAt: Date.now() - (Date.now() - deadline + (opts.deadlineMs ?? 20 * 60 * 1000)),
+    updatedAt: Date.now(),
+  });
+  const persist = (phaseIndex: number) => opts.saveProgress?.(snapshot(phaseIndex));
+
+  // 类型循环（从续爬起点开始；单类达每类目标 → 下一类；总数达硬上限/超时 → 暂停）
+  let paused = false;
+  let finalPhase = startPhase;
+  for (let ki = startPhase; ki < types.length; ki++) {
+    finalPhase = ki;
+    const kind = types[ki];
     if (opts.signal?.aborted) break;
-    opts.onProgress?.({ kind, fetched: all.length, message: `开始抓取 ${kindLabel(kind)}…` });
+    if (Date.now() > deadline || items.length >= maxTotal) {
+      paused = true;
+      break;
+    }
+    const gotCount = kindCount.get(kind) ?? 0;
+    if (gotCount >= perKindLimit) continue; // 该类已满 → 下一类
+    emitProgress(kind, `开始抓取 ${kindLabel(kind)}（已有 ${gotCount}/${perKindLimit}，目标 ${perKindLimit}）…`);
     try {
+      const remaining = perKindLimit - gotCount;
       if (kind === "pin") {
-        // 想法：免签名 API 直连翻页（轻量）
-        const pins = await fetchPinsApi(token, limit, opts.signal);
-        all.push(...pins);
-        opts.onProgress?.({ kind, fetched: pins.length, message: `想法抓取完成（${pins.length} 条）` });
+        const pins = await fetchPinsApi(token, remaining, opts.signal);
+        for (const p of pins) {
+          if ((kindCount.get(kind) ?? 0) >= perKindLimit) break;
+          if (seen.has(p.url)) continue;
+          seen.add(p.url);
+          if (dateInRange(p.created, opts.dateFrom, opts.dateTo)) {
+            items.push(toItem(p));
+            kindCount.set(kind, (kindCount.get(kind) ?? 0) + 1);
+          }
+        }
+        emitProgress(kind, `想法本轮 +${pins.length}，累计 ${kindCount.get(kind) ?? 0}/${perKindLimit}（总数 ${items.length}）`);
       } else {
-        // 回答/文章：浏览器渲染 + 拦截签名 API + 滚动翻页
-        const items = await crawlKindWithBrowser(token, kind, limit, opts.signal, (msg) =>
-          opts.onProgress?.({ kind, fetched: all.length, message: msg }),
-        );
-        all.push(...items);
-        opts.onProgress?.({ kind, fetched: items.length, message: `${kindLabel(kind)}抓取完成（${items.length} 条）` });
+        const got = await crawlKindWithBrowser(token, kind, remaining, opts.signal, (msg) => emitProgress(kind, msg));
+        for (const g of got) {
+          if ((kindCount.get(kind) ?? 0) >= perKindLimit) break; // 知乎 API 单次返回一页，避免超该类目标
+          if (seen.has(g.url)) continue;
+          seen.add(g.url);
+          if (dateInRange(g.created, opts.dateFrom, opts.dateTo)) {
+            items.push(toItem(g));
+            kindCount.set(kind, (kindCount.get(kind) ?? 0) + 1);
+          }
+        }
+        emitProgress(kind, `${kindLabel(kind)}本轮 +${got.length}，累计 ${kindCount.get(kind) ?? 0}/${perKindLimit}（总数 ${items.length}）`);
       }
     } catch (e) {
-      opts.onProgress?.({ kind, fetched: all.length, message: `${kindLabel(kind)}：异常 ${e instanceof Error ? e.message : String(e)}` });
+      emitProgress(kind, `${kindLabel(kind)}：异常 ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (Date.now() > deadline || items.length >= maxTotal) {
+      paused = true;
+      break;
     }
     if (opts.signal?.aborted) break;
     await humanDelay();
   }
 
-  if (opts.signal?.aborted) return { ok: false, message: "已取消" };
-
-  const items = all
-    .filter((i) => i.content.length > 0 || i.title)
-    .filter((i) => {
-      // 日期范围过滤（YYYY-MM-DD；按天比较）
-      const d = new Date(i.created * 1000);
-      if (opts.dateFrom) {
-        const from = new Date(opts.dateFrom);
-        from.setHours(0, 0, 0, 0);
-        if (d < from) return false;
-      }
-      if (opts.dateTo) {
-        const to = new Date(opts.dateTo);
-        to.setHours(23, 59, 59, 999);
-        if (d > to) return false;
-      }
-      return true;
-    })
-    .sort((a, b) => b.created - a.created)
-    .slice(0, limit > 0 ? limit : undefined)
-    .map((i) => ({
-      kind: i.kind,
-      title: i.title || (i.content.split("\n")[0]?.slice(0, 40) ?? ""),
-      content: i.content,
-      createdAt: new Date(i.created * 1000).toISOString(),
-      url: i.url,
-      ...(i.voteup !== undefined ? { voteupCount: i.voteup } : {}),
-    }));
-
-  // 抓取作者参与讨论的评论（含上下文；全部内容，人类频率）
-  if (!opts.signal?.aborted && items.length > 0) {
-    opts.onProgress?.({ kind: "comment", fetched: items.length, message: `抓取评论（全部 ${items.length} 条内容，作者参与的讨论；内容多时耗时较长，可随时停止）…` });
-    await crawlCommentsBatch(token, items, opts.signal, (msg) => opts.onProgress?.({ kind: "comment", fetched: items.length, message: msg }));
+  // 评论阶段（全部类型处理完且未暂停/取消；续爬跳过已完成）
+  if (!paused && !opts.signal?.aborted && !commentsDone && items.length > 0) {
+    emitProgress("comment", `抓取评论（全部 ${items.length} 条内容，作者参与的讨论；可随时停止）…`);
+    await crawlCommentsBatch(token, items, opts.signal, (msg) => emitProgress("comment", msg));
+    if (Date.now() > deadline || items.length >= maxTotal) paused = true; // 评论阶段触碰限制 → 暂停（已抓保留）
   }
 
-  if (opts.signal?.aborted) return { ok: false, message: "已取消" };
-
-  return {
-    ok: true,
+  // 结果（时间降序）
+  const finalItems = items.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const base = {
+    ok: true as const,
     user: { name: info.name ?? token, urlToken: token, ...(info.headline ? { headline: info.headline } : {}) },
-    items,
-    total: items.length,
+    items: finalItems,
+    total: finalItems.length,
   };
+
+  // 暂停/取消 → 保存进度供续爬，返回已抓结果
+  if (opts.signal?.aborted) {
+    persist(finalPhase);
+    return { ...base, partial: true, cancelled: true, progressId };
+  }
+  if (paused) {
+    persist(finalPhase);
+    return { ...base, partial: true, paused: true, progressId };
+  }
+  return base;
 }
 
 function kindLabel(kind: ZhihuCrawlKind): string {

@@ -1531,7 +1531,37 @@ export interface ZhihuCrawlResult {
   total?: number;
   /** 结果持久化 id（历史查看/导入知识库用） */
   resultId?: string;
+  /** 是否部分结果（数量上限/超时自动暂停，或用户取消） */
+  partial?: boolean;
+  /** 自动暂停（达到数量上限或超时） */
+  paused?: boolean;
+  /** 用户取消（已返回已抓取的部分结果） */
+  cancelled?: boolean;
+  /** 断点续爬 id（暂停/取消后可从此继续） */
+  progressId?: string;
   message?: string;
+}
+
+/** 断点续爬请求 */
+export interface ZhihuResumeRequest {
+  progressId: string;
+}
+
+/** 爬取进度快照（暂停/取消后保存，供续爬） */
+export interface ZhihuCrawlProgress {
+  progressId: string;
+  token: string;
+  types: ZhihuCrawlKind[];
+  /** 每类目标条数 */
+  limit: number;
+  dateFrom?: string;
+  dateTo?: string;
+  items: ZhihuCrawlItem[];
+  commentsDone: boolean;
+  /** 续爬起点：当前处理到的类型下标（之前的类型已抓满/完成） */
+  phaseIndex: number;
+  startedAt: number;
+  updatedAt: number;
 }
 
 export interface ZhihuCrawlHistoryEntry {

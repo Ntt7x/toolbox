@@ -5,7 +5,7 @@
 // 依赖下层公共模块：core/tasks（后台任务）、core/settingsStore（cookie）
 // ============================================================
 import { Hono } from "hono";
-import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, type ZhihuImportResult, type ZhihuImportRequest } from "@toolbox/shared";
+import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, type ZhihuCrawlProgress, type ZhihuImportResult, type ZhihuImportRequest, type ZhihuResumeRequest } from "@toolbox/shared";
 import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
@@ -82,27 +82,59 @@ export function register(app: Hono): void {
 
     const { taskId } = createTask<ZhihuCrawlResult>(
       async (signal) => {
-        const progress: CrawlProgress[] = [];
         const r = await crawlUser(target, {
           types,
           limit,
           ...(dateFrom ? { dateFrom } : {}),
           ...(dateTo ? { dateTo } : {}),
           signal,
-          onProgress: (p) => {
-            progress.push(p);
-          },
+          onProgress: () => {},
+          saveProgress: (snap) => kvSet(`zhihuCrawl:progress:${snap.progressId}`, snap),
         });
-        if (!r.ok) return { ok: false, message: r.message };
-        // 结果持久化（历史查看 + 导入知识库）
-        const resultId = `zh-${Date.now()}`;
-        kvSet(`zhihuCrawl:result:${resultId}`, { ...r, savedAt: new Date().toISOString() });
-        recordHistory(target, r.user?.name ?? "", r.total ?? 0, resultId);
-        return { ...r, resultId };
+        return finishCrawl(r, target);
       },
-      { timeoutMs: 90 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
+      { timeoutMs: 30 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
     );
     return c.json({ ok: true, taskId, status: "running" }, 202);
+  });
+
+  // 断点续爬：从暂停/取消的进度继续
+  app.post(`${API_PREFIX}/tools/zhihu-crawler/resume`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as ZhihuResumeRequest | null;
+    const progressId = typeof raw?.progressId === "string" ? raw.progressId.trim() : "";
+    if (!progressId) return c.json({ ok: false, message: "缺少 progressId" }, 400);
+    const progress = kvGet<ZhihuCrawlProgress>(`zhihuCrawl:progress:${progressId}`);
+    if (!progress || !Array.isArray(progress.items)) {
+      return c.json({ ok: false, message: "进度不存在或已过期（可重新开始爬取）" }, 404);
+    }
+    const snap = progress as ZhihuCrawlProgress;
+    const { taskId } = createTask<ZhihuCrawlResult>(
+      async (signal) => {
+        const r = await crawlUser(snap.token, {
+          types: snap.types,
+          limit: snap.limit,
+          ...(snap.dateFrom ? { dateFrom: snap.dateFrom } : {}),
+          ...(snap.dateTo ? { dateTo: snap.dateTo } : {}),
+          seed: snap.items,
+          commentsDone: snap.commentsDone === true,
+          phaseIndex: snap.phaseIndex,
+          progressId: snap.progressId,
+          signal,
+          onProgress: () => {},
+          saveProgress: (s) => kvSet(`zhihuCrawl:progress:${s.progressId}`, s),
+        });
+        return finishCrawl(r, snap.token);
+      },
+      { timeoutMs: 30 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫（续爬） · ${snap.token}` },
+    );
+    return c.json({ ok: true, taskId, status: "running" }, 202);
+  });
+
+  // 查询进度（续爬前确认）
+  app.get(`${API_PREFIX}/tools/zhihu-crawler/progress/:id`, (c) => {
+    const p = kvGet<ZhihuCrawlProgress>(`zhihuCrawl:progress:${c.req.param("id")}`);
+    if (!p) return c.json({ ok: false, message: "进度不存在" }, 404);
+    return c.json({ ok: true, items: p.items?.length ?? 0, total: p.items?.length ?? 0, updatedAt: p.updatedAt });
   });
 
   // 收藏的爬取目标（历史抓取目标）
@@ -195,6 +227,22 @@ export function register(app: Hono): void {
 }
 
 // ---------- 历史 ----------
+/** 爬取结束统一收尾：部分结果（暂停/取消）保留进度供续爬；完整结果写历史 + 持久化 + 清理进度 */
+function finishCrawl(r: ZhihuCrawlResult, target: string): ZhihuCrawlResult {
+  if (!r.ok) return r;
+  if (r.partial) {
+    // 暂停/取消：保留进度（saveProgress 已写），不写历史
+    return r;
+  }
+  // 完整结果
+  const resultId = `zh-${Date.now()}`;
+  kvSet(`zhihuCrawl:result:${resultId}`, { ...r, savedAt: new Date().toISOString() });
+  recordHistory(target, r.user?.name ?? "", r.total ?? 0, resultId);
+  // 清理进度（若续爬残留）
+  if (r.progressId) kvDelete(`zhihuCrawl:progress:${r.progressId}`);
+  return { ...r, resultId };
+}
+
 interface HistoryEntry {
   id: string;
   target: string;
