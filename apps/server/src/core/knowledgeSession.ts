@@ -5,7 +5,7 @@
 //   - 实例级会话（knowledgeSession:<instance> 注册表 KV 持久化），同一实例多次问答/导入共享上下文
 //   - Reasonix 不可用（二进制/API key 缺失）时调用方降级到服务端直调（kbAsk/kbImportFromChat）
 // ============================================================
-import { createReasonixSession, reasonixAsk } from "./reasonix.js";
+import { createReasonixSession, reasonixAsk, closeReasonixSession } from "./reasonix.js";
 import { kvGet, kvSet, kvDelete } from "./kvStore.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
@@ -53,20 +53,52 @@ export async function ensureKnowledgeSession(instance: string): Promise<{ ok: bo
     kvSet(key, { ...existing, lastAt: Date.now() }); // 访问即刷新（元数据）
     return { ok: true, regId: existing.regId };
   }
+  return createNew();
+
+  async function createNew() {
+    const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: enabledMcpServers() });
+    if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话创建失败" };
+    kvSet(key, { regId: s.id, instance, createdAt: Date.now(), lastAt: Date.now() } satisfies KnowledgeSessionReg);
+    return { ok: true, regId: s.id };
+  }
+}
+
+/**
+ * 强制重建会话（会话失效时）：关闭旧会话释放资源 → 新建 → 更新注册表。
+ * 保证同一实例注册表始终指向唯一活跃会话（不产生孤儿）。
+ */
+async function recreateSession(instance: string): Promise<{ ok: boolean; regId?: string; message?: string }> {
+  const key = sessionKey(instance);
+  const old = kvGet<KnowledgeSessionReg>(key);
+  if (old?.regId) {
+    kvDelete(key);
+    try {
+      await closeReasonixSession(old.regId);
+    } catch {
+      // 进程已不在/关闭失败：仅确保注册表清理（不残留孤儿）
+      kvDelete(`reasonixSession:${old.regId}`);
+    }
+  }
   const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: enabledMcpServers() });
-  if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话创建失败" };
+  if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话重建失败" };
   kvSet(key, { regId: s.id, instance, createdAt: Date.now(), lastAt: Date.now() } satisfies KnowledgeSessionReg);
   return { ok: true, regId: s.id };
 }
 
-/** 会话失效（reasonix 注册表被清/重建失败）时清理注册表 */
+/** 会话注册表清理（dropKnowledgeSession 用） */
 function dropSession(instance: string): void {
   kvDelete(sessionKey(instance));
 }
 
-/** Agent 引导词（模板 knowledge.agent.guide 渲染：知识工具约束 + 实例/任务说明） */
+/** Agent 引导词（模板渲染：知识工具约束 + 实例/任务说明；medical 实例用医学特化模板） */
 function guideFor(instance: string, action: string): string {
-  return getPromptTemplate("knowledge.agent.guide").replace("{instance}", instance).replace("{action}", action);
+  const id = instance === "medical" ? "medical-kb.agent.guide" : "knowledge.agent.guide";
+  return getPromptTemplate(id).replace("{instance}", instance).replace("{action}", action);
+}
+
+/** 问答/导入任务指令模板 id（medical 实例用医学特化模板） */
+function taskTemplateId(instance: string, task: "ask" | "import"): string {
+  return instance === "medical" ? `medical-kb.agent.${task}` : `knowledge.agent.${task}`;
 }
 
 /**
@@ -90,13 +122,16 @@ async function doAsk(
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
   const prompt =
     `${guideFor(instance, "回答用户问题")}\n` +
-    getPromptTemplate("knowledge.agent.ask").replace("{instance}", instance).replace("{question}", question);
+    getPromptTemplate(taskTemplateId(instance, "ask")).replace("{instance}", instance).replace("{question}", question);
   // 用量归属：业务 module 透传（如 medical-kb.ask）优先，缺省回落会话 module（knowledge.<instance>）
-  const r = await reasonixAsk(s.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
+  let r = await reasonixAsk(s.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
+  // 会话失效（reasonix 进程重启/会话丢失，unknown session 等）：重建会话后重试一次（不再 drop，避免孤儿堆积）
+  if (!r.ok && r.sessionGone) {
+    const s2 = await recreateSession(instance);
+    if (s2.ok && s2.regId) r = await reasonixAsk(s2.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
+  }
   if (!r.ok) {
-    // 仅会话真失效（reasonix 侧进程崩溃/重启）才重建；临时错误（超时等）保留会话复用
-    if (r.sessionGone) dropSession(instance);
-    return { ok: false, message: r.message, fallback: true };
+    return { ok: false, message: r.message, fallback: true }; // 临时错误（超时等）保留会话复用
   }
   return { ok: true, content: r.content, usage: r.usage };
 }
@@ -130,11 +165,15 @@ async function doImport(
     .join("\n");
   const prompt =
     `${guideFor(instance, "把对话内容整理为知识条目并写入知识库")}\n` +
-    getPromptTemplate("knowledge.agent.import").replaceAll("{instance}", instance).replace("{dialog}", dialog);
-  const r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
+    getPromptTemplate(taskTemplateId(instance, "import")).replaceAll("{instance}", instance).replace("{dialog}", dialog);
+  let r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
   if (!r.ok) {
-    if (r.sessionGone) dropSession(instance);
-    return { ok: false, message: r.message, fallback: true };
+    if (r.sessionGone) {
+      // 会话失效：重建会话后重试一次（不再 drop，避免孤儿堆积）
+      const s2 = await recreateSession(instance);
+      if (s2.ok && s2.regId) r = await reasonixAsk(s2.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
+    }
+    if (!r.ok) return { ok: false, message: r.message, fallback: true };
   }
   const after = kbCountInstance(instance);
   return { ok: true, imported: Math.max(after - before, 0), message: r.content };

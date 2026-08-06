@@ -412,6 +412,63 @@ const KNOWLEDGE_AGENT_IMPORT = `把对话内容整理为知识条目并写入知
 【对话原文】
 {dialog}`;
 
+// ============================================================
+// 医学知识库 × 直调 LLM（instance=medical 专用；约束：只答知识库内、不编造诊断/处方）
+// ============================================================
+
+/** 医学知识库 × 直调：问答 system（知识库检索结果 + 问题 → 答案） */
+const MEDICAL_KB_ASK = `你是医学知识库问答助手。用户会提供【问题】和【知识库检索结果】。
+请严格依据检索结果回答问题：
+1. 检索结果与问题相关时：直接给出准确回答，可引用知识条目的 key 标注来源；
+2. 检索结果无关或为空时：如实说明「医学知识库中没有相关信息」，不要用自身医学知识编造药方、剂量或疗效；
+3. 不得提供诊断结论或处方；涉及急性症状、用药冲突或拿不准的情况，建议咨询专业医生或就医；
+4. 回答简洁、结构化，中文输出。`;
+
+/** 医学知识库 × 直调：提取 system（对话 → {key,value} 医学事实数组） */
+const MEDICAL_KB_EXTRACT = `你是医学知识提取助手。请阅读用户提供的对话内容，提取其中有长期价值的医学/康复知识，输出 JSON 数组。
+规则：
+1. 每条知识 = { "key": "分层点分隔标识符（如 medical.病症.方剂，仅字母数字._-）", "value": "事实内容（简洁完整的一句话）" }；可选 source 字段说明出处；
+2. 只提取明确的医学事实（方剂组成/适应症/用法用量/注意事项/辨证要点/康复训练方法等）；忽略寒暄、主观体验、广告、与医学无关的内容；
+3. 存疑或来源不明的结论不提取，或注明「存疑」；
+4. 若对话无有价值医学知识，输出空数组 []；
+5. 只输出 JSON 数组，不要任何其他文字。`;
+
+// ============================================================
+// 医学知识库 × Reasonix Agent（instance=medical 专用；引导 + 问答 + 导入）
+// ============================================================
+
+/** 医学知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}） */
+const MEDICAL_KB_AGENT_GUIDE = `你是医学知识库助手，专注维护医学/康复领域的可靠知识。本会话已挂载知识库 MCP（工具 mcp__kb__*），直接调用即可，不要使用 bash/glob/ls/docs 等其他工具。
+本次任务：{action}。
+知识实例为 {instance}（key 首段必须是 {instance}，如 {instance}.病症.辨证分型）。
+原则：
+1. 只基于知识库中已写入的内容进行检索、整理与回答；
+2. 不得脱离知识库内容自由发挥或编造医学事实、药方、剂量、疗效；
+3. 涉及个人健康问题时，须提示「请以专业医生或医疗机构意见为准」。`;
+
+/** 医学知识库 × Reasonix Agent：问答任务指令（占位符 {instance} {question}） */
+const MEDICAL_KB_AGENT_ASK = `回答用户问题
+回答前必须先用 kb_search（question 取用户问题，instance 为 {instance}）检索医学知识库；严格基于检索到的条目回答，并标注引用条目 key。
+约束：
+1. 检索无结果时如实说明「知识库中暂无此内容」，不要用自身医学知识补充或编造；
+2. 不得提供诊断结论、处方或具体用药剂量；可复述知识库中的方剂/用法并注明出处；
+3. 涉及急性症状、用药冲突或拿不准的情况，明确建议咨询专业医生或就医；
+4. 回答简洁、结构化、口语友好。
+
+【用户问题】
+{question}`;
+
+/** 医学知识库 × Reasonix Agent：导入任务指令（占位符 {instance} {dialog}） */
+const MEDICAL_KB_AGENT_IMPORT = `把对话内容整理为医学知识条目并写入医学知识库
+步骤：1) 先用 kb_count（instance={instance}）和 kb_list（instance={instance}）查看已有条目，避免重复；
+2) 只提取与医学/康复主题相关的可靠医学知识（方剂组成、适应症、用法用量、注意事项、辨证要点、康复训练方法等），对每个独立知识点用 kb_set 写入：key 分层（{instance}.主题.子主题），value 为简洁完整、可独立理解的事实文本；
+3) 忽略与医学无关的寒暄、主观体验、广告、个人情绪内容；
+4) 不确定或存疑的内容不写入，或注明「存疑」；
+5) 所有 kb_set 的 source 参数统一用分享链接。
+
+【对话原文】
+{dialog}`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -445,6 +502,11 @@ const PROMPT_META: Record<string, [string, string]> = {
   "knowledge.agent.guide": ["知识库", "知识库"],
   "knowledge.agent.ask": ["知识库", "知识库"],
   "knowledge.agent.import": ["知识库", "知识库"],
+  "medical-kb.ask": ["医学知识库", "医学知识库"],
+  "medical-kb.extract": ["医学知识库", "医学知识库"],
+  "medical-kb.agent.guide": ["医学知识库", "医学知识库"],
+  "medical-kb.agent.ask": ["医学知识库", "医学知识库"],
+  "medical-kb.agent.import": ["医学知识库", "医学知识库"],
 };
 
 /** 提示词场景分组（id → group） */
@@ -602,6 +664,42 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.knowledge.agent.import",
     description: "知识库 × Reasonix Agent：导入任务指令（模板；占位符 {instance} {dialog}）",
     defaultTemplate: KNOWLEDGE_AGENT_IMPORT,
+    render: (t) => t,
+  },
+  // ---------- 医学知识库（instance=medical 专用，主题约束 + 医学安全） ----------
+  {
+    id: "medical-kb.ask",
+    key: "prompt.medicalKb.ask",
+    description: "医学知识库问答 system（直调；只答库内内容、不编造诊断/处方、必要时就医）",
+    defaultTemplate: MEDICAL_KB_ASK,
+    render: (t) => t,
+  },
+  {
+    id: "medical-kb.extract",
+    key: "prompt.medicalKb.extract",
+    description: "医学知识库提取 system（直调；只提取可靠医学事实，忽略无关内容）",
+    defaultTemplate: MEDICAL_KB_EXTRACT,
+    render: (t) => t,
+  },
+  {
+    id: "medical-kb.agent.guide",
+    key: "prompt.medicalKb.agent.guide",
+    description: "医学知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}；医学主题约束）",
+    defaultTemplate: MEDICAL_KB_AGENT_GUIDE,
+    render: (t) => t,
+  },
+  {
+    id: "medical-kb.agent.ask",
+    key: "prompt.medicalKb.agent.ask",
+    description: "医学知识库 × Reasonix Agent：问答任务指令（占位符 {instance} {question}；检索无果不编造）",
+    defaultTemplate: MEDICAL_KB_AGENT_ASK,
+    render: (t) => t,
+  },
+  {
+    id: "medical-kb.agent.import",
+    key: "prompt.medicalKb.agent.import",
+    description: "医学知识库 × Reasonix Agent：导入任务指令（占位符 {instance} {dialog}；只提取医学事实）",
+    defaultTemplate: MEDICAL_KB_AGENT_IMPORT,
     render: (t) => t,
   },
 ];

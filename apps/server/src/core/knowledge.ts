@@ -252,7 +252,7 @@ export async function kbAsk(
     used.length > 0
       ? used.map((e) => `- [${e.key}]${e.source ? `（来源：${e.source}）` : ""}\n  ${e.value}`).join("\n")
       : "（知识库中未检索到相关内容，请如实说明）";
-  const system = getPromptTemplate("knowledge.ask");
+  const system = getPromptTemplate(opts.instance === "medical" ? "medical-kb.ask" : "knowledge.ask");
   const userMsg = `【问题】\n${q}\n\n【知识库检索结果】\n${knowledgeText}`;
 
   const result = await chat(
@@ -287,7 +287,7 @@ export async function kbImportFromChat(
     .join("\n\n")
     .slice(0, 30000); // 截断防超长
 
-  const template = getPromptTemplate("knowledge.extract");
+  const template = getPromptTemplate(opts.instance === "medical" ? "medical-kb.extract" : "knowledge.extract");
   const result = await chat(
     [
       { role: "system", content: template },
