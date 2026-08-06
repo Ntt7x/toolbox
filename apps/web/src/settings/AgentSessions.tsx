@@ -67,9 +67,7 @@ function SessionCard(props: {
       const r = await waitTask(task.taskId);
       if (r.ok && r.result) {
         setLastResult(r.result);
-        if (kind === "chat") {
-          await loadDetail();
-        }
+        await loadDetail(); // chat/reasonix 均刷新详情（reasonix 历史也随续问追加）
         onChanged(); // 刷新列表（lastAt 等）
       } else {
         setError(r.message ?? "任务失败");

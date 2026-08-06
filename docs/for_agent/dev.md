@@ -11,14 +11,18 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 ├── apps/server/       Hono 后端（Node 24 + tsx watch）
 │   └── src/
 │       ├── index.ts           装配层：cors + health + tools 收集 + 挂载路由 + 启动
-│       ├── core/              下层公共模块（能力，不依赖业务）：llm / quote / deepseekShare / routes
-│       │                       / tasks / sse / db / tableStore / kvStore / settingsStore / dataRegistry
-│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / deepseekShareTool / localData
+│       ├── core/              下层公共模块（能力，不依赖业务）：llm / chatSession / reasonix / knowledge /
+│       │                       knowledgeSession / knowledgeMcp / mcpConfig / quote / deepseekShare /
+│       │                       prompts / jsonParse / routes / tasks / sse / db / tableStore / kvStore /
+│       │                       settingsStore / dataRegistry
+│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / treasuryFx / reverseRepo /
+│                               watchlist / kelly / rehab(医学知识库) / memo / books / deepseekShareTool /
+│                               agentSessions / localData
 ├── apps/web/          Vite + React 19 + react-router-dom
 │   └── src/
 │       ├── App.tsx            侧边栏分组菜单 MENU_GROUPS + toolPages 映射 + 路由
-│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / DeepSeekShareTool）
-│       └── settings/          设置页（LlmSettings）
+│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / ReverseRepoTool / MedicalKbTool…）
+│       └── settings/          设置页（LlmSettings / AgentSessions / LocalData / MemoTool）
 └── docs/for_agent/    本目录：agent 规范沉淀
 ```
 
