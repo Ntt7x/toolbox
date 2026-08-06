@@ -68,13 +68,57 @@ export default function ArchGraph() {
       chartInst.current = echarts.init(chartRef.current);
     }
     const chart = chartInst.current;
-    const nameOf = (id: string) => data.nodes.find((n) => n.id === id)?.name ?? id;
+
+    // ---- 分层静态布局（按模块类型分列，消除 force 抖动/跳变） ----
+    // 列 x 坐标：业务模块 → 公共模块 → 外部系统/数据层（单向流）
+    const COL_X: Record<string, number> = { feature: 150, core: 520, external: 850, data: 960 };
+    const CHART_H = 600;
+    const TOP = 70;
+    const typeOrder = ["feature", "core", "external", "data"] as const;
+    const colNodes = new Map<string, { id: string; name: string; type: string }[]>();
+    for (const n of data.nodes) {
+      const arr = colNodes.get(n.type) ?? [];
+      arr.push(n);
+      colNodes.set(n.type, arr);
+    }
+    const pos = new Map<string, [number, number]>();
+    for (const t of typeOrder) {
+      const arr = colNodes.get(t) ?? [];
+      // 出边多的节点放列中间（减少交叉）：按出度降序排布，再映射到 y
+      const outDeg = new Map<string, number>();
+      for (const e of data.edges) outDeg.set(e.from, (outDeg.get(e.from) ?? 0) + 1);
+      const sorted = [...arr].sort((a, b) => (outDeg.get(b.id) ?? 0) - (outDeg.get(a.id) ?? 0));
+      const n = sorted.length;
+      sorted.forEach((node, i) => {
+        // 折线交错：偶数位从中间向上、奇数位从中间向下（避免同列直线重叠）
+        const mid = (n - 1) / 2;
+        const y = n === 1 ? CHART_H / 2 : TOP + ((i - mid) * ((CHART_H - 2 * TOP) / Math.max(n - 1, 1)));
+        pos.set(node.id, [COL_X[t] ?? 520, y]);
+      });
+    }
+
+    const EDGE_COLOR: Record<string, string> = {
+      import: "#94a3b8",
+      "llm-mode": "#7c3aed",
+      acp: "#dc2626",
+      api: "#0ea5e9",
+      data: "#059669",
+    };
+
     chart.setOption({
+      animationDuration: 500,
+      animationDurationUpdate: 350,
+      animationEasingUpdate: "cubicOut",
+      legend: {
+        top: 0,
+        textStyle: { fontSize: 11, color: "#475569" },
+        data: Object.entries(TYPE_META).map(([, v]) => v.label),
+      },
       tooltip: {
-        formatter: (p: { dataType: string; data: { name: string; desc?: string; type: string } }) => {
+        formatter: (p: { dataType?: string; data?: { name?: string; desc?: string; type?: string } }) => {
           if (p.dataType === "node") {
-            const t = TYPE_META[p.data.type]?.label ?? p.data.type;
-            return `<b>${p.data.name}</b><br/>${t}${p.data.desc ? `<br/><span style="color:#64748b">${p.data.desc.slice(0, 120)}</span>` : ""}`;
+            const t = p.data?.type ? TYPE_META[p.data.type]?.label ?? p.data.type : "";
+            return `<b>${p.data?.name ?? ""}</b><br/>${t}${p.data?.desc ? `<br/><span style="color:#64748b">${p.data.desc.slice(0, 120)}</span>` : ""}`;
           }
           return "";
         },
@@ -82,23 +126,42 @@ export default function ArchGraph() {
       series: [
         {
           type: "graph",
-          layout: "force",
-          roam: true, // 缩放 + 拖拽
+          layout: "none", // 手工分层布局：稳定无抖动，可拖拽（roam）
+          roam: true,
           draggable: true,
-          force: { repulsion: 320, edgeLength: [60, 180], gravity: 0.08 },
-          label: { show: true, fontSize: 11, color: "#334155" },
-          emphasis: { focus: "adjacency", label: { fontSize: 13, fontWeight: 700 } },
-          lineStyle: { color: "#94a3b8", width: 1, curveness: 0.08 },
-          edgeLabel: { show: true, fontSize: 9, color: "#64748b", formatter: (p: { data: { label?: string; kind: string } }) => p.data.label ?? EDGE_KIND_LABEL[p.data.kind] ?? "" },
           data: data.nodes.map((n) => ({
             id: n.id,
             name: n.name,
             desc: n.desc,
             type: n.type,
-            symbolSize: n.type === "feature" ? 46 : n.type === "core" ? 38 : n.type === "data" ? 30 : 36,
-            itemStyle: { color: TYPE_META[n.type]?.color ?? "#64748b" },
+            x: pos.get(n.id)?.[0],
+            y: pos.get(n.id)?.[1],
+            symbolSize: n.type === "feature" ? 48 : n.type === "core" ? 40 : n.type === "data" ? 32 : 40,
+            itemStyle: {
+              color: TYPE_META[n.type]?.color ?? "#64748b",
+              borderColor: "#fff",
+              borderWidth: 2,
+              shadowBlur: 10,
+              shadowColor: "rgba(100,116,139,0.35)",
+            },
+            label: { position: n.type === "feature" ? "top" : "right", distance: 8, fontSize: 11, color: "#334155", fontWeight: n.type === "feature" ? 700 : 500 },
           })),
-          links: data.edges.map((e) => ({ source: e.from, target: e.to, kind: e.kind, label: e.label })),
+          links: data.edges.map((e) => ({
+            source: e.from,
+            target: e.to,
+            kind: e.kind,
+            label: e.label,
+            lineStyle: { color: EDGE_COLOR[e.kind] ?? "#94a3b8", width: e.kind === "import" ? 1.2 : 1.6, curveness: 0.18, opacity: 0.85 },
+          })),
+          edgeSymbol: ["none", "arrow"],
+          edgeSymbolSize: 7,
+          edgeLabel: {
+            show: true,
+            fontSize: 9,
+            color: "#94a3b8",
+            formatter: (p: { data?: { label?: string; kind?: string } }) => p.data?.label ?? (p.data?.kind ? EDGE_KIND_LABEL[p.data.kind] ?? "" : ""),
+          },
+          emphasis: { focus: "adjacency", lineStyle: { width: 2.4 }, label: { fontSize: 13, fontWeight: 700 } },
           categories: Object.entries(TYPE_META).map(([k, v]) => ({ name: v.label, itemStyle: { color: v.color } })),
         },
       ],
