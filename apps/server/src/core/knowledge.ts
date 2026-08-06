@@ -16,6 +16,18 @@ import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import type { KnowledgeAskResult, KnowledgeEntry, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
 
+/** 领域模板解析（读取 kbDomain:<instance> 的 ask/extract 模板；未配置返回 undefined → 调用方回退 medical/通用） */
+function getInstanceTemplate(kind: "ask" | "extract", instance?: string): string | undefined {
+  if (instance) {
+    const meta = kvGet<{ askTemplate?: string; extractTemplate?: string }>(`kbDomain:${instance}`);
+    if (meta) {
+      const t = kind === "ask" ? meta.askTemplate : meta.extractTemplate;
+      if (t && t.trim()) return t;
+    }
+  }
+  return undefined;
+}
+
 // 数据源注册（本地数据管理可见；知识库为服务端公共数据）
 registerDataSource({
   kind: "kv",
@@ -277,7 +289,7 @@ export async function kbAsk(
     used.length > 0
       ? used.map((e) => `- [${e.key}]${e.source ? `（来源：${e.source}）` : ""}\n  ${e.value}`).join("\n")
       : "（知识库中未检索到相关内容，请如实说明）";
-  const system = getPromptTemplate(opts.instance === "medical" ? "medical-kb.ask" : "knowledge.ask");
+  const system = getInstanceTemplate("ask", opts.instance) ?? getPromptTemplate(opts.instance === "medical" ? "medical-kb.ask" : "knowledge.ask");
   const userMsg = `【问题】\n${q}\n\n【知识库检索结果】\n${knowledgeText}`;
 
   const result = await chat(
@@ -327,7 +339,7 @@ export async function kbImportFromChat(
     .join("\n\n")
     .slice(0, 30000); // 截断防超长
 
-  const template = getPromptTemplate(opts.instance === "medical" ? "medical-kb.extract" : "knowledge.extract");
+  const template = getInstanceTemplate("extract", opts.instance) ?? getPromptTemplate(opts.instance === "medical" ? "medical-kb.extract" : "knowledge.extract");
   const result = await chat(
     [
       { role: "system", content: template },

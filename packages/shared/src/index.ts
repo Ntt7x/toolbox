@@ -1470,6 +1470,10 @@ export interface KnowledgeDomainMeta {
   name: string;
   desc: string;
   keywords: string[];
+  /** 领域特化问答模板（覆盖默认；空则用通用/医学默认） */
+  askTemplate?: string;
+  /** 领域特化导入提取模板 */
+  extractTemplate?: string;
 }
 
 export interface VirtualKb {

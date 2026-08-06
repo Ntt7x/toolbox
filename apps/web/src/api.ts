@@ -305,8 +305,9 @@ export const api = {
     request<{ ok: boolean; answer?: string; message?: string }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/ask`, jsonInit("POST", { question })),
   knowledgeHubImportVirt: (name: string, url: string) =>
     request<import("@toolbox/shared").KnowledgeImportResult>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/import`, jsonInit("POST", { url })),
-  knowledgeHubSetDomain: (name: string, meta: { desc?: string; keywords?: string[] }) =>
+  knowledgeHubSetDomain: (name: string, meta: { desc?: string; keywords?: string[]; askTemplate?: string; extractTemplate?: string }) =>
     request<{ ok: boolean; domain: import("@toolbox/shared").KnowledgeDomainMeta }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}`, jsonInit("PUT", meta)),
+  knowledgeHubSeedMedical: (force?: boolean) => request<{ ok: boolean; domain?: import("@toolbox/shared").KnowledgeDomainMeta }>("/tools/knowledge-hub/domain/medical/seed", jsonInit("POST", { force: force === true })),
   knowledgeHubAskDomain: (name: string, question: string) =>
     request<{ ok: boolean; answer?: string; message?: string }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/ask`, jsonInit("POST", { question })),
   knowledgeHubImportDomain: (name: string, url: string) =>

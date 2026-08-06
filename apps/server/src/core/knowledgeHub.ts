@@ -10,6 +10,7 @@
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { kbAsk, kbImportFromChat, matchDomain } from "./knowledge.js";
+import { MEDICAL_KB_ASK, MEDICAL_KB_EXTRACT } from "./prompts.js";
 import type { KnowledgeImportResult } from "@toolbox/shared";
 
 registerDataSource({
@@ -42,6 +43,10 @@ export interface DomainMeta {
   name: string;
   desc: string;
   keywords: string[];
+  /** 领域特化问答模板（覆盖默认；空则用通用/医学默认） */
+  askTemplate?: string;
+  /** 领域特化导入提取模板 */
+  extractTemplate?: string;
 }
 
 // ---------- 虚拟库 CRUD ----------
@@ -82,12 +87,14 @@ export function getDomainMeta(name: string): DomainMeta | null {
   return kvGet<DomainMeta>(`${DOMAIN_PREFIX}${name}`) ?? null;
 }
 
-export function setDomainMeta(name: string, meta: { desc?: string; keywords?: string[] }): DomainMeta {
+export function setDomainMeta(name: string, meta: { desc?: string; keywords?: string[]; askTemplate?: string; extractTemplate?: string }): DomainMeta {
   const old = getDomainMeta(name);
   const d: DomainMeta = {
     name,
     desc: meta.desc?.trim() || old?.desc || "",
     keywords: meta.keywords?.map((k) => k.trim()).filter(Boolean) || old?.keywords || [],
+    ...(meta.askTemplate !== undefined ? { askTemplate: meta.askTemplate } : old?.askTemplate ? { askTemplate: old.askTemplate } : {}),
+    ...(meta.extractTemplate !== undefined ? { extractTemplate: meta.extractTemplate } : old?.extractTemplate ? { extractTemplate: old.extractTemplate } : {}),
   };
   kvSet(`${DOMAIN_PREFIX}${name}`, d);
   return d;
@@ -104,6 +111,31 @@ export function listDomains(): DomainMeta[] {
     }
   }
   return out;
+}
+
+/** 医学领域模板 seed：幂等初始化 kbDomain:medical 的 ask/extract 模板（默认不覆盖用户已编辑内容；force 强制重置为内置模板） */
+export function seedMedicalTemplates(force = false): void {
+  const old = getDomainMeta("medical");
+  const d: DomainMeta = {
+    name: "medical",
+    desc: old?.desc || "医学知识库",
+    keywords: old?.keywords?.length ? old.keywords : ["血压", "手术", "康复", "药物", "治疗", "疾病", "训练", "肌肉", "症状", "诊断"],
+    askTemplate: !old?.askTemplate || force ? MEDICAL_KB_ASK : old.askTemplate,
+    extractTemplate: !old?.extractTemplate || force ? MEDICAL_KB_EXTRACT : old.extractTemplate,
+  };
+  kvSet(`${DOMAIN_PREFIX}medical`, d);
+}
+
+/** 领域模板解析：kbDomain 配置 → 领域特化模板；未配置返回 undefined（调用方回退 medical/通用） */
+export function getInstanceTemplate(kind: "ask" | "extract", instance?: string): string | undefined {
+  if (instance) {
+    const meta = getDomainMeta(instance);
+    if (meta) {
+      const t = kind === "ask" ? meta.askTemplate : meta.extractTemplate;
+      if (t && t.trim()) return t;
+    }
+  }
+  return undefined;
 }
 
 // ---------- 虚拟库聚合问答（多实例检索 → 单次 LLM） ----------

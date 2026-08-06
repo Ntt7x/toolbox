@@ -14,6 +14,7 @@ import {
   listDomains,
   getDomainMeta,
   setDomainMeta,
+  seedMedicalTemplates,
   askVirtKb,
   importToVirtKb,
 } from "../../core/knowledgeHub.js";
@@ -88,14 +89,23 @@ export function register(app: Hono): void {
     }
   });
 
-  // 领域元数据（描述/关键词，供自动匹配导入）
+  // 领域元数据（描述/关键词/领域特化模板，供自动匹配导入与领域问答）
   route.put("/domain/:name", async (c: Context) => {
     const body = await c.req.json().catch(() => ({}));
     const d = setDomainMeta(c.req.param("name") ?? "", {
       desc: body.desc ? String(body.desc) : undefined,
       keywords: Array.isArray(body.keywords) ? body.keywords.map((k: unknown) => String(k)) : undefined,
+      askTemplate: body.askTemplate !== undefined ? String(body.askTemplate) : undefined,
+      extractTemplate: body.extractTemplate !== undefined ? String(body.extractTemplate) : undefined,
     });
     return c.json({ ok: true, domain: d });
+  });
+
+  // 医学领域模板 seed（幂等初始化；force 强制重置为内置医学模板）
+  route.post("/domain/medical/seed", async (c: Context) => {
+    const body = await c.req.json().catch(() => ({}));
+    seedMedicalTemplates(body.force === true);
+    return c.json({ ok: true, domain: getDomainMeta("medical") });
   });
 
   app.route(`${API_PREFIX}/tools/knowledge-hub`, route);
