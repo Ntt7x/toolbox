@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LlmChatMessage, LlmChatResult, LlmTestResult } from "@toolbox/shared";
+import type { LlmCallMode, LlmChatMessage, LlmChatResult, LlmTestResult, LlmUsageScene } from "@toolbox/shared";
 import { deleteSetting, getSetting, setSetting } from "./settingsStore.js";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
@@ -97,6 +97,8 @@ interface ChatOptions {
   signal?: AbortSignal;
   /** 用量归属模块（如 cb-rate / watchlist.fundamental），用于用量监控 */
   module?: string;
+  /** 调用模式（用量按模式统计；默认 direct 直调） */
+  mode?: LlmCallMode;
 }
 
 export type { ChatOptions };
@@ -127,9 +129,9 @@ export async function chat(
   opts: ChatOptions = {},
 ): Promise<LlmChatResult> {
   const result = opts.search ? await chatSearch(messages, opts) : await chatCompletion(messages, opts);
-  // 用量监控：成功且有 usage 时记录（模块归属）
+  // 用量监控：成功且有 usage 时记录（模块归属 + 调用模式）
   if (result.ok && result.usage) {
-    recordLlmUsage(opts.module ?? "unknown", result.model, result.usage);
+    recordLlmUsage(opts.module ?? "unknown", result.model, result.usage, opts.mode ?? "direct");
   }
   return result;
 }
@@ -321,10 +323,31 @@ function moduleLabel(module: string): string {
 /** 日志上限（超出截断最旧） */
 const USAGE_MAX = 2000;
 
+/** 场景中文标签 */
+export const SCENE_LABELS: Record<LlmUsageScene, string> = {
+  business: "业务场景",
+  system: "系统工具",
+  test: "测试",
+};
+
+/** 从 module 推断用量场景（显式 scene 缺省时的兜底规则）：
+ * - `it:` / `test:` 前缀 → 测试（集成测试/单测）
+ * - `llm.test` / `llm.chat` → 系统工具（设置页自测）
+ * - 其余 → 业务场景 */
+export function sceneOfModule(module: string): LlmUsageScene {
+  if (module.startsWith("it.") || module.startsWith("it:") || module.startsWith("test.") || module.startsWith("test:")) return "test";
+  if (module === "llm.test" || module === "llm.chat") return "system";
+  return "business";
+}
+
 interface UsageEntry {
   ts: string;
   module: string;
   model: string;
+  /** 调用模式（direct / chat-session / reasonix）；旧数据缺省按 direct */
+  mode?: LlmCallMode;
+  /** 用量场景（business / system / test）；旧数据缺省按 module 推断 */
+  scene?: LlmUsageScene;
   promptTokens: number;
   completionTokens: number;
   /** 命中缓存输入 token（DeepSeek 前缀缓存） */
@@ -332,6 +355,13 @@ interface UsageEntry {
   /** 未命中缓存输入 token */
   cacheMissTokens: number;
 }
+
+/** 调用模式中文标签 */
+export const MODE_LABELS: Record<LlmCallMode, string> = {
+  direct: "直接调用",
+  "chat-session": "会话缓存（自研）",
+  reasonix: "会话缓存（Reasonix）",
+};
 
 function readUsageEntries(): UsageEntry[] {
   const saved = kvGet<{ entries?: unknown[] }>(LLM_USAGE_KEY);
@@ -341,11 +371,14 @@ function readUsageEntries(): UsageEntry[] {
     .slice();
 }
 
-/** 记录一次 LLM 用量（失败不影响主流程）；导出供三模式共用 */
+/** 记录一次 LLM 用量（失败不影响主流程）；导出供三模式共用
+ * scene 显式标注（business/system/test）；缺省按 module 前缀推断 */
 export function recordLlmUsage(
   module: string,
   model: string,
   usage: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number },
+  mode: LlmCallMode = "direct",
+  scene?: LlmUsageScene,
 ): void {
   try {
     const mod = module || "unknown";
@@ -358,6 +391,8 @@ export function recordLlmUsage(
       ts: new Date().toISOString(),
       module: mod,
       model: model || "unknown",
+      mode,
+      scene: scene ?? sceneOfModule(mod),
       promptTokens: usage.promptTokens ?? 0,
       completionTokens: usage.completionTokens ?? 0,
       cacheHitTokens: usage.cacheHitTokens ?? 0,
@@ -381,6 +416,9 @@ function localDay(iso: string): string {
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
   const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+  const byMode = new Map<LlmCallMode, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
+  const byScene = new Map<LlmUsageScene, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
+  const sceneOf = new Map<string, LlmUsageScene>(); // module → scene（供 byModule/byDay 输出）
   const byModule = new Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const byDay = new Map<
     string,
@@ -394,11 +432,26 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     }
   >();
   for (const e of entries) {
+    const mode = e.mode ?? "direct"; // 旧数据（无 mode）按 direct 计
+    const scene = e.scene ?? sceneOfModule(e.module); // 旧数据（无 scene）按 module 推断
+    sceneOf.set(e.module, scene);
     total.promptTokens += e.promptTokens;
     total.completionTokens += e.completionTokens;
     total.totalTokens += e.promptTokens + e.completionTokens;
     total.cacheHitTokens += e.cacheHitTokens ?? 0;
     total.cacheMissTokens += e.cacheMissTokens ?? 0;
+    const mo = byMode.get(mode) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+    mo.calls++;
+    mo.totalTokens += e.promptTokens + e.completionTokens;
+    mo.cacheHitTokens += e.cacheHitTokens ?? 0;
+    mo.cacheMissTokens += e.cacheMissTokens ?? 0;
+    byMode.set(mode, mo);
+    const sc = byScene.get(scene) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+    sc.calls++;
+    sc.totalTokens += e.promptTokens + e.completionTokens;
+    sc.cacheHitTokens += e.cacheHitTokens ?? 0;
+    sc.cacheMissTokens += e.cacheMissTokens ?? 0;
+    byScene.set(scene, sc);
     const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
     m.calls++;
     m.totalTokens += e.promptTokens + e.completionTokens;
@@ -421,11 +474,30 @@ export function getLlmUsageSummary(): LlmUsageSummary {
   }
   const rate = (hit: number, miss: number): number => (hit + miss > 0 ? hit / (hit + miss) : 0);
   const sortDesc = (a: { totalTokens: number }, b: { totalTokens: number }) => b.totalTokens - a.totalTokens;
+  const modes: LlmCallMode[] = ["direct", "chat-session", "reasonix"];
+  const scenes: LlmUsageScene[] = ["business", "system", "test"];
   return {
     ok: true,
-    total: { ...total, cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens) },
+    total: {
+      ...total,
+      cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens),
+      byMode: modes
+        .filter((mo) => byMode.has(mo))
+        .map((mo) => {
+          const v = byMode.get(mo)!;
+          return { mode: mo, label: MODE_LABELS[mo], ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) };
+        })
+        .sort((a, b) => b.calls - a.calls),
+      byScene: scenes
+        .filter((sc) => byScene.has(sc))
+        .map((sc) => {
+          const v = byScene.get(sc)!;
+          return { scene: sc, label: SCENE_LABELS[sc], ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) };
+        })
+        .sort((a, b) => b.calls - a.calls),
+    },
     byModule: [...byModule.entries()]
-      .map(([module, v]) => ({ module, label: moduleLabel(module), ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) }))
+      .map(([module, v]) => ({ module, label: moduleLabel(module), scene: sceneOf.get(module) ?? "business", ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) }))
       .sort(sortDesc),
     byDay: [...byDay.entries()]
       .map(([day, v]) => ({
@@ -436,7 +508,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
         cacheMissTokens: v.cacheMissTokens,
         cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens),
         byModule: [...v.byModule.entries()]
-          .map(([module, m]) => ({ module, label: moduleLabel(module), ...m, cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens) }))
+          .map(([module, m]) => ({ module, label: moduleLabel(module), scene: sceneOf.get(module) ?? "business", ...m, cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens) }))
           .sort(sortDesc),
       }))
       .sort((a, b) => (a.day < b.day ? 1 : -1)),

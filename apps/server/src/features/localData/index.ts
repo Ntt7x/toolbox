@@ -23,7 +23,7 @@ function firstColOf(rows: Record<string, unknown>[]): string | undefined {
 }
 
 /** 按表列出条目（首列作为 key，带完整行供详情） */
-function tableEntries(table: string): { key: string; updatedAt?: string; preview: string; row: Record<string, unknown> }[] {
+function tableEntries(table: string): { key: string; updatedAt?: string; preview: string; size: number; row: Record<string, unknown> }[] {
   const rows = queryRows(table);
   return rows.map((r, i) => {
     const firstCol = firstColOf([r]);
@@ -32,15 +32,28 @@ function tableEntries(table: string): { key: string; updatedAt?: string; preview
       key: firstCol ? String(r[firstCol]) : `row-${i}`,
       updatedAt: undefined,
       preview: preview.length > 200 ? `${preview.slice(0, 200)}…` : preview,
+      size: Buffer.byteLength(preview, "utf8"),
       row: r,
     };
   });
 }
 
 export function register(app: Hono): void {
-  // 数据源汇总（注册源 + 未标记自动发现）
+  // 数据源汇总（注册源 + 未标记自动发现；KV 源附总字节数）
   app.get(`${API_PREFIX}/data/local/sources`, (c) => {
-    return c.json({ ok: true, sources: listDataSources() });
+    const sources = listDataSources();
+    const withSize = sources.map((s) => {
+      if (s.kind === "table") return { ...s, sizeBytes: 0 };
+      try {
+        const rows = kvListRaw(s.name, 5000);
+        let bytes = 0;
+        for (const r of rows) bytes += Buffer.byteLength(r.value, "utf8");
+        return { ...s, sizeBytes: bytes };
+      } catch {
+        return { ...s, sizeBytes: 0 };
+      }
+    });
+    return c.json({ ok: true, sources: withSize });
   });
 
   // 数据源条目列表：?source=<前缀> 或 ?table=<表名>；支持 ?search=<包含匹配>、?limit=&offset= 分页
@@ -62,7 +75,7 @@ export function register(app: Hono): void {
       const entries = page.map((r) => {
         let preview = r.value;
         if (preview.length > 200) preview = `${preview.slice(0, 200)}…`;
-        return { key: r.key, updatedAt: r.updated_at, preview };
+        return { key: r.key, updatedAt: r.updated_at, preview, size: Buffer.byteLength(r.value, "utf8") };
       });
       return c.json({ ok: true, source: { kind: "kv", name: source }, entries, total, offset, limit });
     }

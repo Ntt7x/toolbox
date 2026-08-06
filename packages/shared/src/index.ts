@@ -585,7 +585,13 @@ export interface LlmChatErrorResponse {
 
 export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
 
-/** LLM 用量汇总（服务端切面记录，按模块/按天聚合） */
+/** LLM 调用模式（用量按模式统计） */
+export type LlmCallMode = "direct" | "chat-session" | "reasonix";
+
+/** LLM 用量场景（按业务场景区分，测试/系统用量不混入业务统计） */
+export type LlmUsageScene = "business" | "system" | "test";
+
+/** LLM 用量汇总（服务端切面记录，按模块/按天/按模式/按场景聚合） */
 export interface LlmUsageSummary {
   ok: true;
   total: {
@@ -598,10 +604,14 @@ export interface LlmUsageSummary {
     cacheMissTokens: number;
     /** 缓存命中率（0~1；无输入时 0） */
     cacheRate: number;
+    /** 按调用模式聚合（direct 直调 / chat-session 自研会话 / reasonix ACP 会话） */
+    byMode: { mode: LlmCallMode; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
+    /** 按场景聚合（business 业务 / system 系统 / test 测试）；旧数据按 module 推断 */
+    byScene: { scene: LlmUsageScene; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   };
-  byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
+  byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   /** 逐日（倒序）；byModule 为该日各模块明细（单日扇形图用） */
-  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
+  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
 }
 
 /** DeepSeek 平台余额查询结果 */
@@ -1002,7 +1012,7 @@ export type AsyncTaskResult<T = unknown> = AsyncTaskResponse<T> | AsyncTaskError
 // 本地数据管理（local-data）：查询/删改本地表与 KV 数据
 // ============================================================
 
-/** 数据源（KV 前缀或表）的注册元信息 + 实时条目数 */
+/** 数据源（KV 前缀或表）的注册元信息 + 实时条目数 + 存储大小 */
 export interface LocalDataSource {
   kind: "kv" | "table";
   /** kv: key 前缀；table: 表名 */
@@ -1015,6 +1025,8 @@ export interface LocalDataSource {
   description: string;
   /** 当前条目数 */
   count: number;
+  /** KV 源：全部条目 value 的 UTF-8 字节总数（table 源为 0） */
+  sizeBytes?: number;
 }
 
 export interface LocalDataSourcesResponse {
@@ -1028,6 +1040,8 @@ export interface LocalDataEntry {
   updatedAt?: string;
   /** value 的 JSON 预览（截断） */
   preview: string;
+  /** value 的 UTF-8 字节数（存储大小） */
+  size?: number;
   /** 表数据行：行字段（table 类型时存在） */
   row?: Record<string, unknown>;
 }

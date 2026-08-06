@@ -232,6 +232,7 @@ export async function chatSessionAsk(
   ];
   const opts: ChatOptions = {
     module: s.module,
+    mode: "chat-session",
     ...(s.model ? { model: s.model } : {}),
     ...(s.search ? { search: true } : {}),
     ...(s.json ? { json: true } : {}),
