@@ -267,6 +267,34 @@ export default function KnowledgeHubTool() {
   }, [ov]);
   const domainCount = (name: string) => ov.instances.find((i) => i.instance === name)?.count ?? 0;
 
+  // ---------- 删除知识库（输入名称精准确认，防误删） ----------
+  const delEntry = async (e: KbEntry) => {
+    const typed = prompt(
+      e.type === "domain"
+        ? `删除领域知识库「${e.name}」将清空其全部 ${e.count} 条知识，且不可恢复。\n请输入名称「${e.name}」确认删除：`
+        : `删除虚拟知识库「${e.name}」仅移除组合配置，不影响领域库数据。\n请输入名称「${e.name}」确认删除：`,
+      "",
+    );
+    if (typed?.trim() !== e.name) {
+      if (typed !== null) setErr("名称不匹配，已取消删除");
+      return;
+    }
+    try {
+      if (e.type === "domain") {
+        const r = await api.knowledgeHubDeleteDomain(e.name);
+        if (r.ok) setErr(`🗑️ 领域「${e.name}」已删除（清空 ${(r as { removedEntries?: number }).removedEntries ?? 0} 条）`);
+        else setErr(`删除失败：${r.message}`);
+      } else {
+        await api.knowledgeHubDeleteVirt(e.name);
+        setErr(`🗑️ 虚拟库「${e.name}」已删除`);
+      }
+      if (selName === e.name) setSelName("");
+      await load();
+    } catch (ex) {
+      setErr(`删除失败：${ex instanceof Error ? ex.message : String(ex)}`);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "1.5rem 1rem", color: "#1e293b", fontSize: "0.9rem" }}>
       <h2 style={{ margin: "0 0 0.25rem" }}>📚 知识库中心</h2>
@@ -360,6 +388,13 @@ export default function KnowledgeHubTool() {
                   {e.type === "virt" ? "虚拟库" : "领域库"}
                 </span>
                 <span style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: "auto" }}>{e.count} 条</span>
+                <button
+                  style={{ fontSize: "0.75rem", padding: "0.2rem 0.6rem", borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer" }}
+                  onClick={(ev) => { ev.stopPropagation(); void delEntry(e); }}
+                  title="删除（需输入名称确认）"
+                >
+                  🗑️
+                </button>
               </div>
             );
           })}

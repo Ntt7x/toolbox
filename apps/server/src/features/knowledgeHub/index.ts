@@ -15,6 +15,7 @@ import {
   getDomainMeta,
   setDomainMeta,
   createDomain,
+  deleteDomain,
   generateDomainTemplates,
   seedMedicalTemplates,
   askVirtKb,
@@ -44,6 +45,13 @@ export function register(app: Hono): void {
   route.delete("/virt/:name", (c: Context) => {
     deleteVirtKb(c.req.param("name") ?? "");
     return c.json({ ok: true, deleted: true });
+  });
+
+  // 删除领域知识库（彻底：清空实例条目 + 删元数据）
+  route.delete("/domain/:name", (c: Context) => {
+    const r = deleteDomain(c.req.param("name") ?? "");
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json({ ok: true, deleted: true, removedEntries: r.removedEntries });
   });
 
   // 虚拟库聚合问答

@@ -9,7 +9,7 @@
 // ============================================================
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
-import { kbAsk, kbImportFromChat, matchDomain } from "./knowledge.js";
+import { kbAsk, kbImportFromChat, matchDomain, clearInstance } from "./knowledge.js";
 import { chat } from "./llm.js";
 import { robustJsonParse } from "./jsonParse.js";
 import { MEDICAL_KB_ASK, MEDICAL_KB_EXTRACT } from "./prompts.js";
@@ -135,6 +135,14 @@ export async function generateDomainTemplates(info: { name: string; desc?: strin
   const extractTemplate = typeof p?.extractTemplate === "string" ? p.extractTemplate.trim() : "";
   if (!askTemplate || !extractTemplate) throw new Error("模板生成结果不完整（缺 askTemplate/extractTemplate）");
   return { askTemplate, extractTemplate };
+}
+
+/** 删除领域知识库：删领域元数据 + 清空该实例全部知识条目（彻底删除）；返回删除条目数 */
+export function deleteDomain(name: string): { ok: boolean; message?: string; removedEntries?: number } {
+  if (!getDomainMeta(name)) return { ok: false, message: `领域「${name}」不存在` };
+  const removedEntries = clearInstance(name);
+  kvDelete(`${DOMAIN_PREFIX}${name}`);
+  return { ok: true, removedEntries };
 }
 
 export function listDomains(): DomainMeta[] {
