@@ -59,7 +59,7 @@ const MENU_GROUPS: MenuGroup[] = [
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
   { label: "小工具", toolIds: ["deepseek-share", "zhihu-crawler", "books"] },
-  { label: "康复", toolIds: ["rehab-medical", "rehab-muscle"] },
+  { label: "知识库", toolIds: ["rehab-medical"] },
 ];
 
 /** 菜单顺序服务端设置 key（本地设置数据：settings:menu.order） */

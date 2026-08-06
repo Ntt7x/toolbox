@@ -36,7 +36,7 @@ export function hasCookie(): boolean {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function humanDelay(): Promise<void> {
-  await sleep(1500 + Math.floor(Math.random() * 1500));
+  await sleep(3000 + Math.floor(Math.random() * 3000));
 }
 
 export function extractUrlToken(target: string): string {
@@ -363,7 +363,7 @@ async function crawlCommentsBatch(
           if (signal?.aborted) break;
           const before = comments.length;
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-          await sleep(1500 + Math.floor(Math.random() * 1000));
+          await sleep(2500 + Math.floor(Math.random() * 2000));
           if (comments.length === before) {
             stuck++;
             if (stuck >= 3) break;
@@ -373,7 +373,7 @@ async function crawlCommentsBatch(
         }
         page.off("response", listener);
         if (comments.length > 0) item.comments = comments;
-        await sleep(1000);
+        await sleep(2000);
       }
     } catch (e) {
       onProgress?.(`评论抓取异常：${e instanceof Error ? e.message : String(e)}`);
@@ -432,7 +432,7 @@ async function crawlKindWithBrowser(
         return items;
       }
       // 等待首次数据
-      for (let i = 0; i < 15 && items.length === 0 && !signal?.aborted; i++) await sleep(1000);
+      for (let i = 0; i < 15 && items.length === 0 && !signal?.aborted; i++) await sleep(2000);
       // 滚动翻页（无限加载）；人类频率 1.5~3s
       let stuck = 0;
       for (let i = 0; i < 40; i++) {
@@ -440,7 +440,7 @@ async function crawlKindWithBrowser(
         if (limit > 0 && items.length >= limit) break;
         const before = items.length;
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-        await sleep(1500 + Math.floor(Math.random() * 1500));
+        await sleep(3000 + Math.floor(Math.random() * 3000));
         if (items.length === before) {
           stuck++;
           if (stuck >= 3) break; // 连续无新数据 → 到底
@@ -467,7 +467,7 @@ export interface CrawlProgress {
 
 export async function crawlUser(
   target: string,
-  opts: { types?: ZhihuCrawlKind[]; limit?: number; signal?: AbortSignal; onProgress?: (p: CrawlProgress) => void },
+  opts: { types?: ZhihuCrawlKind[]; limit?: number; dateFrom?: string; dateTo?: string; signal?: AbortSignal; onProgress?: (p: CrawlProgress) => void },
 ): Promise<ZhihuCrawlResult> {
   const token = extractUrlToken(target);
   if (!token) return { ok: false, message: "无法识别用户（请输入知乎主页 URL 或 urlToken）" };
@@ -508,6 +508,21 @@ export async function crawlUser(
 
   const items = all
     .filter((i) => i.content.length > 0 || i.title)
+    .filter((i) => {
+      // 日期范围过滤（YYYY-MM-DD；按天比较）
+      const d = new Date(i.created * 1000);
+      if (opts.dateFrom) {
+        const from = new Date(opts.dateFrom);
+        from.setHours(0, 0, 0, 0);
+        if (d < from) return false;
+      }
+      if (opts.dateTo) {
+        const to = new Date(opts.dateTo);
+        to.setHours(23, 59, 59, 999);
+        if (d > to) return false;
+      }
+      return true;
+    })
     .sort((a, b) => b.created - a.created)
     .slice(0, limit > 0 ? limit : undefined)
     .map((i) => ({

@@ -296,7 +296,7 @@ export async function kbAsk(
  */
 export async function kbImportFromChat(
   url: string,
-  opts: { signal?: AbortSignal; instance?: string; module?: string } = {},
+  opts: { signal?: AbortSignal; instance?: string; module?: string; conflict?: "skip" | "overwrite" | "merge" } = {},
 ): Promise<KnowledgeImportResult> {
   const extracted = await extractShare(url);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
@@ -334,6 +334,45 @@ export async function kbImportFromChat(
   // 实例前缀（如 medical 实例 → medical.<原始key>），实现特定业务知识库隔离
   const prefix = opts.instance ? `${opts.instance}.` : "";
   const instFacts = facts.map((f) => ({ key: prefix + f.key, value: f.value, source: f.source ?? source }));
-  const imported = kbSetMany(instFacts);
-  return { ok: true, imported, facts: instFacts, title: extracted.title, shareId: extracted.shareId };
+  // 去重 + 冲突检测/解决：key 已存在 → 冲突（按策略处理）；value 与实例内已有条目重复 → 跳过
+  const strategy = opts.conflict ?? "skip";
+  const existing = readAllEntries().filter((e) => e.key.startsWith(prefix));
+  const existingValues = new Set(existing.map((e) => e.value.trim()));
+  const existingKeys = new Set(existing.map((e) => e.key));
+  let imported = 0;
+  let skipped = 0;
+  let conflicts = 0;
+  for (const it of instFacts) {
+    try {
+      if (existingKeys.has(it.key)) {
+        // key 冲突
+        if (strategy === "skip") {
+          conflicts++;
+          continue;
+        }
+        const old = kbGet(it.key);
+        if (strategy === "merge" && old) {
+          kbSet(it.key, `${old.value}\n${it.value}`, it.source);
+        } else {
+          kbSet(it.key, it.value, it.source);
+        }
+        imported++;
+        conflicts++;
+        continue;
+      }
+      // 内容去重（value 与实例内已有条目一致）
+      if (existingValues.has(it.value.trim())) {
+        skipped++;
+        continue;
+      }
+      kbSet(it.key, it.value, it.source);
+      existingKeys.add(it.key);
+      existingValues.add(it.value.trim());
+      imported++;
+    } catch {
+      // 单条 key 非法跳过（不影响整体）
+      skipped++;
+    }
+  }
+  return { ok: true, imported, skipped, conflicts, strategy, facts: instFacts, title: extracted.title, shareId: extracted.shareId };
 }

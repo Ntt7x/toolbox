@@ -117,7 +117,8 @@ export const api = {
     request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   rehabReset: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}/reset`, jsonInit("POST", {})),
   // 医学知识库（medical 实例，core/knowledge 业务落地）
-  medicalKbImport: (urls: string[]) => request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { urls })),
+  medicalKbImport: (urls: string[], conflict: "skip" | "overwrite" | "merge" = "skip") =>
+    request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { urls, conflict })),
   medicalKbList: () => request<{ ok: true; entries: KnowledgeEntry[]; total: number }>("/tools/medical-kb"),
   medicalKbDelete: (key: string) => request<{ ok: true; deleted: number } | { ok: false; message: string }>(`/tools/medical-kb/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
   medicalKbAsk: (question: string) => request<AsyncTaskResult<KnowledgeAskResult>>("/tools/medical-kb/ask", jsonInit("POST", { question })),
@@ -287,4 +288,8 @@ export const api = {
   zhihuInstances: () => request<{ ok: boolean; instances: { instance: string; count: number; updatedAt?: string }[] }>("/tools/zhihu-crawler/instances"),
   zhihuImport: (req: import("@toolbox/shared").ZhihuImportRequest) =>
     request<import("@toolbox/shared").ZhihuImportResult>("/tools/zhihu-crawler/import", jsonInit("POST", req)),
+  zhihuFavorites: () => request<{ ok: boolean; items: import("@toolbox/shared").ZhihuFavoriteEntry[] }>("/tools/zhihu-crawler/favorites"),
+  zhihuFavoriteAdd: (target: string, name?: string) =>
+    request<{ ok: boolean; favorites: import("@toolbox/shared").ZhihuFavoriteEntry[] }>("/tools/zhihu-crawler/favorites", jsonInit("PUT", { target, name })),
+  zhihuFavoriteDelete: (token: string) => request<{ ok: boolean; favorites: import("@toolbox/shared").ZhihuFavoriteEntry[] }>(`/tools/zhihu-crawler/favorites/${encodeURIComponent(token)}`, jsonInit("DELETE", {})),
 };

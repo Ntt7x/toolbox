@@ -29,6 +29,7 @@ export default function MedicalKbTool() {
   const [question, setQuestion] = useState("");
   const [listErr, setListErr] = useState<string | null>(null);
   const [clipHint, setClipHint] = useState(false);
+  const [conflict, setConflict] = useState<"skip" | "overwrite" | "merge">("skip");
 
   const importTask = useAsyncTask<KnowledgeImportResult>("medicalKbImportTaskId", (tid) => api.taskStatus<KnowledgeImportResult>(tid), api.cancelTask);
   const askTask = useAsyncTask<KnowledgeAskResult>("medicalKbAskTaskId", (tid) => api.taskStatus<KnowledgeAskResult>(tid), api.cancelTask);
@@ -59,7 +60,7 @@ export default function MedicalKbTool() {
     if (links.length === 0) return;
     setUrl("");
     try {
-      const t = await api.medicalKbImport(links);
+      const t = await api.medicalKbImport(links, conflict);
       if (t.ok) importTask.watch(t.taskId, t);
       else setListErr(t.message);
     } catch (e) {
@@ -123,13 +124,26 @@ export default function MedicalKbTool() {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void doImport(); }}
         />
-        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
           <button style={{ ...btn, background: "#0ea5e9" }} onClick={() => void readClipboard()} title="读取剪贴板中的分享链接" type="button">
             📋 从剪贴板读取
           </button>
           <button style={btn} onClick={() => void doImport()} disabled={importTask.running || !url.trim()} type="button">
             {importTask.running ? "⏳ 提取中…" : "🚀 批量导入"}
           </button>
+          <label style={{ display: "inline-flex", gap: "0.3rem", alignItems: "center", fontSize: "0.78rem", color: "#64748b" }}>
+            重复/冲突处理
+            <select
+              value={conflict}
+              onChange={(e) => setConflict(e.target.value as "skip" | "overwrite" | "merge")}
+              style={{ padding: "0.25rem 0.4rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.75rem" }}
+              title="key 已存在时的处理：跳过（默认，避免覆盖）/ 覆盖 / 合并"
+            >
+              <option value="skip">跳过重复</option>
+              <option value="overwrite">覆盖旧值</option>
+              <option value="merge">合并</option>
+            </select>
+          </label>
           <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{url.trim() ? (url.match(/share\//g) ?? []).length + " 条链接" : "支持粘贴多条链接"}</span>
         </div>
         {clipHint && <div style={{ color: "#0284c7", fontSize: "0.8rem", marginTop: "0.4rem" }}>📋 已从剪贴板自动填入分享链接</div>}
@@ -141,9 +155,11 @@ export default function MedicalKbTool() {
                 <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem" }}>
                   ✅ 批量导入完成：{importTask.result.summary ?? `成功 ${importTask.result.items.filter((x: { ok: boolean }) => x.ok).length}/${importTask.result.items.length}`} · 共 {importTask.result.imported} 条知识
                 </div>
-                {importTask.result.items.map((it: { url: string; ok: boolean; imported: number; message?: string }, i: number) => (
-                  <div key={i} style={{ fontSize: "0.78rem", padding: "0.2rem 0", borderBottom: "1px solid #eef2f7", color: it.ok ? "#15803d" : "#b91c1c" }}>
-                    {it.ok ? `✅ ${it.url.slice(0, 60)}… → +${it.imported} 条` : `❌ ${it.url.slice(0, 60)}… → ${it.message ?? "失败"}`}
+                {importTask.result.items.map((it: { url: string; ok: boolean; imported: number; skipped?: number; conflicts?: number; message?: string }, i: number) => (
+                  <div key={i} style={{ fontSize: "0.78rem", padding: "0.2rem 0", borderBottom: "1px solid #eef2f7", color: it.ok ? "#15803d" : "#b991c1c" }}>
+                    {it.ok
+                      ? `✅ ${it.url.slice(0, 60)}… → +${it.imported} 条${it.skipped ? `（重复跳过 ${it.skipped}）` : ""}${it.conflicts ? `（冲突 ${it.conflicts}）` : ""}`
+                      : `❌ ${it.url.slice(0, 60)}… → ${it.message ?? "失败"}`}
                   </div>
                 ))}
               </div>

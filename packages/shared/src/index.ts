@@ -1435,6 +1435,12 @@ export interface KnowledgeImportResult {
   facts: { key: string; value: string; source?: string }[];
   title: string;
   shareId: string;
+  /** 因内容重复被跳过的条数（去重） */
+  skipped?: number;
+  /** 因 key 冲突被跳过（skip 策略）或解决的条数 */
+  conflicts?: number;
+  /** 冲突处理策略：skip / overwrite / merge */
+  strategy?: string;
   /** 批量导入时：逐条结果与汇总 */
   items?: { url: string; ok: boolean; imported: number; title?: string; message?: string }[];
   summary?: string;
@@ -1466,6 +1472,17 @@ export interface ZhihuCrawlRequest {
   types?: ZhihuCrawlKind[];
   /** 每类最大条数（0=不限制，默认 0） */
   limit?: number;
+  /** 起始日期 YYYY-MM-DD（含）；仅抓取此日期之后的创作 */
+  dateFrom?: string;
+  /** 截止日期 YYYY-MM-DD（含）；仅抓取此日期之前的创作 */
+  dateTo?: string;
+}
+
+/** 收藏的爬取目标 */
+export interface ZhihuFavoriteEntry {
+  token: string;
+  name: string;
+  ts: string;
 }
 
 export type ZhihuCrawlKind = "answer" | "article" | "pin";

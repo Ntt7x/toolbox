@@ -84,6 +84,10 @@ export default function ZhihuCrawlerTool() {
   const [target, setTarget] = useState("");
   const [user, setUser] = useState<ZhihuUserInfo | null>(null);
   const [userErr, setUserErr] = useState("");
+  const [favorites, setFavorites] = useState<{ token: string; name: string; ts: string }[]>([]);
+  const [datePreset, setDatePreset] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [types, setTypes] = useState<ZhihuCrawlKind[]>(["answer", "article", "pin"]);
   const [limit, setLimit] = useState(0);
   const [history, setHistory] = useState<{ id: string; target: string; name: string; ts: string; total: number; resultId?: string }[]>([]);
@@ -112,6 +116,7 @@ export default function ZhihuCrawlerTool() {
   useEffect(() => {
     api.zhihuCookie().then((r) => setCookieOk(r.configured)).catch(() => {});
     api.zhihuHistory().then((r) => setHistory(r.items)).catch(() => {});
+    api.zhihuFavorites().then((r) => setFavorites(r.items)).catch(() => {});
     refreshInstances();
   }, []);
 
@@ -141,7 +146,21 @@ export default function ZhihuCrawlerTool() {
 
   const handleStart = async () => {
     if (!target.trim() || types.length === 0) return;
-    const req: ZhihuCrawlRequest = { target: target.trim(), types, limit };
+    // 日期范围解析
+    let from: string | undefined;
+    let to: string | undefined;
+    if (datePreset === "custom") {
+      from = dateFrom || undefined;
+      to = dateTo || undefined;
+    } else if (datePreset !== "all") {
+      const days = datePreset === "7d" ? 7 : datePreset === "30d" ? 30 : datePreset === "90d" ? 90 : 0;
+      if (days > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        from = d.toISOString().slice(0, 10);
+      }
+    }
+    const req: ZhihuCrawlRequest = { target: target.trim(), types, limit, ...(from ? { dateFrom: from } : {}), ...(to ? { dateTo: to } : {}) };
     const t = await api.zhihuCrawl(req);
     task.watch(t.taskId, t as never);
     setSelected(new Set());
@@ -284,7 +303,49 @@ export default function ZhihuCrawlerTool() {
           <button onClick={handleVerify} style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}>
             验证用户
           </button>
+          <button
+            onClick={async () => {
+              if (!target.trim()) return;
+              const name = user?.ok ? user.name : undefined;
+              const r = await api.zhihuFavoriteAdd(target.trim(), name);
+              setFavorites(r.favorites);
+              alert("已收藏目标");
+            }}
+            style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}
+            title="收藏此爬取目标"
+          >
+            ⭐ 收藏
+          </button>
         </div>
+        {favorites.length > 0 && (
+          <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>🕘 历史抓取目标：</span>
+            {favorites.map((f) => (
+              <span key={f.token} style={{ display: "inline-flex", alignItems: "center", gap: "0.2rem", background: "#f1f5f9", borderRadius: 999, padding: "0.15rem 0.6rem", fontSize: "0.75rem" }}>
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setTarget(f.token);
+                    setUser(null);
+                  }}
+                  style={{ color: "#475569", textDecoration: "none" }}
+                >
+                  {f.name || f.token}
+                </a>
+                <button
+                  onClick={async () => {
+                    const r = await api.zhihuFavoriteDelete(f.token);
+                    setFavorites(r.favorites);
+                  }}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "0.7rem", padding: 0 }}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {userErr && <p style={{ color: "#b91c1c", fontSize: "0.8rem", margin: "0.4rem 0 0" }}>{userErr}</p>}
         {user?.ok && (
           <div style={{ fontSize: "0.85rem", marginTop: "0.5rem", color: "#334155" }}>
@@ -316,6 +377,38 @@ export default function ZhihuCrawlerTool() {
               style={{ width: 70, padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1" }}
             />
           </label>
+          <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.8rem", color: "#64748b" }}>日期范围：</span>
+            {[
+              ["all", "全部"],
+              ["7d", "近7天"],
+              ["30d", "近30天"],
+              ["90d", "近90天"],
+              ["custom", "自定义"],
+            ].map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setDatePreset(v)}
+                style={{
+                  padding: "0.2rem 0.6rem",
+                  fontSize: "0.75rem",
+                  borderRadius: 999,
+                  border: datePreset === v ? "1px solid #3b82f6" : "1px solid #cbd5e1",
+                  background: datePreset === v ? "#eff6ff" : "#fff",
+                  color: datePreset === v ? "#1d4ed8" : "#475569",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+            {datePreset === "custom" && (
+              <span style={{ display: "inline-flex", gap: "0.3rem", alignItems: "center", fontSize: "0.78rem" }}>
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ padding: "0.25rem 0.4rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.75rem" }} />
+                <span style={{ color: "#94a3b8" }}>至</span>
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ padding: "0.25rem 0.4rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.75rem" }} />
+              </span>
+            )}
+          </div>
         </div>
         <div style={{ marginTop: "0.8rem" }}>
           <button

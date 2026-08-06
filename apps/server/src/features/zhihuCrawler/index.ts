@@ -10,7 +10,7 @@ import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
 import { kbListInstances, kbSet } from "../../core/knowledge.js";
-import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, type CrawlProgress } from "./service.js";
+import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken, type CrawlProgress } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
 const HISTORY_KEY = "zhihuCrawl:history";
@@ -67,6 +67,8 @@ export function register(app: Hono): void {
       target?: unknown;
       types?: unknown;
       limit?: unknown;
+      dateFrom?: unknown;
+      dateTo?: unknown;
     } | null;
     const target = typeof raw?.target === "string" ? raw.target.trim() : "";
     if (!target) return c.json({ ok: false, message: "缺少 target（知乎主页 URL 或 urlToken）" }, 400);
@@ -75,6 +77,8 @@ export function register(app: Hono): void {
       ? (raw.types as string[]).filter((t): t is "answer" | "article" | "pin" => t === "answer" || t === "article" || t === "pin")
       : undefined;
     const limit = typeof raw?.limit === "number" && raw.limit >= 0 ? Math.floor(raw.limit) : 0;
+    const dateFrom = typeof raw?.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateFrom) ? raw.dateFrom : undefined;
+    const dateTo = typeof raw?.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateTo) ? raw.dateTo : undefined;
 
     const { taskId } = createTask<ZhihuCrawlResult>(
       async (signal) => {
@@ -82,6 +86,8 @@ export function register(app: Hono): void {
         const r = await crawlUser(target, {
           types,
           limit,
+          ...(dateFrom ? { dateFrom } : {}),
+          ...(dateTo ? { dateTo } : {}),
           signal,
           onProgress: (p) => {
             progress.push(p);
@@ -97,6 +103,31 @@ export function register(app: Hono): void {
       { timeoutMs: 90 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
     );
     return c.json({ ok: true, taskId, status: "running" }, 202);
+  });
+
+  // 收藏的爬取目标（历史抓取目标）
+  app.get(`${API_PREFIX}/tools/zhihu-crawler/favorites`, (c) => {
+    return c.json({ ok: true, items: listFavorites() });
+  });
+
+  app.put(`${API_PREFIX}/tools/zhihu-crawler/favorites`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { target?: unknown; name?: unknown } | null;
+    const target = typeof raw?.target === "string" ? raw.target.trim() : "";
+    const name = typeof raw?.name === "string" ? raw.name.trim() : target;
+    if (!target) return c.json({ ok: false, message: "缺少 target" }, 400);
+    const token = extractUrlToken(target);
+    if (!token) return c.json({ ok: false, message: "无法识别用户" }, 400);
+    const items = listFavorites().filter((f) => f.token !== token);
+    items.unshift({ token, name, ts: new Date().toISOString() });
+    kvSet(FAVORITES_KEY, { items: items.slice(0, 50) });
+    return c.json({ ok: true, favorites: items });
+  });
+
+  app.delete(`${API_PREFIX}/tools/zhihu-crawler/favorites/:token`, (c) => {
+    const token = c.req.param("token");
+    const items = listFavorites().filter((f) => f.token !== token);
+    kvSet(FAVORITES_KEY, { items });
+    return c.json({ ok: true, favorites: items });
   });
 
   // 查看已保存的抓取结果
@@ -171,6 +202,24 @@ interface HistoryEntry {
   ts: string;
   total: number;
   resultId?: string;
+}
+
+// ---------- 收藏目标（zhihuCrawl:favorites，上限 50） ----------
+const FAVORITES_KEY = "zhihuCrawl:favorites";
+const FAVORITES_MAX = 50;
+
+interface FavoriteEntry {
+  token: string;
+  name: string;
+  ts: string;
+}
+
+function listFavorites(): FavoriteEntry[] {
+  const saved = kvGet<{ items?: unknown[] }>(FAVORITES_KEY);
+  if (!Array.isArray(saved?.items)) return [];
+  return saved.items
+    .filter((e): e is FavoriteEntry => !!e && typeof (e as FavoriteEntry).token === "string")
+    .slice(0, FAVORITES_MAX);
 }
 
 function readHistory(): HistoryEntry[] {

@@ -81,7 +81,9 @@ export const MEDICAL_INSTANCE = "medical";
 export function registerMedicalKb(app: Hono): void {
   // 导入：POST /api/tools/medical-kb/import { urls: string[] | url: string } —— 后台任务（支持批量，Reasonix 执行，失败降级直调）
   app.post(`${API_PREFIX}/tools/medical-kb/import`, async (c) => {
-    const raw = (await c.req.json().catch(() => null)) as { url?: unknown; urls?: unknown } | null;
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown; urls?: unknown; conflict?: unknown } | null;
+    // 冲突处理策略：skip（默认，重复跳过）/ overwrite（覆盖）/ merge（合并）
+    const conflict = typeof raw?.conflict === "string" && (raw.conflict === "skip" || raw.conflict === "overwrite" || raw.conflict === "merge") ? raw.conflict : "skip";
     // 单条 url 兼容 + 批量 urls 数组
     const urls = (
       Array.isArray(raw?.urls)
@@ -96,7 +98,7 @@ export function registerMedicalKb(app: Hono): void {
     const single = urls.length === 1;
     const { taskId } = createTask(async () => {
       // 串行逐条导入（同一实例 Reasonix 会话天然串行）；单条返回原结构，批量返回 items 数组
-      const items: { url: string; ok: boolean; imported: number; title?: string; message?: string }[] = [];
+      const items: { url: string; ok: boolean; imported: number; skipped?: number; conflicts?: number; title?: string; message?: string }[] = [];
       for (let i = 0; i < urls.length; i++) {
         const u = urls[i];
         try {
@@ -105,8 +107,8 @@ export function registerMedicalKb(app: Hono): void {
           if (!r.ok) {
             if (r.fallback) {
               // 直调兜底：失败会 throw，由外层 catch 收集为单条失败
-              const direct = await kbImportFromChat(u, { instance: MEDICAL_INSTANCE, module: "medical-kb.import" });
-              items.push({ url: u, ok: true, imported: direct.imported ?? 0, title: direct.title });
+              const direct = await kbImportFromChat(u, { instance: MEDICAL_INSTANCE, module: "medical-kb.import", conflict });
+              items.push({ url: u, ok: true, imported: direct.imported ?? 0, skipped: direct.skipped ?? 0, conflicts: direct.conflicts ?? 0, title: direct.title });
             } else {
               items.push({ url: u, ok: false, imported: 0, message: r.message ?? "导入失败" });
             }
