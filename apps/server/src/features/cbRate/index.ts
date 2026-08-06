@@ -27,6 +27,15 @@ registerDataSource({
   description: "利率分析结果持久化缓存（Key-结构化 Value，TTL 2 年）",
 });
 
+// 注册数据源：任务历史（异步分析任务归档）
+registerDataSource({
+  kind: "kv",
+  name: "taskHistory:",
+  page: "任务历史",
+  tag: "运行记录",
+  description: "异步分析任务历史（央行利率/国债汇率/逆回购等，结果快照归档，上限 50 条/模块）",
+});
+
 /** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
 export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
@@ -94,7 +103,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000 },
+      { timeoutMs: 5 * 60 * 1000, module: "cb-rate" },
     );
     return c.json(getTask<CbRateResponse>(taskId), 202);
   });

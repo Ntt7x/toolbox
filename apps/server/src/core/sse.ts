@@ -9,7 +9,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { API_PREFIX, type AsyncTaskResult } from "@toolbox/shared";
-import { cancelTask, getTask, onTaskUpdate } from "./tasks.js";
+import { cancelTask, getTask, getTaskHistoryEntry, listTaskHistory, onTaskUpdate } from "./tasks.js";
 
 /**
  * 注册全局任务路由（index.ts 装配时调用一次）：
@@ -17,6 +17,22 @@ import { cancelTask, getTask, onTaskUpdate } from "./tasks.js";
  * - POST /api/tasks/:taskId/cancel  取消任务（abort 底层资源）
  */
 export function registerTaskRoutes(app: Hono): void {
+  // 任务历史列表（KV 持久化；内存任务过期后仍可查）：GET /api/tasks/history?module=cb-rate
+  app.get(`${API_PREFIX}/tasks/history`, (c) => {
+    const module = c.req.query("module")?.trim() ?? "";
+    if (!module) return c.json({ ok: false, message: "缺少 module 参数" }, 400);
+    const entries = listTaskHistory(module);
+    return c.json({ ok: true, module, entries, total: entries.length });
+  });
+
+  // 任务历史条目（按 taskId，内存兜底）：GET /api/tasks/history/:taskId
+  app.get(`${API_PREFIX}/tasks/history/:taskId`, (c) => {
+    const taskId = c.req.param("taskId");
+    const entry = getTaskHistoryEntry(taskId);
+    if (!entry) return c.json({ ok: false, message: "历史任务不存在" }, 404);
+    return c.json({ ok: true, entry });
+  });
+
   // 取消任务：客户端强行中断
   app.post(`${API_PREFIX}/tasks/:taskId/cancel`, (c) => {
     const taskId = c.req.param("taskId");

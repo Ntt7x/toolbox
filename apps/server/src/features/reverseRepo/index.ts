@@ -105,7 +105,7 @@ export function register(app: Hono): void {
         kvSet("reverseRepo:daily", { ...r, _at: new Date().toISOString() });
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000 },
+      { timeoutMs: 5 * 60 * 1000, module: "reverse-repo.daily" },
     );
     return c.json(getTask<ReverseRepoDailyResult>(taskId), 202);
   });

@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
+import { TaskHistory } from "../components/TaskHistory";
 import BalanceChart from "../components/BalanceChart";
 import type {
   ReverseRepoDailyResponse,
@@ -52,6 +53,17 @@ export default function ReverseRepoTool() {
   const [dailyErr, setDailyErr] = useState<string | null>(null);
 
   const daily = dailyTask.result;
+
+  // 任务运行计时（任务信息：已运行时长）
+  const [runSec, setRunSec] = useState(0);
+  useEffect(() => {
+    if (!dailyTask.running) {
+      setRunSec(0);
+      return;
+    }
+    const t = setInterval(() => setRunSec((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [dailyTask.running]);
 
   const probeDaily = async (force: boolean) => {
     setDailyErr(null);
@@ -196,7 +208,7 @@ export default function ReverseRepoTool() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
           <span style={{ fontWeight: 700, fontSize: "1rem" }}>📈 每日变动量探查（LLM，仅买断式）</span>
           <button style={btn} onClick={() => void probeDaily(false)} disabled={dailyTask.running} type="button">
-            {dailyTask.running ? "探查中…" : "🔎 探查今日变动"}
+            {dailyTask.running ? `探查中…（已耗时 ${runSec}s）` : "🔎 探查今日变动"}
           </button>
           <button
             style={{ ...btn, background: "#dc2626" }}
@@ -250,6 +262,52 @@ export default function ReverseRepoTool() {
             )}
           </div>
         )}
+
+        {/* 历史探查任务（KV 持久化，回看以往每日变动） */}
+        <TaskHistory
+          module="reverse-repo.daily"
+          refreshKey={dailyTask.taskId}
+          title="📚 历史探查任务"
+          renderResult={(v) => {
+            const d = v as ReverseRepoDailyResponse;
+            return (
+              <div style={{ fontSize: "0.85rem" }}>
+                <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap", alignItems: "center", color: "#475569", marginBottom: "0.4rem" }}>
+                  <span>数据截至：{d.asOf}</span>
+                  {d.currentBalance !== undefined && <b style={{ color: "#15803d" }}>存量余额 ≈ {fmtW(d.currentBalance)}</b>}
+                </div>
+                <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, margin: "0.3rem 0" }}>
+                  <b>当月变动量说明：</b>
+                  {d.monthSummary}
+                </p>
+                {d.dailyChanges.length > 0 && (
+                  <table style={table}>
+                    <thead>
+                      <tr>
+                        <th style={th}>日期</th>
+                        <th style={th}>类型</th>
+                        <th style={th}>方向</th>
+                        <th style={th}>金额(亿)</th>
+                        <th style={th}>说明</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.dailyChanges.map((c, i) => (
+                        <tr key={i}>
+                          <td style={thTd}><b>{c.date}</b></td>
+                          <td style={thTd}>{c.type}{c.term ? ` (${c.term})` : ""}</td>
+                          <td style={thTd}>{c.kind}</td>
+                          <td style={thTd}>{c.amount}</td>
+                          <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{c.desc}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            );
+          }}
+        />
       </div>
 
       {/* 提示词 */}

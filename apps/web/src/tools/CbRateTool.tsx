@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
+import { TaskHistory } from "../components/TaskHistory";
 import type { CbAction, CbRatePeriod, CbRateBank, CbRateResponse } from "@toolbox/shared";
 
 // ---------- 九大央行选项 ----------
@@ -113,6 +114,17 @@ export default function CbRateTool() {
   const err = task.error ?? localErr;
   const taskRunning = task.running;
   const taskId = task.taskId;
+
+  // 任务运行计时（任务信息：已运行时长）
+  const [runSec, setRunSec] = useState(0);
+  useEffect(() => {
+    if (!taskRunning) {
+      setRunSec(0);
+      return;
+    }
+    const t = setInterval(() => setRunSec((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [taskRunning]);
 
   const toggleBank = (id: string) => {
     setSelected((prev) => {
@@ -281,7 +293,7 @@ export default function CbRateTool() {
         <div style={{ ...card, borderColor: "#fcd34d", background: "#fffbeb", color: "#b45309" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
             <div style={{ fontWeight: 600 }}>
-              ⏳ 分析任务已在后台运行{taskId ? `（任务 ${taskId.slice(0, 8)}…）` : ""}，每 3 秒自动刷新。
+              ⏳ 分析任务已在后台运行{taskId ? `（任务 ${taskId.slice(0, 8)}…）` : ""}，已耗时 <b>{runSec}s</b>，每 3 秒自动刷新。
             </div>
             <button
               style={{ ...btn, background: "#dc2626", marginLeft: "auto" }}
@@ -392,6 +404,66 @@ export default function CbRateTool() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 历史任务（KV 持久化，回看以往分析） */}
+      <TaskHistory
+        module="cb-rate"
+        refreshKey={taskId}
+        renderResult={(v) => <CbRateHistoryView result={v as CbRateResponse} />}
+      />
+    </div>
+  );
+}
+
+// ---------- 历史任务结果视图（复用核心展示；不含原始输出/交互态） ----------
+
+function CbRateHistoryView({ result }: { result: CbRateResponse }) {
+  return (
+    <div>
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📊 政策取向小结</span>
+          <span style={{ background: "#f1f5f9", color: "#475569", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.78rem" }}>
+            数据截至：{result.asOf || "未知"}
+          </span>
+          {result.dataMode === "search" ? (
+            <span style={{ background: "#dcfce7", color: "#15803d", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.78rem", fontWeight: 600 }}>
+              📡 联网实时数据
+            </span>
+          ) : (
+            <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.78rem", fontWeight: 600 }}>
+              ⚠️ 模型知识模式
+            </span>
+          )}
+          {result.fromCache && (
+            <span style={{ background: "#fef3c7", color: "#b45309", padding: "0.2rem 0.6rem", borderRadius: 999, fontSize: "0.78rem", fontWeight: 600 }}>
+              💾 来自缓存
+            </span>
+          )}
+        </div>
+        <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, marginTop: "0.6rem", fontSize: "0.88rem" }}>{result.summary}</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.7rem", marginTop: "0.7rem" }}>
+        {result.banks.map((b) => (
+          <BankCard key={b.id} bank={b} />
+        ))}
+      </div>
+      {result.calendar && result.calendar.length > 0 && (
+        <div style={card}>
+          <div style={{ fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.9rem" }}>🗓 近期会议日历</div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {result.calendar.map((c, i) => (
+                <tr key={i}>
+                  <td style={{ ...thTd, whiteSpace: "nowrap" }}>{c.date}</td>
+                  <td style={thTd}><b>{c.bank}</b></td>
+                  <td style={thTd}>{c.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

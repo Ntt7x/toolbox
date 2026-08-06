@@ -84,7 +84,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000 },
+      { timeoutMs: 5 * 60 * 1000, module: "treasury-fx" },
     );
     return c.json(getTask<TreasuryFxResponse>(taskId), 202);
   });
