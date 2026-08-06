@@ -267,7 +267,7 @@ export default function LocalData() {
   return (
     <div>
       <PageHeader
-        title="🗄️ 本地数据管理"
+        title="🗄️ 本地数据"
         desc="查看与维护本地持久化数据（SQLite：表模型 + Key-结构化 Value）。数据带「页面 tag」标记来源与场景；支持搜索、分页、缓存类源一键清空。"
       />
 

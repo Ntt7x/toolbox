@@ -55,14 +55,14 @@ function clearHistory(): void {
 registerDataSource({
   kind: "kv",
   name: "deepseekShare:",
-  page: "DeepSeek Share 提取",
+  page: "DeepSeek 分析提取",
   tag: "历史记录",
-  description: "DeepSeek Share 提取历史（deepseekShare:history，上限 50 条）",
+  description: "DeepSeek 分析提取历史（deepseekShare:history，上限 50 条）",
 });
 
 export const meta: ToolMeta = {
   id: "deepseek-share",
-  name: "DeepSeek Share 提取",
+  name: "DeepSeek 分析提取",
   description: "从 DeepSeek 分享链接提取完整对话（含思考链）",
   path: "/tools/deepseek-share",
 };

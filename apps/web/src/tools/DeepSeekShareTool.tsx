@@ -166,7 +166,7 @@ export default function DeepSeekShareTool() {
   return (
     <div>
       <PageHeader
-        title="🔗 DeepSeek Share 提取"
+        title="🔗 DeepSeek 分析提取"
         desc="输入 DeepSeek 公开分享链接（或 share id），提取完整对话内容（含思考链、时间与 token 用量）。"
       />
 

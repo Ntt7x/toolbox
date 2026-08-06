@@ -14,7 +14,7 @@ import { createTask } from "../../core/tasks.js";
 
 export const meta: ToolMeta = {
   id: "agent-sessions",
-  name: "Agent 会话管理",
+  name: "LLM 会话",
   description: "管理两类有状态 LLM 会话（自研 Cache 会话 / Reasonix 会话）：查看、续问、恢复、删除",
   path: "/settings/agent-sessions",
 };
