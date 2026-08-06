@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { API_PREFIX, type AgentSessionAskResult, type AgentSessionCreateResult, type AgentSessionCreateRequest, type AgentSessionsResult, type ChatSessionDetail, type ToolMeta } from "@toolbox/shared";
 import { createChatSession, chatSessionAsk, listChatSessions, deleteChatSession, getChatSessionDetail, restoreArchivedSession } from "../../core/chatSession.js";
-import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory } from "../../core/reasonix.js";
+import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory, backfillReasonixHistory } from "../../core/reasonix.js";
 import { createTask } from "../../core/tasks.js";
 
 export const meta: ToolMeta = {
@@ -128,9 +128,10 @@ export function register(app: Hono): void {
     return c.json({ ok, message: ok ? "已删除" : "会话不存在" }, ok ? 200 : 404);
   });
 
-  // Reasonix 详情：GET /api/llm/agent-sessions/reasonix/:id（含服务端托管对话数据）
+  // Reasonix 详情：GET /api/llm/agent-sessions/reasonix/:id（含服务端托管对话数据；存量会话自动回填）
   app.get(`${API_PREFIX}/llm/agent-sessions/reasonix/:id`, (c) => {
     const id = c.req.param("id");
+    backfillReasonixHistory(id); // 幂等：存量会话从 Reasonix 侧持久化回填托管历史
     const reg = listReasonixSessions().find((s) => s.id === id);
     const history = getReasonixHistory(id).map((m) => ({ role: m.role, content: m.content, time: m.time, ...(m.usage ? { usage: m.usage } : {}) }));
     const body = {

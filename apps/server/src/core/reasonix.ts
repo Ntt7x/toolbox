@@ -19,7 +19,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
@@ -456,6 +456,50 @@ function appendReasonixHistory(regId: string, userText: string, answer: string, 
 /** 读取会话对话数据（服务端托管） */
 export function getReasonixHistory(regId: string): ReasonixHistoryMessage[] {
   return kvGet<ReasonixHistoryMessage[]>(historyKey(regId)) ?? [];
+}
+
+/**
+ * 历史回填：托管功能上线前的存量会话，其对话数据在 Reasonix 侧持久化
+ * （%APPDATA%/reasonix/sessions/<reasonixSessionId>.jsonl，ACP transcript）。
+ * 解析 user/assistant 消息写回托管 KV（幂等：已有托管数据则跳过）。
+ * 返回回填条数；文件缺失/解析失败返回 0。
+ */
+export function backfillReasonixHistory(regId: string): number {
+  if (getReasonixHistory(regId).length > 0) return 0; // 已有托管数据
+  const reg = loadReg(regId);
+  if (!reg) return 0;
+  const jsonlPath = join(reasonixSessionsDir(), `${reg.reasonixSessionId}.jsonl`);
+  if (!existsSync(jsonlPath)) return 0;
+  let lines: string[];
+  try {
+    lines = readFileSync(jsonlPath, "utf8").split("\n");
+  } catch {
+    return 0;
+  }
+  const msgs: ReasonixHistoryMessage[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const j = JSON.parse(line) as { role?: string; content?: unknown; time?: string };
+      if ((j.role === "user" || j.role === "assistant") && typeof j.content === "string" && j.content.trim()) {
+        let content = j.content;
+        if (j.role === "user") {
+          // 剥离注入的引导词（<reasoning-language> 块 + 任务说明），提取真实用户问题
+          content = content.replace(/<reasoning-language>[\s\S]*?<\/reasoning-language>\s*/g, "").trim();
+          const marker = "【用户问题】";
+          const qi = content.indexOf(marker);
+          if (qi >= 0) content = content.slice(qi + marker.length).trim();
+        }
+        if (!content) continue;
+        msgs.push({ role: j.role, content, time: j.time ? Date.parse(j.time) || Date.now() : Date.now() });
+      }
+    } catch {
+      // 单行损坏跳过
+    }
+  }
+  if (msgs.length === 0) return 0;
+  kvSet(historyKey(regId), msgs.slice(-HISTORY_MAX));
+  return msgs.length;
 }
 
 /** 删除会话对话数据（随会话删除） */
