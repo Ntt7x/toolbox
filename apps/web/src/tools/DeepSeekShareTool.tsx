@@ -83,8 +83,8 @@ export default function DeepSeekShareTool() {
   };
 
   /** 从历史重新提取 */
-  const extractUrl = async (url: string) => {
-    setUrlInput(url);
+  const extractUrl = async (url: string, fillInput = true) => {
+    if (fillInput) setUrlInput(url);
     setErr(null);
     setLoading(true);
     setResult(null);
@@ -218,8 +218,8 @@ export default function DeepSeekShareTool() {
                   <div
                     key={h.url}
                     style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", padding: "0.4rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc", fontSize: "0.8rem", cursor: "pointer" }}
-                    onClick={() => void extractUrl(h.url)}
-                    title="点击重新提取"
+                    onClick={() => void extractUrl(h.url, false)}
+                    title="查看该历史对话（不回填输入框）"
                   >
                     <span style={{ fontFamily: "monospace", color: "#4338ca" }}>{h.shareId}</span>
                     <span style={{ color: "#64748b" }}>{h.messageCount} 条消息</span>

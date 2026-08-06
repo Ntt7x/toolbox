@@ -5,7 +5,6 @@
 // ============================================================
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import Modal from "../Modal";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import type { ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlRequest, ZhihuComment, ZhihuUserInfo } from "@toolbox/shared";
 import { card, PageHeader } from "../ui";
@@ -110,8 +109,14 @@ export default function ZhihuCrawlerTool() {
 
   const refreshInstances = () => {
     api.zhihuInstances().then((r) => {
-      setInstances(r.instances);
-      if (!instance && r.instances.length > 0) setInstance(r.instances[0].instance);
+      const list = r.instances as { instance: string; count: number; type?: string }[];
+      setInstances(list);
+      // 默认选中「我的」虚拟库（若存在），否则第一个
+      if (!instance) {
+        const mine = list.find((i) => i.instance === "我的");
+        if (mine) setInstance(mine.instance);
+        else if (list.length > 0) setInstance(list[0].instance);
+      }
     }).catch(() => {});
   };
 
@@ -521,7 +526,7 @@ export default function ZhihuCrawlerTool() {
               {instances.length === 0 && <option value="">（暂无知识库实例，先创建：medical/trading/mine…）</option>}
               {instances.map((ins) => (
                 <option key={ins.instance} value={ins.instance}>
-                  {ins.instance}（{ins.count} 条）
+                  {(ins as { type?: string }).type === "virt" ? "🧩" : "🏷️"} {ins.instance}（{ins.count} 条）
                 </option>
               ))}
             </select>
@@ -590,23 +595,26 @@ export default function ZhihuCrawlerTool() {
               ))}
             </tbody>
           </table>
+          {/* 历史结果行内展开（查看结果；非弹窗，更贴合阅读长内容） */}
+          {viewResultId && viewItems && (
+            <div style={{ marginTop: "0.8rem", border: "1px solid #bfdbfe", borderRadius: 10, background: "#f8faff", padding: "0.9rem 1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
+                <h4 style={{ margin: 0, fontSize: "0.9rem" }}>📄 历史结果（{viewItems.length} 条）</h4>
+                <span style={{ flex: 1 }} />
+                <button
+                  style={{ fontSize: "0.75rem", padding: "0.3rem 0.8rem", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", cursor: "pointer" }}
+                  onClick={() => { setViewItems(null); setViewResultId(null); }}
+                >
+                  收起 ▲
+                </button>
+              </div>
+              <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+                <ResultItems items={viewItems} />
+              </div>
+            </div>
+          )}
         </div>
       )}
-
-      {/* 历史结果查看 Modal */}
-      <Modal
-        open={!!viewItems}
-        title={`📄 历史结果${viewItems ? `（${viewItems.length} 条）` : ""}`}
-        width={720}
-        onClose={() => { setViewItems(null); setViewResultId(null); }}
-        footer={<button style={{ padding: "0.5rem 1.1rem", borderRadius: 8, border: "none", background: "#3b82f6", color: "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" }} onClick={() => { setViewItems(null); setViewResultId(null); }}>关闭</button>}
-      >
-        {viewItems && (
-          <div style={{ maxHeight: "65vh", overflowY: "auto" }}>
-            <ResultItems items={viewItems} />
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

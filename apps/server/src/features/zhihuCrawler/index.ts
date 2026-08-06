@@ -9,7 +9,8 @@ import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, 
 import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
-import { kbListInstances, kbSet } from "../../core/knowledge.js";
+import { kbListInstances, kbSet, matchDomain } from "../../core/knowledge.js";
+import { listVirtKbs, getVirtKb, getDomainMeta } from "../../core/knowledgeHub.js";
 import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken, resolveLink } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
@@ -183,9 +184,11 @@ export function register(app: Hono): void {
     return c.json({ ...r, resultId: c.req.param("id") });
   });
 
-  // 知识库实例列表（导入知识库选择目标）
+  // 知识库实例列表（导入知识库选择目标；虚拟库在前 + 领域实例，虚拟库带分发能力）
   app.get(`${API_PREFIX}/tools/zhihu-crawler/instances`, (c) => {
-    return c.json({ ok: true, instances: kbListInstances() });
+    const insts = kbListInstances().map((i) => ({ instance: i.instance, count: i.count, type: "domain" as const }));
+    const virts = listVirtKbs().map((v) => ({ instance: v.name, count: v.domains.length, type: "virt" as const }));
+    return c.json({ ok: true, instances: [...virts, ...insts] });
   });
 
   // 导入知识库：把已保存结果的选中条目写入指定实例
@@ -196,10 +199,19 @@ export function register(app: Hono): void {
       return c.json(body, 400);
     }
     const instance = raw.instance.trim();
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(instance)) {
-      const body: ZhihuImportResult = { ok: false, imported: 0, message: "知识库实例名仅允许字母数字._-" };
+    // 虚拟库名可为中文（如「我的」）；领域实例为字母数字._-
+    if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(instance)) {
+      const body: ZhihuImportResult = { ok: false, imported: 0, message: "知识库名仅允许中英文/数字/._-" };
       return c.json(body, 400);
     }
+    // 虚拟库 → 按子领域关键词分发（无匹配归杂项领域/第一个领域）；领域实例 → 直写
+    const virt = getVirtKb(instance);
+    const virtDomains = virt
+      ? virt.domains.map((d) => ({ name: d, keywords: getDomainMeta(d)?.keywords ?? [] })).filter((d) => d.keywords.length > 0)
+      : [];
+    const fallbackDomain = virt
+      ? virt.domains.find((d) => /other|杂项|misc/i.test(d)) ?? virt.domains[0]
+      : undefined;
     const saved = kvGet<ZhihuCrawlResult>(`zhihuCrawl:result:${raw.resultId}`);
     if (!saved?.ok || !Array.isArray(saved.items)) {
       const body: ZhihuImportResult = { ok: false, imported: 0, message: "结果不存在或为空" };
@@ -213,8 +225,14 @@ export function register(app: Hono): void {
     }
     let imported = 0;
     for (const item of targets) {
-      const key = `${instance}.zhihu.${item.kind}.${slugify(item.title)}-${Date.now().toString(36)}`;
       const md = buildImportMarkdown(item);
+      // 虚拟库分发：每条内容按子领域关键词匹配写入对应子领域前缀；无匹配归兜底领域
+      let prefix = instance;
+      if (virt) {
+        const m = virtDomains.length > 0 ? matchDomain(md, virtDomains) : null;
+        prefix = m?.domain ?? fallbackDomain ?? instance;
+      }
+      const key = `${prefix}.zhihu.${item.kind}.${slugify(item.title)}-${Date.now().toString(36)}`;
       try {
         kbSet(key, md, item.url);
         imported += 1;

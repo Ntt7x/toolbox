@@ -152,7 +152,7 @@ export default function KnowledgeHubTool() {
   // ---------- 详情页：进入/返回时重置状态 ----------
   const openDetail = (e: KbEntry) => {
     setDetail(e);
-    setTab("ask");
+    setTab("config");
     setAskA("");
     setAskRouted("");
     setImportMsg("");

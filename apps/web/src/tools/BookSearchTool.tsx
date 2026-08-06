@@ -101,17 +101,7 @@ export default function BookSearchTool() {
     }
   };
 
-  /** 清空收藏 */
-  const clearFavorites = async () => {
-    if (favorites.length === 0) return;
-    if (!window.confirm("确定清空全部收藏？")) return;
-    try {
-      await api.booksFavoriteDelete();
-      void loadFavorites();
-    } catch {
-      // 静默
-    }
-  };
+  /** 清空收藏（需求：不提供清空按钮，函数移除） */
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -254,10 +244,6 @@ export default function BookSearchTool() {
               onClick={() => setShowFav((v) => !v)}
             >
               📌 收藏的书（{favorites.length}）{showFav ? " ▾" : " ▸"}
-              <span style={{ flex: 1 }} />
-              <span style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 400, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); void clearFavorites(); }}>
-                清空
-              </span>
             </div>
             {showFav && (
               <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>

@@ -53,7 +53,7 @@ const KB_SCAN_LIMIT = 5000;
 
 /** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
 /** key 规范：分层点分隔（project.module.attribute）；仅字母数字._-；禁连续点/边界点（防 ../ 语义与脏 key） */
-const KEY_RE = /^(?!\.)(?!.*\.\.)(?!.*\.$)[a-zA-Z0-9._-]{1,120}$/;
+const KEY_RE = /^(?!\.)(?!.*\.\.)(?!.*\.$)[\p{L}\p{N}._-]{1,120}$/u;
 
 function keyOf(key: string): string {
   return `${KB_PREFIX}${key}`;
