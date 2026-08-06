@@ -18,6 +18,7 @@ import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 import AgentSessions from "./settings/AgentSessions";
+import ArchGraph from "./settings/ArchGraph";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
@@ -50,6 +51,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "LLM 用量", path: "/settings/llm", icon: "🤖" },
       { name: "LLM 会话", path: "/settings/agent-sessions", icon: "💬" },
       { name: "本地数据", path: "/settings/local-data", icon: "🗄️" },
+      { name: "架构图", path: "/settings/arch-graph", icon: "🗺️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
@@ -361,6 +363,7 @@ export default function App() {
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
             <Route path="/settings/llm" element={<LlmSettings />} />
             <Route path="/settings/agent-sessions" element={<AgentSessions />} />
+            <Route path="/settings/arch-graph" element={<ArchGraph />} />
             <Route path="/settings/local-data" element={<LocalData />} />
             <Route path="/settings/memo" element={<MemoTool />} />
             {tools.map((t) => (

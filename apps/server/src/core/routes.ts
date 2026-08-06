@@ -15,6 +15,7 @@ import {
 } from "@toolbox/shared";
 import { DEFAULT_MODEL, chat, clearApiKey, getDeepSeekBalance, getLlmUsageSummary, loadApiKey, saveApiKey, testConnection } from "./llm.js";
 import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./prompts.js";
+import { generateDependencyGraph } from "./dependencyGraph.js";
 import { getQuoteSnapshot } from "./quote.js";
 import { registerDataSource } from "./dataRegistry.js";
 
@@ -101,6 +102,11 @@ export function registerPromptRoutes(app: Hono): void {
   app.get(`${API_PREFIX}/prompts`, (c) => {
     const body: PromptsListResult = { ok: true, prompts: listPrompts() };
     return c.json(body);
+  });
+
+  // 依赖图（架构展示：扫描源码 import 自动生成）
+  app.get(`${API_PREFIX}/dependency-graph`, (c) => {
+    return c.json(generateDependencyGraph());
   });
 
   // 详情（模板 + 默认参数渲染预览，页面展示用）
