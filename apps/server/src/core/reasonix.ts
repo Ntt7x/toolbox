@@ -594,24 +594,9 @@ export function listReasonixSessions(): { id: string; module: string; cwd: strin
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }
 
-/** 关闭 ACP 进程（注册表保留，重启后可恢复） */
+/** 关闭 ACP 进程（注册表保留，重启后可恢复）；复用 stopAcp 的进程树清理 */
 export function shutdownReasonix(): void {
-  if (acp && acp.child.exitCode === null) {
-    try {
-      acp.child.kill();
-      // Windows：kill 进程树（reasonix 可能派生子进程，需一并终止以释放 stdio 管道）
-      if (process.platform === "win32" && acp.child.pid) {
-        try {
-          spawnSync("taskkill", ["/pid", String(acp.child.pid), "/T", "/F"], { stdio: "ignore" });
-        } catch {
-          // taskkill 不可用时忽略
-        }
-      }
-    } catch {
-      // 忽略
-    }
-  }
-  acp = null;
+  stopAcp();
 }
 
 /** Reasonix 会话存储根目录（其持久化 transcript） */

@@ -69,8 +69,8 @@ function SessionCard(props: {
         setLastResult(r.result);
         if (kind === "chat") {
           await loadDetail();
-          onChanged();
         }
+        onChanged(); // 刷新列表（lastAt 等）
       } else {
         setError(r.message ?? "任务失败");
       }

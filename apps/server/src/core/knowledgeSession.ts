@@ -5,20 +5,12 @@
 //   - 实例级会话（knowledgeSession:<instance> 注册表 KV 持久化），同一实例多次问答/导入共享上下文
 //   - Reasonix 不可用（二进制/API key 缺失）时调用方降级到服务端直调（kbAsk/kbImportFromChat）
 // ============================================================
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { createReasonixSession, reasonixAsk } from "./reasonix.js";
 import { kvGet, kvSet, kvDelete } from "./kvStore.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { kbCountInstance } from "./knowledge.js";
 import { enabledMcpServers } from "./mcpConfig.js";
-
-const require_ = createRequire(import.meta.url);
-/** MCP 子进程入口：node + tsx CLI（支持 .ts 直跑；./cli 为 exports 入口） */
-const TSX_CLI = require_.resolve("tsx/cli");
-/** 脚本用正斜杠路径传 tsx（Windows 反斜杠会被 Node ESM loader 误判为 d: 协议；file:// URL 又会被 tsx 拼接错乱） */
-const KB_MCP_SCRIPT = fileURLToPath(new URL("./knowledgeMcp.ts", import.meta.url)).replace(/\\/g, "/");
 
 export const KNOWLEDGE_SESSION_PREFIX = "knowledgeSession:";
 registerDataSource({
@@ -28,11 +20,6 @@ registerDataSource({
   tag: "运行状态",
   description: "知识库实例的 Reasonix Agent 会话注册表（KV 持久化，续用/恢复）",
 });
-
-/** 知识库会话挂载的 MCP 列表（全局配置的启用项，默认含 kb 知识库 MCP） */
-function kbMcpServers(): ReturnType<typeof enabledMcpServers> {
-  return enabledMcpServers();
-}
 
 function sessionKey(instance: string): string {
   return `${KNOWLEDGE_SESSION_PREFIX}${instance}`;
@@ -65,7 +52,7 @@ export async function ensureKnowledgeSession(instance: string): Promise<{ ok: bo
     kvSet(key, { ...existing, lastAt: Date.now() }); // 访问即刷新（元数据）
     return { ok: true, regId: existing.regId };
   }
-  const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: kbMcpServers() });
+  const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: enabledMcpServers() });
   if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话创建失败" };
   kvSet(key, { regId: s.id, instance, createdAt: Date.now(), lastAt: Date.now() } satisfies KnowledgeSessionReg);
   return { ok: true, regId: s.id };

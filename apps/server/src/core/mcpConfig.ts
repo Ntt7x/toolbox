@@ -42,11 +42,12 @@ function defaultMcpServers(): McpServerConfig[] {
   ];
 }
 
-/** 读取 MCP 配置（无配置时返回默认 seed；不落库，幂等） */
+/** 读取 MCP 配置（从未配置时返回默认 seed，幂等不落库；用户保存过则尊重——含空数组=清空） */
 export function getMcpServers(): McpServerConfig[] {
   const raw = getSetting<McpServerConfig[]>(SETTING_KEY);
-  if (!Array.isArray(raw) || raw.length === 0) return defaultMcpServers();
-  // 兼容旧结构（缺 enabled 视为启用）
+  if (raw === undefined || raw === null) return defaultMcpServers(); // 从未配置 → seed
+  if (!Array.isArray(raw)) return defaultMcpServers(); // 数据损坏 → 回退 seed
+  // 兼容旧结构（缺 enabled 视为启用）；空数组保持（用户已清空 MCP）
   return raw.map((s) => ({ ...s, enabled: s.enabled !== false }));
 }
 
