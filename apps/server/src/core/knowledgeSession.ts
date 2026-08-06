@@ -11,6 +11,7 @@ import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { kbCountInstance } from "./knowledge.js";
 import { enabledMcpServers } from "./mcpConfig.js";
+import { getPromptTemplate } from "./prompts.js";
 
 export const KNOWLEDGE_SESSION_PREFIX = "knowledgeSession:";
 registerDataSource({
@@ -63,13 +64,9 @@ function dropSession(instance: string): void {
   kvDelete(sessionKey(instance));
 }
 
-/** Agent 引导词（每次 prompt 注入：说明知识工具与约束，压制探索类工具） */
+/** Agent 引导词（模板 knowledge.agent.guide 渲染：知识工具约束 + 实例/任务说明） */
 function guideFor(instance: string, action: string): string {
-  return [
-    `你是知识库助手。本会话已挂载知识库 MCP（工具 mcp__kb__*），直接调用即可，不要使用 bash/glob/ls/docs 等其他工具。`,
-    `本次任务：${action}。`,
-    `知识实例为 ${instance}（key 首段必须是 ${instance}，如 ${instance}.topic.subtopic）。`,
-  ].join("\n");
+  return getPromptTemplate("knowledge.agent.guide").replace("{instance}", instance).replace("{action}", action);
 }
 
 /**
@@ -91,7 +88,9 @@ async function doAsk(
 ): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
   const s = await ensureKnowledgeSession(instance);
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
-  const prompt = `${guideFor(instance, "回答用户问题")}\n回答前必须先用 kb_search（question 取用户问题，instance 为 ${instance}）检索知识库；基于检索到的条目回答，并标注引用条目 key；检索无结果时如实说明。\n\n【用户问题】\n${question}`;
+  const prompt =
+    `${guideFor(instance, "回答用户问题")}\n` +
+    getPromptTemplate("knowledge.agent.ask").replace("{instance}", instance).replace("{question}", question);
   // 用量归属：业务 module 透传（如 medical-kb.ask）优先，缺省回落会话 module（knowledge.<instance>）
   const r = await reasonixAsk(s.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
   if (!r.ok) {
@@ -131,9 +130,7 @@ async function doImport(
     .join("\n");
   const prompt =
     `${guideFor(instance, "把对话内容整理为知识条目并写入知识库")}\n` +
-    `步骤：1) 先用 kb_count（instance=${instance}）和 kb_list（instance=${instance}）查看已有条目，避免重复；` +
-    `2) 对每个独立知识点用 kb_set 写入：key 分层（${instance}.主题.子主题），value 为简洁完整、可独立理解的事实文本；` +
-    `3) 所有 kb_set 的 source 参数统一用分享链接。\n\n【对话原文】\n${dialog}`;
+    getPromptTemplate("knowledge.agent.import").replaceAll("{instance}", instance).replace("{dialog}", dialog);
   const r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
   if (!r.ok) {
     if (r.sessionGone) dropSession(instance);

@@ -391,6 +391,27 @@ const WATCHLIST_IMPORT_PROMPT = `你是投资专题整理助手。任务：阅�
 注意：code 必须为 6 位数字；若对话中没有明确入选个股，stocks 输出空数组；
 严禁编造对话中不存在的股票。`;
 
+/** 知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}） */
+const KNOWLEDGE_AGENT_GUIDE = `你是知识库助手。本会话已挂载知识库 MCP（工具 mcp__kb__*），直接调用即可，不要使用 bash/glob/ls/docs 等其他工具。
+本次任务：{action}。
+知识实例为 {instance}（key 首段必须是 {instance}，如 {instance}.topic.subtopic）。`;
+
+/** 知识库 × Reasonix Agent：问答任务指令（占位符 {instance} {question}） */
+const KNOWLEDGE_AGENT_ASK = `回答用户问题
+回答前必须先用 kb_search（question 取用户问题，instance 为 {instance}）检索知识库；基于检索到的条目回答，并标注引用条目 key；检索无结果时如实说明。
+
+【用户问题】
+{question}`;
+
+/** 知识库 × Reasonix Agent：导入任务指令（占位符 {instance} {dialog}） */
+const KNOWLEDGE_AGENT_IMPORT = `把对话内容整理为知识条目并写入知识库
+步骤：1) 先用 kb_count（instance={instance}）和 kb_list（instance={instance}）查看已有条目，避免重复；
+2) 对每个独立知识点用 kb_set 写入：key 分层（{instance}.主题.子主题），value 为简洁完整、可独立理解的事实文本；
+3) 所有 kb_set 的 source 参数统一用分享链接。
+
+【对话原文】
+{dialog}`;
+
 // ---------- 注册表 ----------
 
 export interface PromptDef {
@@ -402,6 +423,38 @@ export interface PromptDef {
   defaultTemplate: string;
   /** 渲染默认预览（页面展示；无占位符的提示词原样返回） */
   render?: (template: string) => string;
+}
+
+/** 提示词场景元数据（id → [场景分组, 归属页面]；提示词管理页分组展示用） */
+const PROMPT_META: Record<string, [string, string]> = {
+  "cb-rate.system": ["交易", "央行利率分析"],
+  "cb-rate.user": ["交易", "央行利率分析"],
+  "cb-rate.note.search": ["交易", "央行利率分析"],
+  "cb-rate.note.knowledge": ["交易", "央行利率分析"],
+  "grid-plan.system": ["交易", "交易网格计划"],
+  "kelly.position": ["交易", "凯利仓位助手"],
+  "treasury-fx.system": ["交易", "国债汇率分析"],
+  "treasury-fx.user": ["交易", "国债汇率分析"],
+  "reverse-repo.ledger": ["交易", "买断式逆回购余额"],
+  "reverse-repo.daily": ["交易", "买断式逆回购余额"],
+  "reverse-repo.monthly-update": ["交易", "买断式逆回购余额"],
+  "watchlist.fundamental": ["交易", "专题自选股"],
+  "watchlist.import": ["交易", "专题自选股"],
+  "knowledge.extract": ["知识库", "知识库"],
+  "knowledge.ask": ["知识库", "知识库"],
+  "knowledge.agent.guide": ["知识库", "知识库"],
+  "knowledge.agent.ask": ["知识库", "知识库"],
+  "knowledge.agent.import": ["知识库", "知识库"],
+};
+
+/** 提示词场景分组（id → group） */
+export function promptGroup(id: string): string {
+  return PROMPT_META[id]?.[0] ?? "通用";
+}
+
+/** 提示词归属页面（id → page） */
+export function promptPage(id: string): string {
+  return PROMPT_META[id]?.[1] ?? "—";
 }
 
 /** 渲染央行利率分析 system prompt（默认参数 = 联网搜索 + 会议日历） */
@@ -530,6 +583,27 @@ const PROMPTS: PromptDef[] = [
       "3. 回答简洁、结构化，中文输出。",
     render: (t) => t,
   },
+  {
+    id: "knowledge.agent.guide",
+    key: "prompt.knowledge.agent.guide",
+    description: "知识库 × Reasonix Agent：会话引导词（模板；占位符 {instance} {action}）",
+    defaultTemplate: KNOWLEDGE_AGENT_GUIDE,
+    render: (t) => t,
+  },
+  {
+    id: "knowledge.agent.ask",
+    key: "prompt.knowledge.agent.ask",
+    description: "知识库 × Reasonix Agent：问答任务指令（模板；占位符 {instance} {question}）",
+    defaultTemplate: KNOWLEDGE_AGENT_ASK,
+    render: (t) => t,
+  },
+  {
+    id: "knowledge.agent.import",
+    key: "prompt.knowledge.agent.import",
+    description: "知识库 × Reasonix Agent：导入任务指令（模板；占位符 {instance} {dialog}）",
+    defaultTemplate: KNOWLEDGE_AGENT_IMPORT,
+    render: (t) => t,
+  },
 ];
 
 const byId = new Map(PROMPTS.map((p) => [p.id, p]));
@@ -544,9 +618,16 @@ export function getPromptTemplate(id: string): string {
   return def.defaultTemplate;
 }
 
-/** 全部提示词元信息（模板；供管理页/API 列表） */
-export function listPrompts(): { id: string; key: string; description: string; template: string }[] {
-  return PROMPTS.map((p) => ({ id: p.id, key: p.key, description: p.description, template: getPromptTemplate(p.id) }));
+/** 全部提示词元信息（模板；供管理页/API 列表，含场景分组与归属页面） */
+export function listPrompts(): { id: string; key: string; description: string; group: string; page: string; template: string }[] {
+  return PROMPTS.map((p) => ({
+    id: p.id,
+    key: p.key,
+    description: p.description,
+    group: promptGroup(p.id),
+    page: promptPage(p.id),
+    template: getPromptTemplate(p.id),
+  }));
 }
 
 /** 提示词详情（模板 + 默认参数渲染预览，页面展示用） */
