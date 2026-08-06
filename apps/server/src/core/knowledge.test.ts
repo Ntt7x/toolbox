@@ -6,11 +6,13 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { kbSet, kbGet, kbDelete, kbList, kbSetMany, kbSyncToDir, kbSyncFromDir, KB_ROOT_DIR, assertValidKey } from "./knowledge.js";
+import { kbSet, kbGet, kbDelete, kbList, kbSetMany, kbSyncToDir, kbSyncFromDir, KB_ROOT_DIR, assertValidKey, instanceNameOf, instanceCount, listInstances, instanceStats, clearInstance } from "./knowledge.js";
 
 const TEST_KEYS = ["kb.test.one", "kb.test.two"];
+/** 测试全部专用前缀（beforeEach/afterEach 清理，防污染真实知识库） */
+const TEST_PREFIXES = ["kb.test.", "kb.quota.", "other.", "solo", "fromagent2"];
 
-beforeEach(() => {
+function cleanupTestData(): void {
   for (const k of TEST_KEYS) {
     try {
       kbDelete(k);
@@ -19,17 +21,22 @@ beforeEach(() => {
       // 忽略
     }
   }
+  for (const p of TEST_PREFIXES) {
+    for (const e of kbList({ prefix: p, limit: 5000 })) kbDelete(e.key);
+    try {
+      unlinkSync(join(KB_ROOT_DIR, p));
+    } catch {
+      // 忽略
+    }
+  }
+}
+
+beforeEach(() => {
+  cleanupTestData();
 });
 
 afterEach(() => {
-  for (const k of TEST_KEYS) {
-    try {
-      kbDelete(k);
-      unlinkSync(join(KB_ROOT_DIR, k));
-    } catch {
-      // 忽略
-    }
-  }
+  cleanupTestData();
 });
 
 test("key 校验：合法通过，非法抛错", () => {
@@ -38,6 +45,9 @@ test("key 校验：合法通过，非法抛错", () => {
   assert.throws(() => assertValidKey("含中文"), /知识 key/);
   assert.throws(() => assertValidKey("a/b"), /知识 key/);
   assert.throws(() => assertValidKey("a b"), /知识 key/);
+  assert.throws(() => assertValidKey("..bad..name"), /知识 key/); // 连续点
+  assert.throws(() => assertValidKey(".leading"), /知识 key/); // 边界点
+  assert.throws(() => assertValidKey("trailing."), /知识 key/); // 边界点
 });
 
 test("CRUD：set/get/覆盖/delete/list", () => {
@@ -103,4 +113,68 @@ test("目录同步：非法文件名不写入 KV（防穿越）", () => {
 
 test("KB_ROOT_DIR 位于 .file 下（git 隔离）", () => {
   assert.ok(KB_ROOT_DIR.includes(".file"), `KB_ROOT_DIR 应在 .file 下：${KB_ROOT_DIR}`);
+});
+
+// ---------- 实例隔离 ----------
+
+test("实例模型：首段为实例名；root 实例为单段 key", () => {
+  assert.equal(instanceNameOf("cbRate.rate.fed"), "cbRate");
+  assert.equal(instanceNameOf("watchlist.notes.600519"), "watchlist");
+  assert.equal(instanceNameOf("abc"), "");
+  assert.equal(instanceNameOf("abc.def"), "abc");
+});
+
+test("实例管理：listInstances / instanceStats / clearInstance 隔离", () => {
+  kbSet("kb.test.one", "v1");
+  kbSet("other.test.two", "v2");
+  kbSet("solo", "root单段"); // root 实例
+  const insts = listInstances();
+  const kb = insts.find((i) => i.name === "kb");
+  assert.ok(kb, "应有 kb 实例");
+  assert.equal(kb!.count, 1);
+  const stats = instanceStats("kb");
+  assert.equal(stats.count, 1);
+  assert.ok(stats.bytes > 0);
+  // clearInstance 只清本实例
+  const n = clearInstance("kb");
+  assert.equal(n, 1);
+  assert.equal(kbGet("kb.test.one"), null);
+  assert.equal(kbGet("other.test.two")!.value, "v2"); // 其他实例不受影响
+  assert.equal(kbGet("solo")!.value, "root单段");
+});
+
+test("kbList prefix 过滤：实例内列举不串扰", () => {
+  kbSet("kb.test.one", "v1");
+  kbSet("kb.test.two", "v2");
+  kbSet("other.test.x", "v3");
+  const kbOnly = kbList({ prefix: "kb." });
+  assert.equal(kbOnly.length, 2);
+  assert.ok(kbOnly.every((e) => e.key.startsWith("kb.")));
+});
+
+test("实例配额：超限拒绝新增（覆盖不拒绝）", async () => {
+  const { INSTANCE_LIMIT: _orig, setInstanceLimit } = await import("./knowledge.js");
+  // 临时调小上限验证配额逻辑（恢复在 finally）
+  setInstanceLimit(3);
+  try {
+    kbSet("kb.quota.a", "1");
+    kbSet("kb.quota.b", "2");
+    kbSet("kb.quota.c", "3"); // 满 3
+    let rejected = false;
+    try {
+      kbSet("kb.quota.d", "4");
+    } catch {
+      rejected = true;
+    }
+    assert.equal(rejected, true, "超限后新增应抛错");
+    // 覆盖已存在 key 不触发配额
+    kbSet("kb.quota.a", "覆盖");
+    assert.equal(kbGet("kb.quota.a")!.value, "覆盖");
+    // 其他实例不受配额影响
+    kbSet("other.quota.x", "1");
+  } finally {
+    setInstanceLimit(500);
+    for (const e of kbList({ prefix: "kb.quota." })) kbDelete(e.key);
+    for (const e of kbList({ prefix: "other.quota." })) kbDelete(e.key);
+  }
 });

@@ -31,11 +31,19 @@ registerDataSource({
 /** KV 前缀（数据源注册名） */
 export const KB_PREFIX = "knowledge:";
 
+/** 每实例条目上限（资源隔离；root 实例同样受限；测试可临时调整） */
+export let INSTANCE_LIMIT = 500;
+
+/** 测试注入：临时调整实例上限（finally 恢复） */
+export function setInstanceLimit(v: number): void {
+  INSTANCE_LIMIT = v;
+}
+
 /** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
 export const KB_ROOT_DIR = join(DATA_DIR, "k");
 
-/** key 规范：分层点分隔（project.module.attribute）；仅字母数字、点、短横线、下划线 */
-const KEY_RE = /^[a-zA-Z0-9._-]{1,120}$/;
+/** key 规范：分层点分隔（project.module.attribute）；仅字母数字._-；禁连续点/边界点（防 ../ 语义与脏 key） */
+const KEY_RE = /^(?!\.)(?!.*\.\.)(?!.*\.$)[a-zA-Z0-9._-]{1,120}$/;
 
 export interface KnowledgeEntry {
   key: string;
@@ -56,9 +64,115 @@ export function assertValidKey(key: string): void {
   }
 }
 
-/** 写入/覆盖一条知识（key 冲突默认覆盖，Agent 纠错场景直接替换） */
+// ---------- 实例模型 ----------
+// 实例 = key 的顶层段（第一个 "." 之前）；无 "." 的 key 属于 root 实例（""）。
+// 例：cbRate.rate.fed → 实例 "cbRate"；abc → root。
+// 实例级管理（list/stats/clear）与资源隔离（配额）基于此模型。
+
+/** 取 key 所属实例名（无 "." → root 实例 ""） */
+export function instanceNameOf(key: string): string {
+  const i = key.indexOf(".");
+  return i < 0 ? "" : key.slice(0, i);
+}
+
+/** 实例内前缀（root 实例返回 "" 表示单段 key） */
+function instancePrefix(name: string): string {
+  return name ? `${name}.` : "";
+}
+
+/** 单实例条目数（root 实例 = 单段 key 数） */
+export function instanceCount(name: string): number {
+  const prefix = instancePrefix(name);
+  let n = 0;
+  const rows = kvListRaw(KB_PREFIX, 5000);
+  for (const r of rows) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (!e || typeof e.value !== "string") continue;
+      if (instanceNameOf(e.key) === name) n++;
+    } catch {
+      // 跳过损坏条目
+    }
+  }
+  return n;
+}
+
+/** 实例统计（供管理界面）：条目数 / 总字节 / 最近更新 */
+export function instanceStats(name: string): { name: string; count: number; bytes: number; lastUpdated: string } {
+  let count = 0;
+  let bytes = 0;
+  let lastUpdated = "";
+  const rows = kvListRaw(KB_PREFIX, 5000);
+  for (const r of rows) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (!e || typeof e.value !== "string") continue;
+      if (instanceNameOf(e.key) !== name) continue;
+      count++;
+      bytes += Buffer.byteLength(e.value, "utf8");
+      if (e.updatedAt > lastUpdated) lastUpdated = e.updatedAt;
+    } catch {
+      // 跳过
+    }
+  }
+  return { name, count, bytes, lastUpdated };
+}
+
+/** 全部实例列表（root 实例名为 ""，按条数倒序） */
+export function listInstances(): { name: string; count: number; bytes: number; lastUpdated: string }[] {
+  const rows = kvListRaw(KB_PREFIX, 5000);
+  const map = new Map<string, { count: number; bytes: number; lastUpdated: string }>();
+  for (const r of rows) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (!e || typeof e.value !== "string") continue;
+      const name = instanceNameOf(e.key);
+      const m = map.get(name) ?? { count: 0, bytes: 0, lastUpdated: "" };
+      m.count++;
+      m.bytes += Buffer.byteLength(e.value, "utf8");
+      if (e.updatedAt > m.lastUpdated) m.lastUpdated = e.updatedAt;
+      map.set(name, m);
+    } catch {
+      // 跳过
+    }
+  }
+  return [...map.entries()]
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/** 清空某实例全部条目（root 实例 name="" 清单段 key）；返回删除数 */
+export function clearInstance(name: string): number {
+  let n = 0;
+  const rows = kvListRaw(KB_PREFIX, 5000);
+  for (const r of rows) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (!e || typeof e.value !== "string") continue;
+      if (instanceNameOf(e.key) === name) {
+        kvDelete(r.key);
+        n++;
+      }
+    } catch {
+      // 跳过
+    }
+  }
+  return n;
+}
+
+/** 配额校验：新增 key 时实例条数上限；覆盖已存在 key 不计数 */
+export function assertInstanceQuota(key: string): void {
+  if (kbGet(key)) return; // 覆盖不新增
+  const name = instanceNameOf(key);
+  if (instanceCount(name) >= INSTANCE_LIMIT) {
+    throw new Error(`知识实例「${name || "root"}」已达上限（${INSTANCE_LIMIT} 条），请清理后再新增`);
+  }
+}
+
+/** 写入/覆盖一条知识（key 冲突默认覆盖，Agent 纠错场景直接替换；新增时校验实例配额） */
 export function kbSet(key: string, value: string, source?: string): KnowledgeEntry {
   assertValidKey(key);
+  assertInstanceQuota(key);
   const entry: KnowledgeEntry = {
     key,
     value: value.trim(),
@@ -81,16 +195,18 @@ export function kbDelete(key: string): boolean {
   return true;
 }
 
-/** 列举知识（按前缀/模糊搜索；limit 上限） */
-export function kbList(opts: { q?: string; limit?: number } = {}): KnowledgeEntry[] {
+/** 列举知识（prefix 实例过滤 / q 模糊搜索；limit 上限） */
+export function kbList(opts: { prefix?: string; q?: string; limit?: number } = {}): KnowledgeEntry[] {
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
   const q = (opts.q ?? "").trim().toLowerCase();
+  const prefix = opts.prefix ?? "";
   const rows = kvListRaw(KB_PREFIX, 5000);
   const out: KnowledgeEntry[] = [];
   for (const r of rows) {
     try {
       const e = JSON.parse(r.value) as KnowledgeEntry;
       if (!e || typeof e.value !== "string") continue;
+      if (prefix && !e.key.startsWith(prefix)) continue;
       if (q) {
         const hay = `${e.key} ${e.value} ${e.source ?? ""}`.toLowerCase();
         if (!hay.includes(q)) continue;
@@ -175,8 +291,8 @@ export function kbSyncFromDir(): number {
   let changed = 0;
   const seen = new Set<string>();
   for (const f of readdirSync(kDir)) {
-    // key 规范校验（防目录穿越/非法 key 写入 KV）
-    if (!/^[a-zA-Z0-9._-]{1,120}$/.test(f)) continue;
+    // key 规范校验（防目录穿越/非法 key 写入 KV；与 assertValidKey 同规则）
+    if (!KEY_RE.test(f)) continue;
     seen.add(f);
     const filePath = join(kDir, f);
     let content: string;
