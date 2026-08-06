@@ -588,7 +588,10 @@ export type LlmChatResult = LlmChatResponse | LlmChatErrorResponse;
 /** LLM 调用模式（用量按模式统计） */
 export type LlmCallMode = "direct" | "chat-session" | "reasonix";
 
-/** LLM 用量汇总（服务端切面记录，按模块/按天/按模式聚合） */
+/** LLM 用量场景（按业务场景区分，测试/系统用量不混入业务统计） */
+export type LlmUsageScene = "business" | "system" | "test";
+
+/** LLM 用量汇总（服务端切面记录，按模块/按天/按模式/按场景聚合） */
 export interface LlmUsageSummary {
   ok: true;
   total: {
@@ -603,10 +606,12 @@ export interface LlmUsageSummary {
     cacheRate: number;
     /** 按调用模式聚合（direct 直调 / chat-session 自研会话 / reasonix ACP 会话） */
     byMode: { mode: LlmCallMode; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
+    /** 按场景聚合（business 业务 / system 系统 / test 测试）；旧数据按 module 推断 */
+    byScene: { scene: LlmUsageScene; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   };
-  byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
+  byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   /** 逐日（倒序）；byModule 为该日各模块明细（单日扇形图用） */
-  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
+  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
 }
 
 /** DeepSeek 平台余额查询结果 */

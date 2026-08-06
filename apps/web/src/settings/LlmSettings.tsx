@@ -301,16 +301,32 @@ export default function LlmSettings() {
               )}
             </div>
             <div>
-              <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按模块</div>
+              <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按模块（按场景分组）</div>
               {usage?.byModule.length ? (
-                usage.byModule.map((m) => (
-                  <div key={m.module} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
-                    <span>{m.label}</span>
-                    <span style={{ color: "#64748b" }}>
-                      {m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k · 缓存 {(m.cacheRate * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                ))
+                (["business", "system", "test"] as const)
+                  .map((sc) => ({
+                    sc,
+                    label: usage.total.byScene.find((x) => x.scene === sc)?.label ?? (sc === "business" ? "业务场景" : sc === "system" ? "系统工具" : "测试"),
+                    items: usage.byModule.filter((m) => m.scene === sc),
+                  }))
+                  .filter((g) => g.items.length > 0)
+                  .map((g) => (
+                    <details key={g.sc} open={g.sc === "business"} style={{ marginBottom: "0.35rem" }}>
+                      <summary style={{ cursor: "pointer", color: g.sc === "business" ? "#1d4ed8" : "#64748b", fontSize: "0.8rem", fontWeight: 600 }}>
+                        {g.sc === "test" ? "🧪" : g.sc === "system" ? "⚙️" : "📊"} {g.label}（{g.items.reduce((a, x) => a + x.calls, 0)} 次）
+                      </summary>
+                      <div style={{ marginTop: "0.2rem" }}>
+                        {g.items.map((m) => (
+                          <div key={m.module} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                            <span>{m.label}</span>
+                            <span style={{ color: "#64748b" }}>
+                              {m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k · 缓存 {(m.cacheRate * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))
               ) : (
                 <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>暂无记录（LLM 调用后自动累积）</span>
               )}
