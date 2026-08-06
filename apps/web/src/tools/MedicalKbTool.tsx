@@ -14,11 +14,20 @@ const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8
 const btn: React.CSSProperties = { padding: "0.45rem 1rem", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: "0.85rem" };
 const input: React.CSSProperties = { flex: 1, padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff" };
 
+/** 判断剪贴板文本是否符合 DeepSeek 分享链接 / share id 格式 */
+function isShareInput(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^https?:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]{8,64}$/.test(t)) return true;
+  return /^[A-Za-z0-9_-]{8,64}$/.test(t);
+}
+
 export default function MedicalKbTool() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [url, setUrl] = useState("");
   const [question, setQuestion] = useState("");
   const [listErr, setListErr] = useState<string | null>(null);
+  const [clipHint, setClipHint] = useState(false);
 
   const importTask = useAsyncTask<KnowledgeImportResult>("medicalKbImportTaskId", (tid) => api.taskStatus<KnowledgeImportResult>(tid), api.cancelTask);
   const askTask = useAsyncTask<KnowledgeAskResult>("medicalKbAskTaskId", (tid) => api.taskStatus<KnowledgeAskResult>(tid), api.cancelTask);
@@ -37,6 +46,12 @@ export default function MedicalKbTool() {
     void refresh();
   }, [refresh, importTask.taskId]);
 
+  // 挂载时自动读取剪贴板（符合链接格式则填入）
+  useEffect(() => {
+    void readClipboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const doImport = async () => {
     const u = url.trim();
     if (!u) return;
@@ -47,6 +62,20 @@ export default function MedicalKbTool() {
       else setListErr(t.message);
     } catch (e) {
       setListErr(errMsg(e));
+    }
+  };
+
+  /** 从剪贴板读取分享链接并自动填入（仅当符合链接格式且输入框为空） */
+  const readClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (isShareInput(text) && !url.trim()) {
+        setUrl(text.trim());
+        setClipHint(true);
+        setTimeout(() => setClipHint(false), 6000);
+      }
+    } catch {
+      // 剪贴板无权限/不可用（非 https 或未授权）：静默，可手动粘贴
     }
   };
 
@@ -85,10 +114,14 @@ export default function MedicalKbTool() {
         <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>📥 导入知识（Chat 分享链接）</div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input style={input} placeholder="粘贴 DeepSeek 分享链接，如 https://chat.deepseek.com/share/xxx" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doImport(); }} />
+          <button style={{ ...btn, background: "#0ea5e9" }} onClick={() => void readClipboard()} title="读取剪贴板中的分享链接" type="button">
+            📋
+          </button>
           <button style={btn} onClick={() => void doImport()} disabled={importTask.running} type="button">
             {importTask.running ? "⏳ 提取中…" : "导入"}
           </button>
         </div>
+        {clipHint && <div style={{ color: "#0284c7", fontSize: "0.8rem", marginTop: "0.4rem" }}>📋 已从剪贴板自动填入分享链接</div>}
         {importTask.running && <div style={{ color: "#b45309", fontSize: "0.8rem", marginTop: "0.4rem" }}>后台提取事实中（LLM 解析对话 → 入库 medical 实例）…</div>}
         {importTask.result?.ok && (
           <div style={{ color: "#15803d", fontSize: "0.82rem", marginTop: "0.4rem" }}>
