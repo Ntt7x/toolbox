@@ -1,17 +1,23 @@
 // ============================================================
 // 业务模块：知乎爬虫（features/zhihu-crawler）
-// - 用户授权登录态（浏览器 cookie，存本地设置数据 settings:zhihu.cookie）
-// - 以人类频率（3~6s 随机间隔）抓取某用户的时间降序创作内容
-// - 内容源：pins 走免签名 API；answers/articles 走带 cookie 的 SSR HTML（js-initialData）
-// - 输出：仅文字，转换为 markdown
-// 合规：个人备份用途；仅抓取用户主动指定的目标；频率模拟人类，避免对服务造成压力
+// - 登录态授权：浏览器内登录（playwright-core + 系统 Chrome）或手动 Cookie
+// - 抓取：playwright 渲染列表页并**拦截页面自带的签名 API 响应**（x-zse-96 由页面 JS 自动生成），
+//   滚动触发无限加载翻页；人类频率（1.5~3s/滚动）——避免直连被风控（SSR 空壳 + 403）
+// - pins 走免签名 API 直连（轻量）；answers/articles 走浏览器拦截
+// - 输出：仅文字，转换为 markdown，时间降序合并
+// 合规：个人备份用途；仅抓取用户主动指定的目标；频率模拟人类
 // ============================================================
 import { getSetting, setSetting, deleteSetting } from "../../core/settingsStore.js";
 import type { ZhihuCrawlKind, ZhihuCrawlResult, ZhihuUserInfo } from "@toolbox/shared";
+import { chromium, type BrowserContext } from "playwright-core";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { DATA_DIR } from "../../core/db.js";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const BASE = "https://www.zhihu.com";
+const PROFILE_DIR = join(DATA_DIR, "zhihu-auth-profile");
 
 // ---------- cookie 管理（本地设置数据） ----------
 export function getCookie(): string {
@@ -26,75 +32,35 @@ export function hasCookie(): boolean {
   return getCookie().length > 0;
 }
 
-// ---------- 请求工具（人类频率） ----------
+// ---------- 基础工具 ----------
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function humanDelay(): Promise<void> {
-  await sleep(3000 + Math.floor(Math.random() * 3000)); // 3~6s 随机
+  await sleep(1500 + Math.floor(Math.random() * 1500));
 }
 
-async function fetchZhihu(path: string): Promise<{ status: number; text: string }> {
-  const cookie = getCookie();
-  const token = extractUrlToken(path) ?? "";
-  const headers: Record<string, string> = {
-    "User-Agent": UA,
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9",
-    Referer: `${BASE}/people/${token}`,
-  };
-  if (cookie) headers.Cookie = cookie;
-  const res = await fetch(BASE + path, { headers });
-  const text = await res.text();
-  return { status: res.status, text };
-}
-
-// ---------- urlToken 解析 ----------
 export function extractUrlToken(target: string): string {
   const t = target.trim();
-  // https://www.zhihu.com/people/{token} 或 /people/{token}/answers
   const m = t.match(/zhihu\.com\/people\/([A-Za-z0-9_-]+)/);
   if (m) return m[1];
-  // 裸 token（字母数字下划线连字符）
   if (/^[A-Za-z0-9_-]{2,}$/.test(t)) return t;
   return "";
-}
-
-// ---------- js-initialData 解析 ----------
-function parseInitialData(html: string): Record<string, unknown> | null {
-  const m = html.match(/<script id="js-initialData"[^>]*>([\s\S]*?)<\/script>/);
-  if (!m) return null;
-  try {
-    const j = JSON.parse(m[1]);
-    return j?.initialState && typeof j.initialState === "object" ? j.initialState : j;
-  } catch {
-    return null;
-  }
 }
 
 // ---------- HTML → Markdown（仅文字） ----------
 export function htmlToMarkdown(html: string): string {
   let s = html;
-  // 代码块
   s = s.replace(/<pre[\s\S]*?<code[^>]*>([\s\S]*?)<\/code>[\s\S]*?<\/pre>/g, (_, c: string) => `\n\`\`\`\n${c}\n\`\`\`\n`);
-  // 引用
   s = s.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/g, (_, c: string) => `\n> ${stripTags(c).replace(/\n/g, "\n> ")}\n`);
-  // 换行标签
   s = s.replace(/<br\s*\/?>/gi, "\n");
   s = s.replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n");
-  // 列表
   s = s.replace(/<li[^>]*>/gi, "- ");
-  // 标题
   s = s.replace(/<h1[^>]*>/gi, "\n# ").replace(/<h2[^>]*>/gi, "\n## ").replace(/<h3[^>]*>/gi, "\n### ");
-  // 链接 → [text](href)
   s = s.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g, (_, h: string, t: string) => `[${stripTags(t)}](${h})`);
-  // 加粗/斜体
   s = s.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/g, (_, t: string) => `**${stripTags(t)}**`);
   s = s.replace(/<em[^>]*>([\s\S]*?)<\/em>/g, (_, t: string) => `*${stripTags(t)}*`);
-  // 图片 → alt 文本
   s = s.replace(/<img[^>]*alt="([^"]*)"[^>]*>/g, (_, a: string) => `[图片：${a}]`);
-  // 其余标签剥离
   s = stripTags(s);
-  // 清理多余空行
   return s
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -105,116 +71,7 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, "");
 }
 
-// ---------- 各类型解析 ----------
-interface RawItem {
-  kind: ZhihuCrawlKind;
-  title: string;
-  content: string;
-  created: number;
-  url: string;
-  voteup?: number;
-}
-
-function pick(obj: unknown, keys: string[]): unknown {
-  if (obj && typeof obj === "object") {
-    for (const k of keys) {
-      const v = (obj as Record<string, unknown>)[k];
-      if (v !== undefined && v !== null) return v;
-    }
-  }
-  return undefined;
-}
-
-function parseAnswers(state: Record<string, unknown>): RawItem[] {
-  const entities = pick(state, ["entities"]) as Record<string, unknown> | undefined;
-  const answers = (entities && pick(entities, ["answers"])) as Record<string, unknown> | undefined;
-  if (!answers) return [];
-  const out: RawItem[] = [];
-  for (const [id, a] of Object.entries(answers)) {
-    const r = a as Record<string, unknown>;
-    const q = (r.question ?? {}) as Record<string, unknown>;
-    const title = typeof q.title === "string" ? q.title : "（问题标题未知）";
-    const content = typeof r.content === "string" ? htmlToMarkdown(r.content) : "";
-    const created = typeof r.created_time === "number" ? r.created_time : typeof r.created === "number" ? r.created : 0;
-    const voteup = typeof r.voteup_count === "number" ? r.voteup_count : undefined;
-    out.push({ kind: "answer", title, content, created, url: `${BASE}/question/${String(q.id ?? "")}/answer/${id}`, voteup });
-  }
-  return out;
-}
-
-function parseArticles(state: Record<string, unknown>): RawItem[] {
-  const entities = pick(state, ["entities"]) as Record<string, unknown> | undefined;
-  const articles = (entities && pick(entities, ["articles"])) as Record<string, unknown> | undefined;
-  if (!articles) return [];
-  const out: RawItem[] = [];
-  for (const [id, a] of Object.entries(articles)) {
-    const r = a as Record<string, unknown>;
-    const title = typeof r.title === "string" ? r.title : "（文章标题未知）";
-    const content = typeof r.content === "string" ? htmlToMarkdown(r.content) : "";
-    const created = typeof r.created_time === "number" ? r.created_time : 0;
-    const voteup = typeof r.voteup_count === "number" ? r.voteup_count : undefined;
-    out.push({ kind: "article", title, content, created, url: `${BASE}/p/${id}`, voteup });
-  }
-  return out;
-}
-
-function parsePins(state: Record<string, unknown>): RawItem[] {
-  const entities = pick(state, ["entities"]) as Record<string, unknown> | undefined;
-  const pins = (entities && pick(entities, ["pins"])) as Record<string, unknown> | undefined;
-  if (!pins) return [];
-  const out: RawItem[] = [];
-  for (const [id, a] of Object.entries(pins)) {
-    const r = a as Record<string, unknown>;
-    const title = typeof r.title === "string" && r.title ? r.title : "";
-    const content = typeof r.content === "string" ? htmlToMarkdown(r.content) : "";
-    const created = typeof r.created_time === "number" ? r.created_time : 0;
-    const voteup = typeof r.voteup_count === "number" ? r.voteup_count : undefined;
-    out.push({ kind: "pin", title, content, created, url: `${BASE}/pin/${id}`, voteup });
-  }
-  return out;
-}
-
-// ---------- pins API（免签名，可翻页） ----------
-async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal): Promise<RawItem[]> {
-  const out: RawItem[] = [];
-  const cookie = getCookie();
-  const headers: Record<string, string> = { "User-Agent": UA, Referer: `${BASE}/people/${token}` };
-  if (cookie) headers.Cookie = cookie;
-  let offset = 0;
-  for (;;) {
-    if (signal?.aborted) break;
-    const url = `${BASE}/api/v4/members/${token}/pins?limit=20&offset=${offset}`;
-    const res = await fetch(url, { headers, signal });
-    if (res.status !== 200) break;
-    const j = (await res.json()) as { data?: Record<string, unknown>[]; paging?: { is_end?: boolean } };
-    const data = Array.isArray(j.data) ? j.data : [];
-    for (const p of data) {
-      const content = typeof p.content === "string" ? htmlToMarkdown(p.content) : "";
-      const created = typeof p.created_time === "number" ? p.created_time : 0;
-      out.push({
-        kind: "pin",
-        title: content.split("\n")[0]?.slice(0, 40) ?? "",
-        content,
-        created,
-        url: `${BASE}/pin/${String(p.id ?? "")}`,
-        voteup: typeof p.voteup_count === "number" ? p.voteup_count : undefined,
-      });
-    }
-    if (limit > 0 && out.length >= limit) break;
-    if (!j.paging || j.paging.is_end !== false || data.length === 0) break;
-    offset += data.length;
-    await humanDelay();
-  }
-  return out;
-}
-
-// ---------- 浏览器内登录授权（playwright-core + 系统 Chrome/Edge） ----------
-// 启动本机浏览器弹窗 → 用户登录知乎 → 自动提取 cookie → 保存 → 关闭
-import { chromium, type BrowserContext } from "playwright-core";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { DATA_DIR } from "../../core/db.js";
-
+// ---------- 浏览器（playwright + 系统 Chrome/Edge） ----------
 const CHROME_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
@@ -226,71 +83,113 @@ function findBrowser(): string | undefined {
   return CHROME_CANDIDATES.find((p) => existsSync(p));
 }
 
-/**
- * 浏览器内授权：弹窗打开知乎登录页，等待用户登录（检测 z_c0 cookie），
- * 成功即提取全部 zhihu.com cookie 并保存；用户可随时取消（signal.aborted）。
- */
-export async function authViaBrowser(opts: { signal?: AbortSignal; onProgress?: (msg: string) => void } = {}): Promise<{ ok: boolean; name?: string; message?: string }> {
+/** 浏览器 profile 互斥：auth / crawl 复用同一持久 profile（Chrome 不允许并发占用） */
+let browserLock: Promise<unknown> = Promise.resolve();
+function withBrowserLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = browserLock.then(fn, fn);
+  browserLock = run.then(
+    () => {},
+    () => {},
+  );
+  return run;
+}
+
+/** 把本地设置 cookie 注入浏览器上下文（手动粘贴 cookie 时浏览器抓取同样可用） */
+function injectCookie(context: BrowserContext): void {
+  const cookie = getCookie();
+  if (!cookie) return;
+  const parts = cookie.split(";");
+  const entries = parts
+    .map((p) => {
+      const eq = p.indexOf("=");
+      if (eq <= 0) return null;
+      const name = p.slice(0, eq).trim();
+      const value = p.slice(eq + 1).trim();
+      if (!name) return null;
+      return { name, value, domain: ".zhihu.com", path: "/" };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (entries.length > 0) context.addCookies(entries).catch(() => {});
+}
+
+async function launchZhihuContext(): Promise<BrowserContext> {
   const exe = findBrowser();
-  if (!exe) return { ok: false, message: "未找到系统 Chrome/Edge，请改用「手动粘贴 Cookie」方式" };
-  opts.onProgress?.("正在启动浏览器…");
-  const profileDir = join(DATA_DIR, "zhihu-auth-profile");
-  mkdirSync(profileDir, { recursive: true });
-  let context: BrowserContext | null = null;
-  try {
-    // 持久上下文（独立 profile，不干扰用户日常浏览器）
-    context = await chromium.launchPersistentContext(profileDir, {
-      executablePath: exe,
-      headless: false,
-      args: ["--no-first-run", "--no-default-browser-check"],
-    });
-    const page = context.pages()[0] ?? (await context.newPage());
-    opts.onProgress?.("已打开登录窗口，请在浏览器中登录知乎（扫码或账号）…");
-    await page.goto("https://www.zhihu.com/signin", { timeout: 30000 }).catch(() => {});
-    // 轮询检测登录态（z_c0）
-    const deadline = Date.now() + 5 * 60 * 1000;
-    for (;;) {
-      if (opts.signal?.aborted) {
-        await context.close().catch(() => {});
-        return { ok: false, message: "已取消授权" };
-      }
-      if (Date.now() > deadline) {
-        await context.close().catch(() => {});
-        return { ok: false, message: "等待登录超时（5 分钟），请重试" };
-      }
-      const cookies = await context.cookies();
-      if (cookies.some((c) => c.name === "z_c0" && c.value.length > 20)) {
-        // 登录成功：提取 zhihu.com 域 cookie
-        const zhihu = cookies.filter((c) => c.domain.includes("zhihu.com") || c.domain === ".zhihu.com");
-        const cookieStr = zhihu.map((c) => `${c.name}=${c.value}`).join("; ");
-        if (!cookieStr) {
+  if (!exe) throw new Error("未找到系统 Chrome/Edge");
+  mkdirSync(PROFILE_DIR, { recursive: true });
+  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+    executablePath: exe,
+    headless: true,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    args: ["--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"],
+  });
+  // 隐藏自动化指纹（navigator.webdriver）
+  await ctx.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
+  injectCookie(ctx);
+  return ctx;
+}
+
+// ---------- 浏览器内登录授权 ----------
+export async function authViaBrowser(opts: { signal?: AbortSignal; onProgress?: (msg: string) => void } = {}): Promise<{ ok: boolean; name?: string; message?: string }> {
+  return withBrowserLock(async () => {
+    const exe = findBrowser();
+    if (!exe) return { ok: false, message: "未找到系统 Chrome/Edge，请改用「手动粘贴 Cookie」方式" };
+    opts.onProgress?.("正在启动浏览器…");
+    mkdirSync(PROFILE_DIR, { recursive: true });
+    let context: BrowserContext | null = null;
+    try {
+      context = await chromium.launchPersistentContext(PROFILE_DIR, {
+        executablePath: exe,
+        headless: false,
+        args: ["--no-first-run", "--no-default-browser-check"],
+      });
+      const page = context.pages()[0] ?? (await context.newPage());
+      opts.onProgress?.("已打开登录窗口，请在浏览器中登录知乎（扫码或账号）…");
+      await page.goto("https://www.zhihu.com/signin", { timeout: 30000 }).catch(() => {});
+      const deadline = Date.now() + 5 * 60 * 1000;
+      for (;;) {
+        if (opts.signal?.aborted) {
           await context.close().catch(() => {});
-          return { ok: false, message: "已检测到登录，但未获取到 cookie" };
+          return { ok: false, message: "已取消授权" };
         }
-        saveCookie(cookieStr);
-        // 提取昵称
-        let name = "";
-        try {
-          const res = await page.evaluate(async () => {
-            const r = await fetch("/api/v4/me", { headers: { Accept: "application/json" } });
-            if (!r.ok) return "";
-            const j = (await r.json()) as { name?: string };
-            return j.name ?? "";
-          });
-          name = typeof res === "string" ? res : "";
-        } catch {
-          /* 昵称获取失败不影响授权 */
+        if (Date.now() > deadline) {
+          await context.close().catch(() => {});
+          return { ok: false, message: "等待登录超时（5 分钟），请重试" };
         }
-        await context.close().catch(() => {});
-        opts.onProgress?.("登录成功，cookie 已保存");
-        return { ok: true, ...(name ? { name } : {}) };
+        const cookies = await context.cookies();
+        if (cookies.some((c) => c.name === "z_c0" && c.value.length > 20)) {
+          const zhihu = cookies.filter((c) => c.domain.includes("zhihu.com") || c.domain === ".zhihu.com");
+          const cookieStr = zhihu.map((c) => `${c.name}=${c.value}`).join("; ");
+          if (!cookieStr) {
+            await context.close().catch(() => {});
+            return { ok: false, message: "已检测到登录，但未获取到 cookie" };
+          }
+          saveCookie(cookieStr);
+          let name = "";
+          try {
+            const res = await page.evaluate(async () => {
+              const r = await fetch("/api/v4/me", { headers: { Accept: "application/json" } });
+              if (!r.ok) return "";
+              const j = (await r.json()) as { name?: string };
+              return j.name ?? "";
+            });
+            name = typeof res === "string" ? res : "";
+          } catch {
+            /* 昵称获取失败不影响授权 */
+          }
+          await context.close().catch(() => {});
+          opts.onProgress?.("登录成功，cookie 已保存");
+          return { ok: true, ...(name ? { name } : {}) };
+        }
+        await sleep(2000);
       }
-      await new Promise((r) => setTimeout(r, 2000));
+    } catch (e) {
+      if (context) await context.close().catch(() => {});
+      return { ok: false, message: `浏览器启动失败：${e instanceof Error ? e.message : String(e)}` };
     }
-  } catch (e) {
-    if (context) await context.close().catch(() => {});
-    return { ok: false, message: `浏览器启动失败：${e instanceof Error ? e.message : String(e)}` };
-  }
+  });
 }
 
 // ---------- 用户信息（免签名 API） ----------
@@ -322,6 +221,136 @@ export async function getUserInfo(target: string): Promise<ZhihuUserInfo> {
   }
 }
 
+// ---------- 各类型解析（API data 条目 → RawItem） ----------
+interface RawItem {
+  kind: ZhihuCrawlKind;
+  title: string;
+  content: string;
+  created: number;
+  url: string;
+  voteup?: number;
+}
+
+function parseApiItem(d: Record<string, unknown>, kind: ZhihuCrawlKind): RawItem | null {
+  if (!d || typeof d !== "object") return null;
+  const content = typeof d.content === "string" ? htmlToMarkdown(d.content) : "";
+  const created = typeof d.created_time === "number" ? d.created_time : 0;
+  const voteup = typeof d.voteup_count === "number" ? d.voteup_count : undefined;
+  const id = typeof d.id === "string" || typeof d.id === "number" ? String(d.id) : "";
+  if (kind === "answer") {
+    const q = (d.question ?? {}) as Record<string, unknown>;
+    const title = typeof q.title === "string" ? q.title : "（问题标题未知）";
+    return { kind, title, content, created, url: `${BASE}/question/${String(q.id ?? "")}/answer/${id}`, voteup };
+  }
+  if (kind === "article") {
+    const title = typeof d.title === "string" ? d.title : "（文章标题未知）";
+    return { kind, title, content, created, url: `${BASE}/p/${id}`, voteup };
+  }
+  const title = content.split("\n")[0]?.slice(0, 40) ?? "";
+  return { kind, title, content, created, url: `${BASE}/pin/${id}`, voteup };
+}
+
+// ---------- pins API（免签名，直连翻页） ----------
+async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal): Promise<RawItem[]> {
+  const out: RawItem[] = [];
+  const cookie = getCookie();
+  const headers: Record<string, string> = { "User-Agent": UA, Referer: `${BASE}/people/${token}` };
+  if (cookie) headers.Cookie = cookie;
+  let offset = 0;
+  for (;;) {
+    if (signal?.aborted) break;
+    const res = await fetch(`${BASE}/api/v4/members/${token}/pins?limit=20&offset=${offset}`, { headers, signal });
+    if (res.status !== 200) break;
+    const j = (await res.json()) as { data?: Record<string, unknown>[]; paging?: { is_end?: boolean } };
+    const data = Array.isArray(j.data) ? j.data : [];
+    for (const p of data) {
+      const item = parseApiItem(p, "pin");
+      if (item) out.push(item);
+    }
+    if (limit > 0 && out.length >= limit) break;
+    if (!j.paging || j.paging.is_end !== false || data.length === 0) break;
+    offset += data.length;
+    await humanDelay();
+  }
+  return out;
+}
+
+// ---------- 浏览器渲染 + 拦截签名 API（answers/articles） ----------
+async function crawlKindWithBrowser(
+  token: string,
+  kind: ZhihuCrawlKind,
+  limit: number,
+  signal?: AbortSignal,
+  onProgress?: (msg: string) => void,
+): Promise<RawItem[]> {
+  return withBrowserLock(async () => {
+    const items: RawItem[] = [];
+    const seen = new Set<string>();
+    const listPage = kind === "answer" ? "answers" : "articles";
+    const apiPath = `/api/v4/members/${token}/${listPage}`;
+    let context: BrowserContext | null = null;
+    try {
+      context = await launchZhihuContext();
+      const page = context.pages()[0] ?? (await context.newPage());
+      // 拦截页面自带的签名 API 响应（x-zse-96 由页面 JS 自动生成）
+      page.on("response", async (res) => {
+        if (signal?.aborted) return;
+        const u = res.url();
+        if (u.includes(apiPath) && res.status() === 200) {
+          try {
+            const j = (await res.json()) as { data?: unknown[] };
+            const data = Array.isArray(j.data) ? j.data : [];
+            for (const d of data) {
+              const item = parseApiItem(d as Record<string, unknown>, kind);
+              if (item && !seen.has(item.url)) {
+                seen.add(item.url);
+                items.push(item);
+              }
+            }
+          } catch {
+            /* 响应体非 JSON（如被重定向）忽略 */
+          }
+        }
+      });
+      onProgress?.(`正在打开 ${kindLabel(kind)}列表页…`);
+      await page.goto(`${BASE}/people/${token}/${listPage}`, { timeout: 30000, waitUntil: "domcontentloaded" }).catch(() => {});
+      // 检测风控拦截（40362：页面返回错误 JSON）
+      await page.waitForTimeout(1500);
+      const blocked = await page.evaluate(() => {
+        const t = document.body?.innerText ?? "";
+        return t.includes("暂时限制本次访问") || t.includes("40362");
+      });
+      if (blocked) {
+        onProgress?.(`${kindLabel(kind)}：页面被知乎风控拦截（40362），请稍等 1~2 分钟后再试`);
+        return items;
+      }
+      // 等待首次数据
+      for (let i = 0; i < 15 && items.length === 0 && !signal?.aborted; i++) await sleep(1000);
+      // 滚动翻页（无限加载）；人类频率 1.5~3s
+      let stuck = 0;
+      for (let i = 0; i < 40; i++) {
+        if (signal?.aborted) break;
+        if (limit > 0 && items.length >= limit) break;
+        const before = items.length;
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+        await sleep(1500 + Math.floor(Math.random() * 1500));
+        if (items.length === before) {
+          stuck++;
+          if (stuck >= 3) break; // 连续无新数据 → 到底
+        } else {
+          stuck = 0;
+          onProgress?.(`${kindLabel(kind)}已抓取 ${items.length} 条…`);
+        }
+      }
+    } catch (e) {
+      onProgress?.(`${kindLabel(kind)}异常：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+    return items;
+  });
+}
+
 // ---------- 主抓取流程 ----------
 export interface CrawlProgress {
   kind: string;
@@ -335,7 +364,7 @@ export async function crawlUser(
 ): Promise<ZhihuCrawlResult> {
   const token = extractUrlToken(target);
   if (!token) return { ok: false, message: "无法识别用户（请输入知乎主页 URL 或 urlToken）" };
-  if (!hasCookie()) return { ok: false, message: "未配置知乎登录 cookie（浏览器登录后复制），请先在页面设置" };
+  if (!hasCookie()) return { ok: false, message: "未配置知乎登录 cookie（浏览器登录授权或手动粘贴），请先在页面设置" };
 
   const info = await getUserInfo(target);
   if (!info.ok) return { ok: false, message: info.message };
@@ -349,31 +378,18 @@ export async function crawlUser(
     opts.onProgress?.({ kind, fetched: all.length, message: `开始抓取 ${kindLabel(kind)}…` });
     try {
       if (kind === "pin") {
-        // 想法：免签名 API 翻页
+        // 想法：免签名 API 直连翻页（轻量）
         const pins = await fetchPinsApi(token, limit, opts.signal);
         all.push(...pins);
         opts.onProgress?.({ kind, fetched: pins.length, message: `想法抓取完成（${pins.length} 条）` });
-        continue;
+      } else {
+        // 回答/文章：浏览器渲染 + 拦截签名 API + 滚动翻页
+        const items = await crawlKindWithBrowser(token, kind, limit, opts.signal, (msg) =>
+          opts.onProgress?.({ kind, fetched: all.length, message: msg }),
+        );
+        all.push(...items);
+        opts.onProgress?.({ kind, fetched: items.length, message: `${kindLabel(kind)}抓取完成（${items.length} 条）` });
       }
-      // 回答/文章：SSR HTML（js-initialData）
-      const page = kind === "answer" ? "answers" : "articles";
-      const { status, text } = await fetchZhihu(`/people/${token}/${page}`);
-      if (status === 403 || status === 401) {
-        opts.onProgress?.({ kind, fetched: all.length, message: `${kindLabel(kind)}：页面被风控拦截（HTTP ${status}），请确认 cookie 有效` });
-        continue;
-      }
-      if (status !== 200) {
-        opts.onProgress?.({ kind, fetched: all.length, message: `${kindLabel(kind)}：页面返回 HTTP ${status}` });
-        continue;
-      }
-      const state = parseInitialData(text);
-      if (!state) {
-        opts.onProgress?.({ kind, fetched: all.length, message: `${kindLabel(kind)}：未能解析页面数据（可能需要更新解析器）` });
-        continue;
-      }
-      const items = kind === "answer" ? parseAnswers(state) : parseArticles(state);
-      all.push(...items);
-      opts.onProgress?.({ kind, fetched: items.length, message: `${kindLabel(kind)}抓取完成（${items.length} 条，SSR 首页）` });
     } catch (e) {
       opts.onProgress?.({ kind, fetched: all.length, message: `${kindLabel(kind)}：异常 ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -383,7 +399,6 @@ export async function crawlUser(
 
   if (opts.signal?.aborted) return { ok: false, message: "已取消" };
 
-  // 时间降序合并
   const items = all
     .filter((i) => i.content.length > 0 || i.title)
     .sort((a, b) => b.created - a.created)
