@@ -216,6 +216,28 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - [ ] 页面与模块编译 200（vite dev）
 - [ ] 回归：`/api/health`、`/api/tools`、既有端点不受影响
 
+### 7.1 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
+
+新增任何页面/路由/菜单项后，必须逐项核对：
+
+1. **前端菜单注册三件套**（`apps/web/src/App.tsx`）：`MENU_GROUPS` 加分组项
+   （staticItems 用 `{name, path, icon}`，工具页用 `toolIds`）＋ `<Route>` 映射 ＋ 组件 import。
+2. **菜单编辑模式兼容**（教训：`/settings/agent-sessions` 曾因旧 `settings:menu.order`
+   未含新项而"显示在组末尾但拖不动、保存不进顺序"）：
+   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`sqlite3` 或本地数据管理页）；
+     若该组已有保存顺序且不含新 key，新项会靠 `resolveGroupItems` 的 rest 补显示，
+     但编辑模式草稿不包含它 → 不可拖、保存丢失（startEdit 已修复：进入编辑模式时
+     将未列出的默认项合并进草稿）。
+   - 规则：**新菜单项 key 必须能被 `defaultOrder` 覆盖**（staticItems 的 key=path，
+     toolIds 的 key=tool id），且改动后建议清一次该组顺序或验证编辑模式可拖动。
+3. **服务端注册**：新 feature 必须在 `apps/server/src/index.ts` 加 import + `register(app)`；
+   feature 的 `meta.path` 必须与前端路由一致（`/tools/x` 或 `/settings/x`）。
+4. **shared 契约**：请求/响应类型放 `packages/shared/src/index.ts`，服务端与前端共用；
+   前端 `api.ts` 同步加方法（`jsonInit`，DELETE 用 `jsonInit("DELETE", {})`）。
+5. **持久化数据**：新数据源（KV 前缀/表）必须 `registerDataSource`（本地数据管理可见），
+   否则落入"未标记"。
+6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
+
 ## 8. 历史进度记录（必须遵守）
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。

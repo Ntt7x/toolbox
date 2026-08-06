@@ -183,10 +183,26 @@ export default function App() {
     });
   };
 
-  /** 进入编辑模式（以当前生效顺序为草稿） */
+  /** 进入编辑模式（以当前生效顺序为草稿；未列出的默认项补末尾，确保可拖动/可保存） */
   const startEdit = () => {
-    const base = menuOrder ?? defaultOrder(MENU_GROUPS, tools);
-    setDraftOrder(JSON.parse(JSON.stringify(base)) as Record<string, string[]>);
+    const base = menuOrder ?? {};
+    const defaults = defaultOrder(MENU_GROUPS, tools);
+    const merged: Record<string, string[]> = {};
+    for (const [label, def] of Object.entries(defaults)) {
+      const saved = base[label];
+      if (saved && saved.length > 0) {
+        // 已保存顺序优先 + 未列出的默认项（如新页面）补末尾 → 全部进入可拖拽草稿
+        const rest = def.filter((k) => !saved.includes(k));
+        merged[label] = [...saved, ...rest];
+      } else {
+        merged[label] = def;
+      }
+    }
+    // 兜底：menuOrder 里可能有的额外组（如"其他"）
+    for (const [label, arr] of Object.entries(base)) {
+      if (!merged[label]) merged[label] = arr;
+    }
+    setDraftOrder(merged);
     setEditing(true);
   };
 
