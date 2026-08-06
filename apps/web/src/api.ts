@@ -112,16 +112,6 @@ export const api = {
   kellyHistoryDelete: (id: string) =>
     request<KellyHistoryDeleteResult>(`/tools/kelly/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   // 康复笔记
-  rehabGet: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`),
-  rehabSave: (id: string, patch: RehabNoteUpdateRequest) =>
-    request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
-  rehabReset: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}/reset`, jsonInit("POST", {})),
-  // 医学知识库（medical 实例，core/knowledge 业务落地）
-  medicalKbImport: (urls: string[], conflict: "skip" | "overwrite" | "merge" = "skip") =>
-    request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { urls, conflict })),
-  medicalKbList: () => request<{ ok: true; entries: KnowledgeEntry[]; total: number }>("/tools/medical-kb"),
-  medicalKbDelete: (key: string) => request<{ ok: true; deleted: number } | { ok: false; message: string }>(`/tools/medical-kb/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
-  medicalKbAsk: (question: string) => request<AsyncTaskResult<KnowledgeAskResult>>("/tools/medical-kb/ask", jsonInit("POST", { question })),
   /** 历史网格计划（列表/详情/删除） */
   gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
   gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),

@@ -15,16 +15,6 @@ test("注册表：全部提示词带场景分组与归属页面（无'通用'漏
   }
 });
 
-test("knowledge.agent 三个模板存在且可渲染（占位符替换）", () => {
-  const guide = getPromptTemplate("knowledge.agent.guide").replace("{instance}", "medical").replace("{action}", "回答用户问题");
-  assert.match(guide, /mcp__kb__\*/);
-  assert.match(guide, /medical/);
-  const ask = getPromptTemplate("knowledge.agent.ask").replace("{instance}", "medical").replace("{question}", "感冒发热");
-  assert.match(ask, /感冒发热/);
-  const imp = getPromptTemplate("knowledge.agent.import").replaceAll("{instance}", "medical").replace("{dialog}", "【对话】");
-  assert.match(imp, /【对话原文】/);
-});
-
 test("updatePrompt / resetPrompt：编辑与恢复默认", () => {
   const id = "knowledge.ask";
   assert.equal(updatePrompt(id, "自定义模板"), true);
