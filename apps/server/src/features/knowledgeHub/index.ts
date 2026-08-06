@@ -10,6 +10,7 @@ import {
   listVirtKbs,
   getVirtKb,
   createVirtKb,
+  updateVirtKb,
   deleteVirtKb,
   listDomains,
   getDomainMeta,
@@ -50,11 +51,22 @@ export function register(app: Hono): void {
     return c.json({ ok: true, deleted: true });
   });
 
+  // 动态调整虚拟库引用的领域库（增删/替换）
+  route.put("/virt/:name", async (c: Context) => {
+    const body = await c.req.json().catch(() => ({}));
+    const r = updateVirtKb(c.req.param("name") ?? "", {
+      domains: Array.isArray(body.domains) ? body.domains.map((d: unknown) => String(d)) : undefined,
+      desc: body.desc !== undefined ? String(body.desc) : undefined,
+    });
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json({ ok: true, virt: r.virt });
+  });
+
   // 删除领域知识库（彻底：清空实例条目 + 删元数据）
   route.delete("/domain/:name", (c: Context) => {
     const r = deleteDomain(c.req.param("name") ?? "");
-    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
-    return c.json({ ok: true, deleted: true, removedEntries: r.removedEntries });
+    if (!r.ok) return c.json({ ok: false, message: "删除失败" }, 400);
+    return c.json({ ok: true, deleted: true, removedEntries: r.removedEntries, ...(r.cleanedVirts ? { cleanedVirts: r.cleanedVirts } : {}) });
   });
 
   // 领域库数据区：分页列出该实例知识条目（prefix 过滤；total 为全量）

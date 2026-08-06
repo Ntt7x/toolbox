@@ -91,6 +91,9 @@ export default function KnowledgeHubTool() {
   const [nvName, setNvName] = useState("");
   const [nvDesc, setNvDesc] = useState("");
   const [nvSelDomains, setNvSelDomains] = useState<string[]>([]);
+  // 虚拟库编辑（详情页配置区）
+  const [virtEditDomains, setVirtEditDomains] = useState<string[]>([]);
+  const [virtEditDesc, setVirtEditDesc] = useState("");
   // 删除确认 Modal
   const [delTarget, setDelTarget] = useState<KbEntry | null>(null);
   const [delTyped, setDelTyped] = useState("");
@@ -156,6 +159,9 @@ export default function KnowledgeHubTool() {
       setTplExtract(e.meta?.extractTemplate ?? "");
       setMetaDesc(e.meta?.desc ?? "");
       setMetaKeywords(e.meta?.keywords?.join("，") ?? "");
+    } else {
+      setVirtEditDomains([...e.virt.domains]);
+      setVirtEditDesc(e.virt.desc ?? "");
     }
   };
 
@@ -304,6 +310,23 @@ export default function KnowledgeHubTool() {
     setNvSelDomains((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
   };
 
+  // 虚拟库配置保存（动态调整引用领域）
+  const saveVirtCfg = async () => {
+    if (detail?.type !== "virt") return;
+    if (virtEditDomains.length === 0) return setCfgMsg("❌ 至少保留一个领域");
+    try {
+      const r = await api.knowledgeHubUpdateVirt(detail.name, { domains: virtEditDomains, desc: virtEditDesc });
+      if (!r.ok) setCfgMsg(`❌ ${r.message ?? "保存失败"}`);
+      else {
+        setCfgMsg("✅ 已保存");
+        setTimeout(() => setCfgMsg(""), 2500);
+        await load();
+      }
+    } catch (e) {
+      setCfgMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   // ---------- 删除（Modal 输入名称精准确认） ----------
   const confirmDelete = async () => {
     if (!delTarget) return;
@@ -411,15 +434,28 @@ export default function KnowledgeHubTool() {
           <div style={card}>
             {detail.type === "virt" ? (
               <div>
-                <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.6rem" }}>虚拟库由以下领域库组成（组合固定，可在列表中删除后重建）：</div>
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {detail.virt.domains.map((d) => (
-                    <span key={d} style={{ ...chip, cursor: "default", background: "#ede9fe", borderColor: "#ddd6fe" }}>
-                      {d}（{domainCount(d)}）
-                    </span>
-                  ))}
+                <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.6rem" }}>勾选下方领域可动态调整虚拟库的引用范围（导入自动分发、问答自动路由）：</div>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
+                  {allDomains.map((d) => {
+                    const on = virtEditDomains.includes(d);
+                    return (
+                      <span
+                        key={d}
+                        style={{ ...chip, background: on ? "#dbeafe" : "#f1f5f9", borderColor: on ? "#3b82f6" : "#cbd5e1", userSelect: "none" }}
+                        onClick={() => setVirtEditDomains((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]))}
+                      >
+                        {on ? "☑" : "☐"} {d}（{domainCount(d)}）
+                      </span>
+                    );
+                  })}
                 </div>
-                {detail.virt.desc && <div style={{ marginTop: "0.6rem", fontSize: "0.85rem", color: "#475569" }}>描述：{detail.virt.desc}</div>}
+                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
+                  <input style={{ ...input }} placeholder="虚拟库描述（可选）" value={virtEditDesc} onChange={(e) => setVirtEditDesc(e.target.value)} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
+                  <button style={btn} onClick={() => void saveVirtCfg()}>💾 保存引用</button>
+                  {cfgMsg && <span style={{ color: "#0e7490", fontSize: "0.85rem" }}>{cfgMsg}</span>}
+                </div>
               </div>
             ) : (
               <div>
@@ -593,7 +629,9 @@ export default function KnowledgeHubTool() {
         {delTarget && (
           <div>
             {delTarget.type === "domain" ? (
-              <p style={{ margin: "0 0 0.8rem", color: "#b91c1c" }}>将清空该领域全部 <b>{delTarget.count}</b> 条知识，且<b>不可恢复</b>。</p>
+              <p style={{ margin: "0 0 0.8rem", color: "#b91c1c" }}>
+                将清空该领域全部 <b>{delTarget.count}</b> 条知识，且<b>不可恢复</b>；引用该领域的虚拟库将同步移除对其的引用。
+              </p>
             ) : (
               <p style={{ margin: "0 0 0.8rem", color: "#64748b" }}>仅移除虚拟库组合配置，不影响领域库数据。</p>
             )}

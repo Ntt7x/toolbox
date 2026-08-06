@@ -137,12 +137,35 @@ export async function generateDomainTemplates(info: { name: string; desc?: strin
   return { askTemplate, extractTemplate };
 }
 
-/** 删除领域知识库：删领域元数据 + 清空该实例全部知识条目（彻底删除）；返回删除条目数 */
-export function deleteDomain(name: string): { ok: boolean; message?: string; removedEntries?: number } {
-  if (!getDomainMeta(name)) return { ok: false, message: `领域「${name}」不存在` };
+/** 删除领域知识库：清空该实例全部条目 + 删元数据（即使无元数据也强制清空隐式实例）；
+ *  级联：所有虚拟库移除对该领域的引用，引用清空的虚拟库一并删除。返回删除条目数 */
+export function deleteDomain(name: string): { ok: boolean; removedEntries: number; cleanedVirts?: number } {
   const removedEntries = clearInstance(name);
   kvDelete(`${DOMAIN_PREFIX}${name}`);
-  return { ok: true, removedEntries };
+  let cleanedVirts = 0;
+  for (const v of listVirtKbs()) {
+    if (v.domains.includes(name)) {
+      const rest = v.domains.filter((d) => d !== name);
+      if (rest.length === 0) {
+        kvDelete(`${VIRT_PREFIX}${v.name}`);
+        cleanedVirts++;
+      } else {
+        kvSet(`${VIRT_PREFIX}${v.name}`, { ...v, domains: rest, updatedAt: Date.now() });
+      }
+    }
+  }
+  return { ok: true, removedEntries, ...(cleanedVirts ? { cleanedVirts } : {}) };
+}
+
+/** 动态调整虚拟库引用的领域库（domains 增删/替换；desc 更新） */
+export function updateVirtKb(name: string, patch: { domains?: string[]; desc?: string }): { ok: boolean; message?: string; virt?: VirtKb } {
+  const v = getVirtKb(name);
+  if (!v) return { ok: false, message: `虚拟知识库「${name}」不存在` };
+  const domains = patch.domains ? [...new Set(patch.domains.map((d) => d.trim()).filter(Boolean))] : v.domains;
+  if (domains.length === 0) return { ok: false, message: "至少保留一个领域" };
+  const virt: VirtKb = { ...v, domains, ...(patch.desc !== undefined ? { desc: patch.desc.trim() || undefined } : {}), updatedAt: Date.now() };
+  kvSet(`${VIRT_PREFIX}${name}`, virt);
+  return { ok: true, virt };
 }
 
 export function listDomains(): DomainMeta[] {

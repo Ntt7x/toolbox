@@ -291,6 +291,8 @@ export const api = {
   knowledgeHubOverview: () => request<import("@toolbox/shared").KnowledgeHubOverview>("/tools/knowledge-hub/overview"),
   knowledgeHubCreateVirt: (name: string, domains: string[], desc?: string) =>
     request<{ ok: boolean; virt?: import("@toolbox/shared").VirtualKb; message?: string }>("/tools/knowledge-hub/virt", jsonInit("POST", { name, domains, desc })),
+  knowledgeHubUpdateVirt: (name: string, patch: { domains?: string[]; desc?: string }) =>
+    request<{ ok: boolean; virt?: import("@toolbox/shared").VirtualKb; message?: string }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}`, jsonInit("PUT", patch)),
   knowledgeHubCreateDomain: (name: string, desc?: string, keywords?: string[], generateTemplates?: boolean) =>
     request<{ ok: boolean; domain?: import("@toolbox/shared").KnowledgeDomainMeta; message?: string; warning?: string }>("/tools/knowledge-hub/domain", jsonInit("POST", { name, desc, keywords, generateTemplates: generateTemplates === true })),
   knowledgeHubDeleteVirt: (name: string) => request<{ ok: boolean }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}`, jsonInit("DELETE", {})),
