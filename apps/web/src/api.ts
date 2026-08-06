@@ -304,6 +304,12 @@ export const api = {
   knowledgeHubSeedMedical: (force?: boolean) => request<{ ok: boolean; domain?: import("@toolbox/shared").KnowledgeDomainMeta }>("/tools/knowledge-hub/domain/medical/seed", jsonInit("POST", { force: force === true })),
   knowledgeHubAskDomain: (name: string, question: string) =>
     request<{ ok: boolean; answer?: string; message?: string }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/ask`, jsonInit("POST", { question })),
+  knowledgeHubDomainEntries: (name: string, limit = 50, offset = 0) =>
+    request<{ ok: true; total: number; entries: import("@toolbox/shared").KnowledgeEntry[]; offset: number; limit: number }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/entries?limit=${limit}&offset=${offset}`),
+  knowledgeHubVirtEntries: (name: string, limit = 50, offset = 0) =>
+    request<{ ok: true; total: number; entries: import("@toolbox/shared").KnowledgeEntry[]; offset: number; limit: number }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/entries?limit=${limit}&offset=${offset}`),
+  knowledgeHubDeleteEntry: (domain: string, key: string) =>
+    request<{ ok: boolean; message?: string; deleted?: number }>(`/tools/knowledge-hub/domain/${encodeURIComponent(domain)}/entry/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
   knowledgeHubImportDomain: (name: string, url: string) =>
     request<import("@toolbox/shared").KnowledgeImportResult>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/import`, jsonInit("POST", { url })),
 };

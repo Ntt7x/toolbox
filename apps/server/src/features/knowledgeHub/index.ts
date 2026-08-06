@@ -21,7 +21,10 @@ import {
   askVirtKb,
   importToVirtKb,
 } from "../../core/knowledgeHub.js";
-import { kbListInstances, kbAsk, kbImportFromChat } from "../../core/knowledge.js";
+import { kbListInstances, kbAsk, kbImportFromChat, kbDelete, kbList } from "../../core/knowledge.js";
+
+/** 虚拟库数据区聚合扫描上限（每领域） */
+const KB_ENTRIES_SCAN = 500;
 
 export const meta: ToolMeta = { id: "knowledge-hub", name: "知识库中心", description: "虚拟知识库与领域知识库管理", path: "/tools/knowledge-hub" };
 
@@ -52,6 +55,37 @@ export function register(app: Hono): void {
     const r = deleteDomain(c.req.param("name") ?? "");
     if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
     return c.json({ ok: true, deleted: true, removedEntries: r.removedEntries });
+  });
+
+  // 领域库数据区：分页列出该实例知识条目（prefix 过滤；total 为全量）
+  route.get("/domain/:name/entries", (c: Context) => {
+    const name = c.req.param("name") ?? "";
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
+    const offset = Math.max(Number(c.req.query("offset") ?? 0), 0);
+    const all = kbList({ prefix: `${name}.`, limit: 5000 });
+    const page = all.slice(offset, offset + limit);
+    return c.json({ ok: true, total: all.length, entries: page, offset, limit });
+  });
+
+  // 领域库数据区：删除单条知识条目
+  route.delete("/domain/:name/entry/:key", (c: Context) => {
+    const name = c.req.param("name") ?? "";
+    const key = c.req.param("key") ?? "";
+    if (!key.startsWith(`${name}.`)) return c.json({ ok: false, message: `key「${key}」不属于领域「${name}」` }, 400);
+    const ok = kbDelete(key);
+    if (!ok) return c.json({ ok: false, message: "知识条目不存在" }, 404);
+    return c.json({ ok: true, deleted: 1 });
+  });
+
+  // 虚拟库数据区：聚合其全部领域的条目（跨前缀，limit/offset）
+  route.get("/virt/:name/entries", (c: Context) => {
+    const virt = getVirtKb(c.req.param("name") ?? "");
+    if (!virt) return c.json({ ok: false, message: "虚拟知识库不存在" }, 404);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
+    const offset = Math.max(Number(c.req.query("offset") ?? 0), 0);
+    const all = virt.domains.flatMap((d) => kbList({ prefix: `${d}.`, limit: KB_ENTRIES_SCAN }));
+    const page = all.slice(offset, offset + limit);
+    return c.json({ ok: true, total: all.length, entries: page, offset, limit });
   });
 
   // 虚拟库聚合问答

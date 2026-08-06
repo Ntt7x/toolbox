@@ -1,15 +1,15 @@
 // ============================================================
 // 知识库中心（工具分组）
-// 统一体验：领域知识库与虚拟知识库在「导入/问答」上体感一致——
-// - 领域知识库：导入直接进本库，问答只查本库（可配置特化模板）
-// - 虚拟知识库：导入自动分发到最匹配的子领域（无匹配归 other），
-//   问答先做领域路由（综合匹配）→ 命中只查最相关领域，未命中降级全领域
+// 列表视图：领域库与虚拟库混合展示；「详情」进入知识库详情页
+// 详情页四区（Tab）：配置区 / 导入区 / 问答区 / 数据区
+// - 领域知识库：导入直接进本库，问答只查本库，可配置特化模板
+// - 虚拟知识库：导入自动分发到最匹配子领域，问答先领域路由（综合匹配）
 // ============================================================
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "../api";
 import Modal from "../Modal";
-import type { KnowledgeDomainMeta, KnowledgeInstanceInfo, VirtualKb } from "@toolbox/shared";
+import type { KnowledgeDomainMeta, KnowledgeEntry, KnowledgeInstanceInfo, VirtualKb } from "@toolbox/shared";
 
 const card: CSSProperties = {
   background: "#fff",
@@ -61,20 +61,27 @@ type KbEntry =
 export default function KnowledgeHubTool() {
   const [ov, setOv] = useState<Overview>({ instances: [], domains: [], virst: [] });
   const [err, setErr] = useState("");
-  const [selName, setSelName] = useState("");
-  // 使用区（统一：导入 + 问答）
+  // 视图：null=列表，KbEntry=详情
+  const [detail, setDetail] = useState<KbEntry | null>(null);
+  const [tab, setTab] = useState<"config" | "import" | "ask" | "data">("ask");
+  // 使用区状态
   const [askQ, setAskQ] = useState("");
   const [askA, setAskA] = useState("");
   const [askRouted, setAskRouted] = useState("");
   const [importUrl, setImportUrl] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  // 领域配置（选中领域库时）
+  // 领域配置状态
   const [tplAsk, setTplAsk] = useState("");
   const [tplExtract, setTplExtract] = useState("");
   const [metaDesc, setMetaDesc] = useState("");
   const [metaKeywords, setMetaKeywords] = useState("");
   const [cfgMsg, setCfgMsg] = useState("");
+  // 数据区
+  const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [entryTotal, setEntryTotal] = useState(0);
+  const [entryOffset, setEntryOffset] = useState(0);
+  const [entryMsg, setEntryMsg] = useState("");
   // 新建
   const [showNew, setShowNew] = useState<"domain" | "virt" | "">("");
   const [ndName, setNdName] = useState("");
@@ -84,7 +91,7 @@ export default function KnowledgeHubTool() {
   const [nvName, setNvName] = useState("");
   const [nvDesc, setNvDesc] = useState("");
   const [nvSelDomains, setNvSelDomains] = useState<string[]>([]);
-  // 删除确认 Modal（输入名称精准确认）
+  // 删除确认 Modal
   const [delTarget, setDelTarget] = useState<KbEntry | null>(null);
   const [delTyped, setDelTyped] = useState("");
   // 医学模板重置确认 Modal
@@ -105,7 +112,7 @@ export default function KnowledgeHubTool() {
   }, [load]);
 
   // 统一条目列表：领域元数据 + 隐式实例领域 + 虚拟库
-  const entries = useMemo<KbEntry[]>(() => {
+  const entriesList = useMemo<KbEntry[]>(() => {
     const list: KbEntry[] = [];
     const domainNames = new Set<string>();
     for (const d of ov.domains) {
@@ -126,37 +133,67 @@ export default function KnowledgeHubTool() {
     return list;
   }, [ov]);
 
-  const selected = useMemo(() => entries.find((e) => e.name === selName) ?? null, [entries, selName]);
+  // 虚拟库可选的领域 = 全部领域（有数据实例 ∪ 已建元数据，含空库）
+  const allDomains = useMemo(() => {
+    const s = new Set<string>();
+    for (const it of ov.instances) s.add(it.instance);
+    for (const d of ov.domains) s.add(d.name);
+    return [...s];
+  }, [ov]);
+  const domainCount = (name: string) => ov.instances.find((i) => i.instance === name)?.count ?? 0;
 
-  // 选中变化 → 载入配置（领域库）
-  useEffect(() => {
+  // ---------- 详情页：进入/返回时重置状态 ----------
+  const openDetail = (e: KbEntry) => {
+    setDetail(e);
+    setTab("ask");
     setAskA("");
     setAskRouted("");
     setImportMsg("");
     setCfgMsg("");
-    if (selected?.type === "domain") {
-      setTplAsk(selected.meta?.askTemplate ?? "");
-      setTplExtract(selected.meta?.extractTemplate ?? "");
-      setMetaDesc(selected.meta?.desc ?? "");
-      setMetaKeywords(selected.meta?.keywords?.join("，") ?? "");
+    setEntryOffset(0);
+    if (e.type === "domain") {
+      setTplAsk(e.meta?.askTemplate ?? "");
+      setTplExtract(e.meta?.extractTemplate ?? "");
+      setMetaDesc(e.meta?.desc ?? "");
+      setMetaKeywords(e.meta?.keywords?.join("，") ?? "");
     }
-  }, [selName, selected?.type]); // eslint-disable-line react-hooks/exhaustive-deps
+  };
 
-  // ---------- 统一使用区：问答 ----------
+  // 数据区加载
+  const loadEntries = useCallback(async () => {
+    if (!detail) return;
+    try {
+      const r = detail.type === "virt"
+        ? await api.knowledgeHubVirtEntries(detail.name, 50, entryOffset)
+        : await api.knowledgeHubDomainEntries(detail.name, 50, entryOffset);
+      setEntries(r.entries);
+      setEntryTotal(r.total);
+      setEntryMsg("");
+    } catch (e) {
+      setEntryMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [detail, entryOffset]);
+
+  useEffect(() => {
+    if (detail && tab === "data") void loadEntries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, tab, entryOffset]);
+
+  // ---------- 问答 ----------
   const ask = async () => {
-    if (!selected || !askQ.trim()) return;
+    if (!detail || !askQ.trim()) return;
     setBusy(true);
     setAskA("");
     setAskRouted("");
     try {
-      if (selected.type === "virt") {
-        const r = await api.knowledgeHubAskVirt(selected.name, askQ);
+      if (detail.type === "virt") {
+        const r = await api.knowledgeHubAskVirt(detail.name, askQ);
         if (r.ok && r.answer) {
           setAskA(r.answer);
           setAskRouted((r as { routed?: string }).routed ?? "");
         } else setAskA(`❌ ${(r as { message?: string }).message ?? "无回答"}`);
       } else {
-        const r = await api.knowledgeHubAskDomain(selected.name, askQ);
+        const r = await api.knowledgeHubAskDomain(detail.name, askQ);
         if (r.ok && r.answer) setAskA(r.answer);
         else setAskA(`❌ ${(r as { message?: string }).message ?? "无回答"}`);
       }
@@ -167,18 +204,19 @@ export default function KnowledgeHubTool() {
     }
   };
 
-  // ---------- 统一使用区：导入 ----------
+  // ---------- 导入 ----------
   const doImport = async () => {
-    if (!selected || !importUrl.trim()) return;
+    if (!detail || !importUrl.trim()) return;
     setBusy(true);
     setImportMsg("");
     try {
-      const r = selected.type === "virt"
-        ? await api.knowledgeHubImportVirt(selected.name, importUrl.trim())
-        : await api.knowledgeHubImportDomain(selected.name, importUrl.trim());
+      const r = detail.type === "virt"
+        ? await api.knowledgeHubImportVirt(detail.name, importUrl.trim())
+        : await api.knowledgeHubImportDomain(detail.name, importUrl.trim());
       if (r.ok) {
-        const extra = selected.type === "virt" ? "（已自动分发到最匹配领域）" : "";
+        const extra = detail.type === "virt" ? "（已自动分发到最匹配领域）" : "";
         setImportMsg(`✅ 导入 ${r.imported} 条${extra}${r.skipped ? `（跳过 ${r.skipped}）` : ""}${r.conflicts ? `（冲突 ${r.conflicts}）` : ""}`);
+        if (tab === "data") void loadEntries();
       } else setImportMsg(`❌ ${(r as { message?: string }).message ?? "导入失败"}`);
     } catch (e) {
       setImportMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
@@ -189,9 +227,9 @@ export default function KnowledgeHubTool() {
 
   // ---------- 领域配置保存 ----------
   const saveCfg = async () => {
-    if (selected?.type !== "domain") return;
+    if (detail?.type !== "domain") return;
     try {
-      await api.knowledgeHubSetDomain(selected.name, {
+      await api.knowledgeHubSetDomain(detail.name, {
         desc: metaDesc,
         keywords: metaKeywords.split(/[,，、]/).map((k) => k.trim()).filter(Boolean),
         askTemplate: tplAsk,
@@ -221,7 +259,7 @@ export default function KnowledgeHubTool() {
     }
   };
 
-  // ---------- 新建领域库 ----------
+  // ---------- 新建 ----------
   const createNewDomain = async () => {
     if (!ndName.trim()) return setErr("请填写领域名称");
     setBusy(true);
@@ -244,7 +282,6 @@ export default function KnowledgeHubTool() {
     }
   };
 
-  // ---------- 新建虚拟库 ----------
   const createNewVirt = async () => {
     if (!nvName.trim() || nvSelDomains.length === 0) return setErr("请填写虚拟库名称并至少勾选一个领域");
     try {
@@ -267,16 +304,7 @@ export default function KnowledgeHubTool() {
     setNvSelDomains((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
   };
 
-  // 虚拟库可选的领域 = 全部领域（有数据实例 ∪ 已建元数据，含空库）
-  const allDomains = useMemo(() => {
-    const s = new Set<string>();
-    for (const it of ov.instances) s.add(it.instance);
-    for (const d of ov.domains) s.add(d.name);
-    return [...s];
-  }, [ov]);
-  const domainCount = (name: string) => ov.instances.find((i) => i.instance === name)?.count ?? 0;
-
-  // ---------- 删除知识库（Modal 输入名称精准确认，防误删） ----------
+  // ---------- 删除（Modal 输入名称精准确认） ----------
   const confirmDelete = async () => {
     if (!delTarget) return;
     if (delTyped.trim() !== delTarget.name) {
@@ -297,13 +325,164 @@ export default function KnowledgeHubTool() {
         await api.knowledgeHubDeleteVirt(e.name);
         setErr(`🗑️ 虚拟库「${e.name}」已删除`);
       }
-      if (selName === e.name) setSelName("");
+      setDetail(null);
       await load();
     } catch (ex) {
       setErr(`删除失败：${ex instanceof Error ? ex.message : String(ex)}`);
     }
   };
 
+  // ---------- 数据区：单条删除 ----------
+  const deleteEntry = async (key: string) => {
+    if (detail?.type !== "domain" || !confirm(`删除知识条目「${key}」？`)) return;
+    try {
+      const r = await api.knowledgeHubDeleteEntry(detail.name, key);
+      setEntryMsg(r.ok ? "✅ 已删除" : `❌ ${r.message ?? ""}`);
+      await loadEntries();
+    } catch (e) {
+      setEntryMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // ================= 详情视图 =================
+  if (detail) {
+    return (
+      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "1.5rem 1rem", color: "#1e293b", fontSize: "0.9rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
+          <button style={{ ...btn, background: "#64748b", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setDetail(null)}>← 返回列表</button>
+          <h2 style={{ margin: 0, fontSize: "1.15rem" }}>
+            {detail.type === "virt" ? "🧩" : "🏷️"} {detail.name}
+          </h2>
+          <span style={{ fontSize: "0.78rem", padding: "0.1rem 0.5rem", borderRadius: 999, background: detail.type === "virt" ? "#ede9fe" : "#dbeafe", color: detail.type === "virt" ? "#6d28d9" : "#1d4ed8" }}>
+            {detail.type === "virt" ? "虚拟库" : "领域库"}
+          </span>
+          <span style={{ fontSize: "0.82rem", color: "#64748b" }}>{detail.count} 条</span>
+          {detail.type === "virt" && (
+            <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+              组成：{detail.virt.domains.map((d) => `${d}(${domainCount(d)})`).join("、")}
+            </span>
+          )}
+          {detail.type === "domain" && detail.meta?.desc && <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{detail.meta.desc}</span>}
+          <button style={{ ...btn, background: "#ef4444", fontSize: "0.76rem", padding: "0.35rem 0.7rem", marginLeft: "auto" }} onClick={() => { setDelTarget(detail); setDelTyped(""); }}>🗑️ 删除</button>
+        </div>
+        {err && <div style={{ ...card, color: "#b91c1c", background: "#fef2f2" }}>⚠️ {err}</div>}
+
+        {/* Tab 切换 */}
+        <div style={{ display: "flex", gap: "0.4rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+          {([["ask", "🔍 问答区"], ["import", "📥 导入区"], ["config", "⚙️ 配置区"], ["data", "🗃️ 数据区"]] as [typeof tab, string][]).map(([k, label]) => (
+            <button key={k} style={{ ...btn, background: tab === k ? "#3b82f6" : "#cbd5e1", fontSize: "0.82rem", padding: "0.4rem 1rem" }} onClick={() => setTab(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* 问答区 */}
+        {tab === "ask" && (
+          <div style={card}>
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem" }}>
+              <input style={input} placeholder={`向「${detail.name}」提问…`} value={askQ} onChange={(e) => setAskQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} autoFocus />
+              <button style={btn} onClick={() => void ask()} disabled={busy}>🔍 问答</button>
+            </div>
+            {askRouted && (
+              <div style={{ fontSize: "0.8rem", color: "#6d28d9", marginBottom: "0.4rem" }}>
+                ⚡ 自动路由：该问题已匹配到「{askRouted}」领域，仅在该领域检索（更聚焦、更省）
+              </div>
+            )}
+            {askA && <div style={{ whiteSpace: "pre-wrap", background: "#f8fafc", borderRadius: 8, padding: "0.8rem 1rem", lineHeight: 1.7 }}>{askA}</div>}
+          </div>
+        )}
+
+        {/* 导入区 */}
+        {tab === "import" && (
+          <div style={card}>
+            <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.6rem" }}>
+              {detail.type === "virt" ? "导入内容将自动分发到最匹配的子领域（按领域关键词匹配，无匹配归 other）。" : "导入内容直接写入本领域库。"}
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input style={input} placeholder="Chat 分享链接（导入此知识库）…" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doImport(); }} />
+              <button style={btn} onClick={() => void doImport()} disabled={busy}>📥 导入</button>
+            </div>
+            {importMsg && <div style={{ color: "#0e7490", marginTop: "0.5rem", fontSize: "0.85rem" }}>{importMsg}</div>}
+          </div>
+        )}
+
+        {/* 配置区 */}
+        {tab === "config" && (
+          <div style={card}>
+            {detail.type === "virt" ? (
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.6rem" }}>虚拟库由以下领域库组成（组合固定，可在列表中删除后重建）：</div>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  {detail.virt.domains.map((d) => (
+                    <span key={d} style={{ ...chip, cursor: "default", background: "#ede9fe", borderColor: "#ddd6fe" }}>
+                      {d}（{domainCount(d)}）
+                    </span>
+                  ))}
+                </div>
+                {detail.virt.desc && <div style={{ marginTop: "0.6rem", fontSize: "0.85rem", color: "#475569" }}>描述：{detail.virt.desc}</div>}
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
+                  <input style={{ ...input, maxWidth: 340 }} placeholder="领域描述（自动匹配导入用）" value={metaDesc} onChange={(e) => setMetaDesc(e.target.value)} />
+                  <input style={{ ...input }} placeholder="匹配关键词（逗号分隔，问答路由/导入分发用）" value={metaKeywords} onChange={(e) => setMetaKeywords(e.target.value)} />
+                </div>
+                {detail.name === "medical" && (
+                  <button style={{ ...btn, background: "#10b981", fontSize: "0.78rem", padding: "0.35rem 0.8rem", marginBottom: "0.6rem" }} onClick={() => void seedMedical()}>
+                    🔄 重置为内置医学模板
+                  </button>
+                )}
+                <div style={{ display: "grid", gap: "0.6rem" }}>
+                  <div>
+                    <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>问答模板（system；留空用通用{detail.name === "medical" ? "，可点上方重置为内置医学模板" : ""}）</div>
+                    <textarea style={{ width: "100%", minHeight: 80, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplAsk} onChange={(e) => setTplAsk(e.target.value)} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>导入提取模板（system；留空用通用）</div>
+                    <textarea style={{ width: "100%", minHeight: 80, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplExtract} onChange={(e) => setTplExtract(e.target.value)} />
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginTop: "0.6rem" }}>
+                  <button style={btn} onClick={() => void saveCfg()}>💾 保存配置</button>
+                  {cfgMsg && <span style={{ color: "#0e7490", fontSize: "0.85rem" }}>{cfgMsg}</span>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 数据区 */}
+        {tab === "data" && (
+          <div style={card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
+              <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>🗃️ 知识条目（共 {entryTotal} 条）</div>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <button style={{ ...btn, background: "#64748b", fontSize: "0.78rem", padding: "0.3rem 0.7rem" }} disabled={entryOffset === 0} onClick={() => setEntryOffset((o) => Math.max(0, o - 50))}>上一页</button>
+                <span style={{ fontSize: "0.82rem", color: "#64748b" }}>第 {Math.floor(entryOffset / 50) + 1} / {Math.max(1, Math.ceil(entryTotal / 50))} 页</span>
+                <button style={{ ...btn, background: "#64748b", fontSize: "0.78rem", padding: "0.3rem 0.7rem" }} disabled={entryOffset + 50 >= entryTotal} onClick={() => setEntryOffset((o) => o + 50)}>下一页</button>
+              </div>
+            </div>
+            {entryMsg && <div style={{ color: "#0e7490", fontSize: "0.85rem", marginBottom: "0.5rem" }}>{entryMsg}</div>}
+            {entries.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>（暂无条目，可在「导入区」导入知识）</div>}
+            <div style={{ display: "grid", gap: "0.4rem" }}>
+              {entries.map((en) => (
+                <div key={en.key} style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.5rem 0.7rem", background: "#fff" }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: "0.78rem", color: "#1d4ed8", fontFamily: "monospace", wordBreak: "break-all" }}>{en.key}</div>
+                    <div style={{ fontSize: "0.82rem", color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{en.value}</div>
+                    {en.source && <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.2rem" }}>来源：{en.source}</div>}
+                  </div>
+                  <button style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem", borderRadius: 5, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void deleteEntry(en.key)}>删除</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ================= 列表视图 =================
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "1.5rem 1rem", color: "#1e293b", fontSize: "0.9rem" }}>
       <h2 style={{ margin: "0 0 0.25rem" }}>📚 知识库中心</h2>
@@ -312,7 +491,7 @@ export default function KnowledgeHubTool() {
       </p>
       {err && <div style={{ ...card, color: "#b91c1c", background: "#fef2f2" }}>⚠️ {err}</div>}
 
-      {/* 统一知识库列表 */}
+      {/* 列表 */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
           <h4 style={{ margin: 0 }}>🗂️ 知识库列表</h4>
@@ -326,7 +505,6 @@ export default function KnowledgeHubTool() {
           </div>
         </div>
 
-        {/* 新建表单 */}
         {showNew === "domain" && (
           <div style={{ background: "#f8fafc", borderRadius: 10, padding: "0.9rem 1rem", marginBottom: "0.8rem" }}>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
@@ -371,111 +549,33 @@ export default function KnowledgeHubTool() {
           </div>
         )}
 
-        {/* 条目列表（混合） */}
-        {entries.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>（暂无知识库，点击上方「新建」创建，或直接粘贴 Chat 链接导入会自动建库）</div>}
+        {entriesList.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>（暂无知识库，点击上方「新建」创建，或直接粘贴 Chat 链接导入会自动建库）</div>}
         <div style={{ display: "grid", gap: "0.5rem" }}>
-          {entries.map((e) => {
-            const on = selName === e.name;
-            return (
-              <div key={`${e.type}-${e.name}`}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.8rem",
-                  border: `1px solid ${on ? "#3b82f6" : "#e2e8f0"}`,
-                  borderRadius: on ? "10px 10px 0 0" : 10,
-                  padding: "0.7rem 1rem",
-                  cursor: "pointer",
-                  background: on ? "#f0f7ff" : "#fff",
-                }}
-                onClick={() => setSelName(e.name)}
-              >
-                <span style={{ fontSize: "1rem" }}>{e.type === "virt" ? "🧩" : "🏷️"}</span>
-                <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{e.name}</span>
-                <span style={{ fontSize: "0.78rem", padding: "0.1rem 0.5rem", borderRadius: 999, background: e.type === "virt" ? "#ede9fe" : "#dbeafe", color: e.type === "virt" ? "#6d28d9" : "#1d4ed8" }}>
-                  {e.type === "virt" ? "虚拟库" : "领域库"}
-                </span>
-                <span style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: "auto" }}>{e.count} 条</span>
+          {entriesList.map((e) => (
+            <div key={`${e.type}-${e.name}`} style={{ display: "flex", alignItems: "center", gap: "0.8rem", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.65rem 1rem", background: "#fff" }}>
+              <span style={{ fontSize: "1rem" }}>{e.type === "virt" ? "🧩" : "🏷️"}</span>
+              <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{e.name}</span>
+              <span style={{ fontSize: "0.78rem", padding: "0.1rem 0.5rem", borderRadius: 999, background: e.type === "virt" ? "#ede9fe" : "#dbeafe", color: e.type === "virt" ? "#6d28d9" : "#1d4ed8" }}>
+                {e.type === "virt" ? "虚拟库" : "领域库"}
+              </span>
+              <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{e.count} 条</span>
+              <span style={{ marginLeft: "auto", display: "flex", gap: "0.4rem" }}>
+                <button style={{ ...btn, fontSize: "0.78rem", padding: "0.35rem 0.9rem" }} onClick={() => openDetail(e)}>📄 详情</button>
                 <button
-                  style={{ fontSize: "0.75rem", padding: "0.2rem 0.6rem", borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer" }}
-                  onClick={(ev) => { ev.stopPropagation(); setDelTarget(e); setDelTyped(""); }}
+                  style={{ fontSize: "0.75rem", padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer" }}
+                  onClick={() => { setDelTarget(e); setDelTyped(""); }}
                   title="删除（需输入名称确认）"
                 >
                   🗑️
                 </button>
-              </div>
-              {/* 选中行下方原地展开详情功能区 */}
-              {on && (
-                <div style={{ marginTop: "0.5rem", paddingTop: "0.8rem", borderTop: "1px dashed #cbd5e1" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
-                    {e.type === "virt" ? (
-                      <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                        组成：{e.virt.domains.map((d) => `${d}(${domainCount(d)})`).join("、")}
-                      </span>
-                    ) : (
-                      e.meta?.desc && <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{e.meta.desc}</span>
-                    )}
-                  </div>
-                  {/* 问答 */}
-                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem" }}>
-                    <input style={input} placeholder={`向「${e.name}」提问…`} value={askQ} onChange={(ev) => setAskQ(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void ask(); }} />
-                    <button style={btn} onClick={() => void ask()} disabled={busy}>🔍 问答</button>
-                  </div>
-                  {askRouted && (
-                    <div style={{ fontSize: "0.8rem", color: "#6d28d9", marginBottom: "0.4rem" }}>
-                      ⚡ 自动路由：该问题已匹配到「{askRouted}」领域，仅在该领域检索（更聚焦、更省）
-                    </div>
-                  )}
-                  {askA && <div style={{ whiteSpace: "pre-wrap", background: "#fff", borderRadius: 8, padding: "0.8rem 1rem", marginBottom: "0.8rem", lineHeight: 1.7, border: "1px solid #e2e8f0" }}>{askA}</div>}
-                  {/* 导入 */}
-                  <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <input style={input} placeholder="Chat 分享链接（导入此知识库）…" value={importUrl} onChange={(ev) => setImportUrl(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void doImport(); }} />
-                    <button style={btn} onClick={() => void doImport()} disabled={busy}>📥 导入</button>
-                  </div>
-                  {importMsg && <div style={{ color: "#0e7490", marginTop: "0.5rem", fontSize: "0.85rem" }}>{importMsg}</div>}
-                  {/* 领域库配置（折叠） */}
-                  {e.type === "domain" && (
-                    <details style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.7rem" }}>
-                      <summary style={{ cursor: "pointer", fontSize: "0.83rem", color: "#475569", fontWeight: 600 }}>⚙️ 领域配置（描述 / 关键词 / 模板）</summary>
-                      <div style={{ marginTop: "0.7rem" }}>
-                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
-                          <input style={{ ...input, maxWidth: 320 }} placeholder="领域描述" value={metaDesc} onChange={(ev) => setMetaDesc(ev.target.value)} />
-                          <input style={{ ...input }} placeholder="匹配关键词（逗号分隔）" value={metaKeywords} onChange={(ev) => setMetaKeywords(ev.target.value)} />
-                        </div>
-                        {e.name === "medical" && (
-                          <button style={{ ...btn, background: "#10b981", fontSize: "0.76rem", padding: "0.3rem 0.7rem", marginBottom: "0.6rem" }} onClick={() => void seedMedical()}>
-                            🔄 重置为内置医学模板
-                          </button>
-                        )}
-                        <div style={{ display: "grid", gap: "0.6rem" }}>
-                          <div>
-                            <div style={{ fontSize: "0.8rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>问答模板（system；留空用通用）</div>
-                            <textarea style={{ width: "100%", minHeight: 70, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplAsk} onChange={(ev) => setTplAsk(ev.target.value)} />
-                          </div>
-                          <div>
-                            <div style={{ fontSize: "0.8rem", fontWeight: 600, marginBottom: "0.25rem", color: "#475569" }}>导入提取模板（system；留空用通用）</div>
-                            <textarea style={{ width: "100%", minHeight: 70, resize: "vertical", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} value={tplExtract} onChange={(ev) => setTplExtract(ev.target.value)} />
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginTop: "0.6rem" }}>
-                          <button style={btn} onClick={() => void saveCfg()}>💾 保存配置</button>
-                          {cfgMsg && <span style={{ color: "#0e7490", fontSize: "0.83rem" }}>{cfgMsg}</span>}
-                        </div>
-                      </div>
-                    </details>
-                  )}
-                </div>
-              )}
+              </span>
             </div>
-          );
-          })}
+          ))}
         </div>
       </div>
 
-      {/* 知识库列表底部帮助 */}
       <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginTop: "0.4rem" }}>
-        💡 点击知识库行可在下方展开 问答/导入/配置 功能区；点击另一行切换；删除需输入名称确认。
+        💡 点击「详情」进入知识库详情页（问答区 / 导入区 / 配置区 / 数据区）；删除需输入名称确认。
       </div>
 
       {/* 删除确认 Modal */}
@@ -493,41 +593,20 @@ export default function KnowledgeHubTool() {
         {delTarget && (
           <div>
             {delTarget.type === "domain" ? (
-              <p style={{ margin: "0 0 0.8rem", color: "#b91c1c" }}>
-                将清空该领域全部 <b>{delTarget.count}</b> 条知识，且<b>不可恢复</b>。
-              </p>
+              <p style={{ margin: "0 0 0.8rem", color: "#b91c1c" }}>将清空该领域全部 <b>{delTarget.count}</b> 条知识，且<b>不可恢复</b>。</p>
             ) : (
-              <p style={{ margin: "0 0 0.8rem", color: "#64748b" }}>
-                仅移除虚拟库组合配置，不影响领域库数据。
-              </p>
+              <p style={{ margin: "0 0 0.8rem", color: "#64748b" }}>仅移除虚拟库组合配置，不影响领域库数据。</p>
             )}
             <p style={{ margin: "0 0 0.5rem" }}>请输入名称「<b>{delTarget.name}</b>」确认删除：</p>
-            <input
-              style={{ ...input, width: "100%" }}
-              placeholder={delTarget.name}
-              value={delTyped}
-              onChange={(e) => setDelTyped(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void confirmDelete(); }}
-              autoFocus
-            />
-            {delTyped && delTyped.trim() !== delTarget.name && (
-              <div style={{ color: "#dc2626", fontSize: "0.8rem", marginTop: "0.4rem" }}>名称不匹配，无法删除</div>
-            )}
+            <input style={{ ...input, width: "100%" }} placeholder={delTarget.name} value={delTyped} onChange={(e) => setDelTyped(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void confirmDelete(); }} autoFocus />
+            {delTyped && delTyped.trim() !== delTarget.name && <div style={{ color: "#dc2626", fontSize: "0.8rem", marginTop: "0.4rem" }}>名称不匹配，无法删除</div>}
           </div>
         )}
       </Modal>
 
       {/* 医学模板重置确认 Modal */}
-      <Modal
-        open={seedAsk}
-        title="🔄 重置为内置医学模板"
-        onClose={() => setSeedAsk(false)}
-        footer={
-          <>
-            <button style={{ ...btn, background: "#64748b" }} onClick={() => setSeedAsk(false)}>取消</button>
-            <button style={btn} onClick={() => void seedMedical()}>确认重置</button>
-          </>
-        }
+      <Modal open={seedAsk} title="🔄 重置为内置医学模板" onClose={() => setSeedAsk(false)}
+        footer={<><button style={{ ...btn, background: "#64748b" }} onClick={() => setSeedAsk(false)}>取消</button><button style={btn} onClick={() => void seedMedical()}>确认重置</button></>}
       >
         <p style={{ margin: 0 }}>当前领域已有自定义模板，重置将<b>覆盖</b>为内置医学模板，确定继续？</p>
       </Modal>
