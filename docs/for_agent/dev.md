@@ -234,6 +234,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - 虚拟库导入自动匹配：`kbImportFromChat(..., matchDomains)` 逐条静态关键词匹配（领域元数据 `kbDomain:<name>.keywords`）→ 写入 `medical.`/`trading.` 等前缀，无匹配归 `other.`（低成本；LLM 匹配可后续做兜底）
   - 聚合问答：`kbAsk(question, { instances: [...] })` 多前缀检索 → 单次 LLM
   - **领域特化模板（医学模板已迁入）**：`kbDomain:<name>` 支持 `askTemplate/extractTemplate`（问答/导入 system 模板）；`kbAsk/kbImportFromChat` 按实例读取（`getInstanceTemplate` 内联在 knowledge.ts，避免与 knowledgeHub 循环依赖），无配置回退 medical/通用；`seedMedicalTemplates(force)` 幂等初始化（force 强制还原内置医学模板）；路由 `POST /domain/medical/seed`
+  - **统一体验（2026-08）**：领域库与虚拟库「导入/问答」体感一致——前端合并列表（领域+虚拟混合，类型徽章/条数）、统一使用区；可显式新建领域库（`POST /domain`，重复拒绝）；虚拟库问答先**领域路由**（纯静态 `matchDomain` 问题关键词打分）→ 命中只检索最相关领域（省 token/聚焦），未命中降级全领域；导入自动分发到最匹配领域（无匹配归 other）；ask 返回 `routed` 供前端展示自动路由提示
+  - 医学知识库页面已删除（RehabMedicalTool），功能迁入知识库中心（领域库 medical + 模板）
   - 数据源已注册：`kbVirt:`/`kbDomain:`（知识库中心）
   - 前端交互要点：新建虚拟库用**领域多选 checkbox**（勿让用户手输领域名）；虚拟库卡片式列表展示总条目数
 - **A/H 股行情（多源，2026-08 实测选型）**：`core/quote.ts` 提供两个能力——
