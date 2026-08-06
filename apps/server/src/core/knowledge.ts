@@ -10,14 +10,14 @@
 
 import { readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
+import { kvGet, kvSet, kvDelete, kvListRaw, kvCount } from "./kvStore.js";
 import { chat } from "./llm.js";
 import { getPromptTemplate } from "./prompts.js";
 import { robustJsonParse } from "./jsonParse.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { DATA_DIR } from "./db.js";
-import type { KnowledgeAskResult, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
+import type { KnowledgeAskResult, KnowledgeEntry, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
 
 // 数据源注册（本地数据管理可见；知识库为服务端公共数据）
 registerDataSource({
@@ -39,19 +39,14 @@ export function setInstanceLimit(v: number): void {
   INSTANCE_LIMIT = v;
 }
 
+/** 全量扫描上限（知识条目数远超此值需调整；kvListRaw 单次 LIMIT） */
+const KB_SCAN_LIMIT = 5000;
+
 /** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
 export const KB_ROOT_DIR = join(DATA_DIR, "k");
 
 /** key 规范：分层点分隔（project.module.attribute）；仅字母数字._-；禁连续点/边界点（防 ../ 语义与脏 key） */
 const KEY_RE = /^(?!\.)(?!.*\.\.)(?!.*\.$)[a-zA-Z0-9._-]{1,120}$/;
-
-export interface KnowledgeEntry {
-  key: string;
-  value: string;
-  /** 来源（对话分享 id / 文件名 / 用户标注） */
-  source?: string;
-  updatedAt: string;
-}
 
 function keyOf(key: string): string {
   return `${KB_PREFIX}${key}`;
@@ -62,6 +57,20 @@ export function assertValidKey(key: string): void {
   if (!key || !KEY_RE.test(key)) {
     throw new Error(`知识 key 必须为分层点分隔（如 project.module.attribute），仅允许字母数字._-，当前：${key}`);
   }
+}
+
+/** 读取全部知识条目（KV 扫描 + 解析，损坏条目跳过）——实例统计/列举共用 */
+function readAllEntries(): KnowledgeEntry[] {
+  const out: KnowledgeEntry[] = [];
+  for (const r of kvListRaw(KB_PREFIX, KB_SCAN_LIMIT)) {
+    try {
+      const e = JSON.parse(r.value) as KnowledgeEntry;
+      if (e && typeof e.key === "string" && typeof e.value === "string") out.push(e);
+    } catch {
+      // 损坏条目跳过
+    }
+  }
+  return out;
 }
 
 // ---------- 实例模型 ----------
@@ -75,24 +84,11 @@ export function instanceNameOf(key: string): string {
   return i < 0 ? "" : key.slice(0, i);
 }
 
-/** 实例内前缀（root 实例返回 "" 表示单段 key） */
-function instancePrefix(name: string): string {
-  return name ? `${name}.` : "";
-}
-
 /** 单实例条目数（root 实例 = 单段 key 数） */
 export function instanceCount(name: string): number {
-  const prefix = instancePrefix(name);
   let n = 0;
-  const rows = kvListRaw(KB_PREFIX, 5000);
-  for (const r of rows) {
-    try {
-      const e = JSON.parse(r.value) as KnowledgeEntry;
-      if (!e || typeof e.value !== "string") continue;
-      if (instanceNameOf(e.key) === name) n++;
-    } catch {
-      // 跳过损坏条目
-    }
+  for (const e of readAllEntries()) {
+    if (instanceNameOf(e.key) === name) n++;
   }
   return n;
 }
@@ -102,39 +98,25 @@ export function instanceStats(name: string): { name: string; count: number; byte
   let count = 0;
   let bytes = 0;
   let lastUpdated = "";
-  const rows = kvListRaw(KB_PREFIX, 5000);
-  for (const r of rows) {
-    try {
-      const e = JSON.parse(r.value) as KnowledgeEntry;
-      if (!e || typeof e.value !== "string") continue;
-      if (instanceNameOf(e.key) !== name) continue;
-      count++;
-      bytes += Buffer.byteLength(e.value, "utf8");
-      if (e.updatedAt > lastUpdated) lastUpdated = e.updatedAt;
-    } catch {
-      // 跳过
-    }
+  for (const e of readAllEntries()) {
+    if (instanceNameOf(e.key) !== name) continue;
+    count++;
+    bytes += Buffer.byteLength(e.value, "utf8");
+    if (e.updatedAt > lastUpdated) lastUpdated = e.updatedAt;
   }
   return { name, count, bytes, lastUpdated };
 }
 
 /** 全部实例列表（root 实例名为 ""，按条数倒序） */
 export function listInstances(): { name: string; count: number; bytes: number; lastUpdated: string }[] {
-  const rows = kvListRaw(KB_PREFIX, 5000);
   const map = new Map<string, { count: number; bytes: number; lastUpdated: string }>();
-  for (const r of rows) {
-    try {
-      const e = JSON.parse(r.value) as KnowledgeEntry;
-      if (!e || typeof e.value !== "string") continue;
-      const name = instanceNameOf(e.key);
-      const m = map.get(name) ?? { count: 0, bytes: 0, lastUpdated: "" };
-      m.count++;
-      m.bytes += Buffer.byteLength(e.value, "utf8");
-      if (e.updatedAt > m.lastUpdated) m.lastUpdated = e.updatedAt;
-      map.set(name, m);
-    } catch {
-      // 跳过
-    }
+  for (const e of readAllEntries()) {
+    const name = instanceNameOf(e.key);
+    const m = map.get(name) ?? { count: 0, bytes: 0, lastUpdated: "" };
+    m.count++;
+    m.bytes += Buffer.byteLength(e.value, "utf8");
+    if (e.updatedAt > m.lastUpdated) m.lastUpdated = e.updatedAt;
+    map.set(name, m);
   }
   return [...map.entries()]
     .map(([name, v]) => ({ name, ...v }))
@@ -144,17 +126,10 @@ export function listInstances(): { name: string; count: number; bytes: number; l
 /** 清空某实例全部条目（root 实例 name="" 清单段 key）；返回删除数 */
 export function clearInstance(name: string): number {
   let n = 0;
-  const rows = kvListRaw(KB_PREFIX, 5000);
-  for (const r of rows) {
-    try {
-      const e = JSON.parse(r.value) as KnowledgeEntry;
-      if (!e || typeof e.value !== "string") continue;
-      if (instanceNameOf(e.key) === name) {
-        kvDelete(r.key);
-        n++;
-      }
-    } catch {
-      // 跳过
+  for (const e of readAllEntries()) {
+    if (instanceNameOf(e.key) === name) {
+      kvDelete(keyOf(e.key));
+      n++;
     }
   }
   return n;
@@ -197,25 +172,18 @@ export function kbDelete(key: string): boolean {
 
 /** 列举知识（prefix 实例过滤 / q 模糊搜索；limit 上限） */
 export function kbList(opts: { prefix?: string; q?: string; limit?: number } = {}): KnowledgeEntry[] {
-  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), KB_SCAN_LIMIT);
   const q = (opts.q ?? "").trim().toLowerCase();
   const prefix = opts.prefix ?? "";
-  const rows = kvListRaw(KB_PREFIX, 5000);
   const out: KnowledgeEntry[] = [];
-  for (const r of rows) {
-    try {
-      const e = JSON.parse(r.value) as KnowledgeEntry;
-      if (!e || typeof e.value !== "string") continue;
-      if (prefix && !e.key.startsWith(prefix)) continue;
-      if (q) {
-        const hay = `${e.key} ${e.value} ${e.source ?? ""}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
-      out.push(e);
-      if (out.length >= limit) break;
-    } catch {
-      // 损坏条目跳过
+  for (const e of readAllEntries()) {
+    if (prefix && !e.key.startsWith(prefix)) continue;
+    if (q) {
+      const hay = `${e.key} ${e.value} ${e.source ?? ""}`.toLowerCase();
+      if (!hay.includes(q)) continue;
     }
+    out.push(e);
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -234,9 +202,9 @@ export function kbSetMany(items: { key: string; value: string; source?: string }
   return n;
 }
 
-/** 知识总数（供数据源展示） */
+/** 知识总数（供数据源展示；kvCount 直接 SQL COUNT，不解析 value） */
 export function kbCount(): number {
-  return kvListRaw(KB_PREFIX, 1).length;
+  return kvCount(KB_PREFIX);
 }
 
 // ---------- 知识库 ↔ 真实目录同步（Reasonix ACP 适配） ----------
@@ -253,7 +221,7 @@ export function kbSyncToDir(): number {
     return 0;
   }
   let written = 0;
-  const entries = kbList({ limit: 5000 });
+  const entries = kbList({ limit: KB_SCAN_LIMIT });
   const desired = new Set<string>();
   for (const e of entries) {
     const f = join(kDir, e.key);
@@ -308,7 +276,7 @@ export function kbSyncFromDir(): number {
     }
   }
   // Agent 删除的文件 → 知识库同步删除
-  for (const e of kbList({ limit: 5000 })) {
+  for (const e of kbList({ limit: KB_SCAN_LIMIT })) {
     if (!seen.has(e.key)) {
       kbDelete(e.key);
       changed++;
@@ -330,16 +298,26 @@ export async function kbAsk(
   if (!q) return { ok: false, message: "请输入问题" };
   const topN = Math.min(Math.max(opts.topN ?? 6, 1), 20);
 
-  // 1) 检索：拆词（中英文/数字），收集相关条目
-  const tokens = q.toLowerCase().split(/[\s,，。.!！?？;；:：、/\\()（）[\]{}"']+/).filter((t) => t.length >= 2);
-  const all = kbList({ limit: 1000 });
+  // 1) 检索：拆词（中英文/数字）→ 词集；中文长词补 2-gram 滑动片段（提升命中率）
+  const rawTokens = q.toLowerCase().split(/[\s,，。.!！?？;；:：、/\\()（）[\]{}"']+/).filter((t) => t.length >= 2);
+  const tokens = new Set<string>();
+  for (const t of rawTokens) {
+    tokens.add(t);
+    // 中文长词拆 2 字窗口（如「央行利率分析」→ 央行/行利/利率/率分/分析）
+    if (/[\u4e00-\u9fff]/.test(t) && t.length >= 4) {
+      for (let i = 0; i <= t.length - 2; i++) tokens.add(t.slice(i, i + 2));
+    }
+  }
+  const all = kbList({ limit: KB_SCAN_LIMIT });
   const scored: { e: KnowledgeEntry; score: number }[] = [];
   for (const e of all) {
     const keyL = e.key.toLowerCase();
     const valL = e.value.toLowerCase();
     let score = 0;
-    if (tokens.some((t) => keyL.includes(t))) score += 5;
-    if (tokens.some((t) => valL.includes(t))) score += 1;
+    for (const t of tokens) {
+      if (keyL.includes(t)) score += 5;
+      else if (valL.includes(t)) score += 1;
+    }
     if (score > 0) scored.push({ e, score });
   }
   scored.sort((a, b) => b.score - a.score);

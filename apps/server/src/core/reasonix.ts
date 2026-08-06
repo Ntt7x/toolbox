@@ -19,8 +19,8 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, watch, writeFileSync, type FSWatcher } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, watch, type FSWatcher } from "node:fs";
+import { join } from "node:path";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
 import { DATA_DIR } from "./db.js";
@@ -189,9 +189,9 @@ function startAcp(): AcpClient {
           }
         }
         // ACP 精细控制：host 拦截 Agent 的内置 fs 工具调用（read/write/edit/delete），
-        // 仅允许知识库目录（/.file/k）内的访问，其余一律拒绝。host 执行后回 tool_result。
+        // 文件类放行、非文件类拒绝；批准后 reasonix 自行执行（yolo 下通常不触发）。
         if (params.update?.sessionUpdate === "tool_call" && params.sessionId) {
-          void handleToolCall(client, params);
+          void handleToolCall(params);
         }
       }
       // Reasonix 权限请求兜底：默认拒绝（防止 Agent 卡在 bash 等权限等待；知识库访问走 read_file 无需权限）
@@ -238,24 +238,11 @@ function getAcp(): AcpClient {
   return startAcp();
 }
 
-/** 路径是否位于根目录内（resolve 后前缀匹配，防 ../ 穿越） */
-function isInsidePath(p: string | undefined, root: string): boolean {
-  if (!p) return false;
-  try {
-    const full = resolve(p);
-    const rootAbs = resolve(root);
-    return full === rootAbs || full.startsWith(rootAbs + sep);
-  } catch {
-    return false;
-  }
-}
-
-/** ACP 工具调用拦截（本地个人站点：文件权限全放行）：
- * Agent 的 fs 工具（read/write/edit/delete）以 tool_call(pending) 发来，
- * reasonix 处于 waiting_permission——host 用 session/grant_permission 批准，
- * 随后回 session/update tool_result（执行结果）供 Agent 继续 prompt 循环。
- * 文件类工具一律批准（host 在 cwd 内执行）；bash/网络等非文件类拒绝。 */
-async function handleToolCall(client: AcpClient, params: AcpSessionUpdate & AcpStatusUpdate): Promise<void> {
+/** ACP 工具调用拦截（兜底；tool_approval=yolo 下通常不触发）：
+ * Agent 的 fs 工具若仍以 tool_call(pending) 发来（waiting_permission），
+ * host 用 session/grant_permission 决策：文件类工具全放行，非文件类拒绝。
+ * 批准后由 reasonix 在 cwd 内自行执行（无需 host 执行/回 tool_result）。 */
+async function handleToolCall(params: AcpSessionUpdate & AcpStatusUpdate): Promise<void> {
   const sessionId = params.sessionId ?? "";
   const tc = params.update as {
     toolCallId?: string;
@@ -270,48 +257,11 @@ async function handleToolCall(client: AcpClient, params: AcpSessionUpdate & AcpS
   // 工具名：优先 _meta 内嵌，其次 title（如 write_file），再次 kind（read/edit）
   const tool = tc._meta?.["reasonix.io"]?.tool ?? tc.title ?? tc.kind ?? "";
   const targetPath = tc.locations?.[0]?.path ?? tc.rawInput?.path ?? "";
-  // 文件类工具全放行（本地站点不做路径白名单）；非文件类拒绝
   const allowed = ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool);
   if (!allowed) {
     console.warn(`[reasonix-acp] 拒绝非文件工具 ${tool}（路径 ${targetPath}）`);
   }
-
-  // 1) 批准/拒绝权限（解除 reasonix waiting_permission）
   await rpc("session/grant_permission", { sessionId, permissionID: toolCallId, allow: allowed }, 8000).catch(() => {});
-
-  // 2) 回 tool_result（执行结果；reasonix 批准后由 host 执行或自行执行，结果喂回 Agent）
-  let text = allowed ? "ok" : `拒绝：非文件类工具 ${tool}`;
-  let isError = !allowed;
-  if (allowed) {
-    try {
-      const abs = resolve(targetPath);
-      const content = tc.rawInput?.content;
-      if (tool === "read_file" || tool === "fs.readTextFile") {
-        if (!existsSync(abs)) throw new Error("文件不存在");
-        text = readFileSync(abs, "utf8");
-      } else if (tool === "delete_file" || tool === "fs.deleteFile") {
-        if (existsSync(abs)) unlinkSync(abs);
-        text = "deleted";
-      } else {
-        mkdirSync(dirname(abs), { recursive: true });
-        writeFileSync(abs, content ?? "", "utf8");
-        text = "ok";
-      }
-    } catch (e) {
-      isError = true;
-      text = e instanceof Error ? e.message : String(e);
-    }
-  }
-  const resp = {
-    sessionId,
-    update: {
-      sessionUpdate: "tool_result",
-      toolCallId,
-      content: [{ type: "content", content: { type: "text", text } }],
-      isError,
-    },
-  };
-  client.child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: resp }) + "\n");
 }
 
 function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000): Promise<{ result?: unknown; error?: { message?: string } }> {
