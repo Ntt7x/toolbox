@@ -25,6 +25,7 @@ import {
   importBatchToVirt,
   listImportHistory,
   clearImportHistory,
+  migrateInstance,
 } from "../../core/knowledgeHub.js";
 import { kbListInstances, kbAsk, kbImportFromChat, kbDelete, kbList } from "../../core/knowledge.js";
 
@@ -172,6 +173,13 @@ export function register(app: Hono): void {
   route.delete("/import-history", (c: Context) => {
     clearImportHistory();
     return c.json({ ok: true, cleared: true });
+  });
+
+  // 实例迁移：把 source 实例条目迁移到 target（冲突跳过），迁移后清空 source（修复历史误归 other 等）
+  route.post("/migrate/:source/to/:target", (c: Context) => {
+    const r = migrateInstance(c.req.param("source") ?? "", c.req.param("target") ?? "");
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json(r);
   });
 
   // 新建领域知识库（显式建库；空库也可先建后导入；可选 LLM 自动生成领域模板）

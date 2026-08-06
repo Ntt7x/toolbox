@@ -9,7 +9,7 @@
 // ============================================================
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
-import { kbAsk, kbImportFromChat, matchDomain, clearInstance } from "./knowledge.js";
+import { kbAsk, kbImportFromChat, matchDomain, clearInstance, kbList, kbGet, kbSet } from "./knowledge.js";
 import { chat } from "./llm.js";
 import { robustJsonParse } from "./jsonParse.js";
 import { MEDICAL_KB_ASK, MEDICAL_KB_EXTRACT } from "./prompts.js";
@@ -227,7 +227,8 @@ export async function askVirtKb(
 }
 
 // ---------- 虚拟库导入（自动匹配领域） ----------
-/** 导入分享链接到虚拟库：每条事实经静态关键词匹配写入对应领域库；无匹配归 other */
+/** 导入分享链接到虚拟库：每条事实经静态关键词匹配写入对应领域库；
+ *  无匹配归虚拟库的「杂项」领域（名字含 other/杂项/misc，如 my-other）；无杂项领域则归第一个领域 */
 export async function importToVirtKb(
   name: string,
   url: string,
@@ -238,14 +239,40 @@ export async function importToVirtKb(
   const domains = virt.domains
     .map((d) => ({ name: d, keywords: getDomainMeta(d)?.keywords ?? [] }))
     .filter((d) => d.keywords.length > 0);
+  // 无匹配兜底：虚拟库杂项领域（other/杂项/misc）优先，其次第一个领域
+  const fallbackDomain =
+    virt.domains.find((d) => /other|杂项|misc|miscellaneous/i.test(d)) ??
+    virt.domains.find((d) => !/^(?:medical|trading|math|crypto|ai|my)$/i.test(d)) ??
+    virt.domains[0];
   // 若领域均无关键词配置 → 全部写入第一个领域（退化为单领域导入）
   const matchDomains = domains.length > 0 ? domains : undefined;
   return kbImportFromChat(url, {
     ...opts,
     instance: matchDomains ? undefined : virt.domains[0],
     matchDomains,
+    fallbackDomain: matchDomains ? fallbackDomain : undefined,
     module: opts.module ?? "knowledge-hub.import",
   });
+}
+
+/** 实例迁移：把 source 实例的全部条目迁移到 target 实例（key 冲突跳过），迁移后清空 source；返回迁移条数 */
+export function migrateInstance(source: string, target: string): { ok: boolean; migrated: number; skipped: number; message?: string } {
+  if (!source || !target || source === target) return { ok: false, migrated: 0, skipped: 0, message: "源/目标实例无效" };
+  const srcPrefix = `${source}.`;
+  const tgtPrefix = `${target}.`;
+  let migrated = 0;
+  let skipped = 0;
+  for (const e of kbList({ prefix: srcPrefix, limit: 5000 })) {
+    const newKey = tgtPrefix + e.key.slice(srcPrefix.length);
+    if (kbGet(newKey)) {
+      skipped++;
+      continue;
+    }
+    kbSet(newKey, e.value, e.source);
+    migrated++;
+  }
+  if (migrated > 0 || skipped > 0) clearInstance(source);
+  return { ok: true, migrated, skipped };
 }
 
 // ---------- 批量导入 + 历史记录 ----------

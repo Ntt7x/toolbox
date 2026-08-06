@@ -325,7 +325,7 @@ export function matchDomain(text: string, domains: { name: string; keywords: str
 
 export async function kbImportFromChat(
   url: string,
-  opts: { signal?: AbortSignal; instance?: string; module?: string; conflict?: "skip" | "overwrite" | "merge"; matchDomains?: { name: string; keywords: string[] }[] } = {},
+  opts: { signal?: AbortSignal; instance?: string; module?: string; conflict?: "skip" | "overwrite" | "merge"; matchDomains?: { name: string; keywords: string[] }[]; fallbackDomain?: string } = {},
 ): Promise<KnowledgeImportResult> {
   const extracted = await extractShare(url);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
@@ -367,7 +367,7 @@ export async function kbImportFromChat(
     let k = prefix + f.key;
     if (!opts.instance && opts.matchDomains?.length) {
       const m = matchDomain(`${f.value} ${f.key}`, opts.matchDomains);
-      k = `${m?.domain ?? "other"}.${f.key}`;
+      k = `${m?.domain ?? opts.fallbackDomain ?? "other"}.${f.key}`;
     }
     return { key: k, value: f.value, source: f.source ?? source };
   });

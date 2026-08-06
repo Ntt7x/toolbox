@@ -136,7 +136,8 @@ export default function KnowledgeHubTool() {
       const count = v.domains.reduce((s, d) => s + (ov.instances.find((i) => i.instance === d)?.count ?? 0), 0);
       list.push({ type: "virt", name: v.name, count, virt: v });
     }
-    return list;
+    // 虚拟库在前，领域库在后（各按条数降序）
+    return list.sort((a, b) => (a.type === b.type ? b.count - a.count : a.type === "virt" ? -1 : 1));
   }, [ov]);
 
   // 虚拟库可选的领域 = 全部领域（有数据实例 ∪ 已建元数据，含空库）
