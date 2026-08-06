@@ -7,6 +7,7 @@
 // ============================================================
 
 import { chat } from "../../core/llm.js";
+import { chatSessionAsk, createChatSession } from "../../core/chatSession.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvHas, kvSet } from "../../core/kvStore.js";
@@ -198,8 +199,9 @@ export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, t
   try {
     const template = getPromptTemplate("reverse-repo.monthly-update");
     const messages = [
-      { role: "system" as const, content: template.replace("{months}", months.join("、")) },
-      { role: "user" as const, content: "请联网搜索并输出缺失月份的买断式逆回购数据 JSON。" },
+      // 前缀稳定（缓存友好）：{months} 在 system 内替换为固定文本，月份清单放 user
+      { role: "system" as const, content: template.replace("{months}", "（需补全月份清单见用户消息）") },
+      { role: "user" as const, content: `本次需联网补全的月份：${months.join("、")}。请联网搜索并输出缺失月份的买断式逆回购数据 JSON。` },
     ];
     const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.monthly-update", ...(signal ? { signal } : {}) });
     if (!result.ok) throw new Error(result.message);
@@ -294,13 +296,17 @@ function mergeMonthlyUpdate(p: Record<string, unknown>, expected: string[]): Non
   return written;
 }
 
-/** 每日变动探查（增量）：LLM 搜索当日/最近变动 + 当月说明 */
+/** 每日变动探查（增量）：LLM 搜索当日/最近变动 + 当月说明
+ * 模式 2（chatSession）：同月共享会话（rr-daily-YYYY-MM），system 固定、日期放 user，
+ * 同月多次探查命中前缀缓存（第 1 次搜索+输出后，后续查询前缀稳定） */
 export async function probeDaily(signal?: AbortSignal): Promise<ReverseRepoDailyResult> {
-  const messages = [
-    { role: "system" as const, content: getPromptTemplate("reverse-repo.daily").replace("{date}", todayStr()) },
-    { role: "user" as const, content: "请按上述要求执行探查并输出 JSON。" },
-  ];
-  const result = await chat(messages, { temperature: 0.2, search: true, module: "reverse-repo.daily", ...(signal ? { signal } : {}) });
+  const today = todayStr();
+  const month = today.slice(0, 7);
+  const system = getPromptTemplate("reverse-repo.daily").replace("{date}", "（探查日期见用户消息）");
+  // 业务确定性 id：幂等复用（system 一致保留历史）；提示词升级自动重建
+  const sid = `rr-daily-${month}`;
+  createChatSession({ id: sid, module: "reverse-repo.daily", system, search: true, temperature: 0.2 });
+  const result = await chatSessionAsk(sid, `探查日期：${today}。请按上述要求执行探查并输出 JSON。`, { signal });
   if (!result.ok) return { ok: false, message: result.message };
 
   const content = result.content.trim();

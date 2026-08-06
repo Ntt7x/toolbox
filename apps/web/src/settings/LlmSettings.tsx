@@ -277,6 +277,12 @@ export default function LlmSettings() {
             <span>输入 <b>{((usage?.total.promptTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
             <span>输出 <b>{((usage?.total.completionTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
             <span>合计 <b>{((usage?.total.totalTokens ?? 0) / 1000).toFixed(1)}k</b> tokens</span>
+            <span>
+              缓存命中 <b>{(((usage?.total.cacheRate ?? 0) * 100).toFixed(1))}%</b>
+              <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>
+                （{((usage?.total.cacheHitTokens ?? 0) / 1000).toFixed(1)}k / {((usage?.total.cacheMissTokens ?? 0) / 1000).toFixed(1)}k 输入）
+              </span>
+            </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <div>
@@ -285,7 +291,9 @@ export default function LlmSettings() {
                 usage.byModule.map((m) => (
                   <div key={m.module} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
                     <span>{m.label}</span>
-                    <span style={{ color: "#64748b" }}>{m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k</span>
+                    <span style={{ color: "#64748b" }}>
+                      {m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k · 缓存 {(m.cacheRate * 100).toFixed(0)}%
+                    </span>
                   </div>
                 ))
               ) : (
@@ -308,6 +316,7 @@ export default function LlmSettings() {
           </div>
           <div style={{ color: "#94a3b8", fontSize: "0.75rem", marginTop: "0.5rem" }}>
             ℹ️ 用量由服务端切面记录（每次 LLM 调用的 token 数，按模块归属），存于本地数据管理（llmUsage:log）。platform.deepseek.com/usage 网页明细需登录，本页展示本地统计 + 平台余额（API key 授权）。
+            <br />⚡ 缓存命中：DeepSeek 前缀缓存自动生效（相同前缀完整匹配即命中），命中输入 token 价格约为未命中的 1/50（v4-flash）。服务端已做「前缀稳定化」——固定指令/系统提示词保持逐字稳定，动态内容（日期/标的/月份）追加到用户消息，以提升命中率降低成本。
           </div>
         </div>
       </div>
