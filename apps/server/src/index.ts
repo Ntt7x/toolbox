@@ -53,7 +53,6 @@ const tools: ToolMeta[] = [
   watchlistFeature.meta,
   kellyFeature.meta,
   rehabFeature.meta,
-  rehabFeature.muscleMeta,
   booksFeature.meta,
   deepseekShareFeature.meta,
 ];

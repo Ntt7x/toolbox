@@ -1,8 +1,8 @@
 // ============================================================
-// 业务模块：康复笔记（features/rehab）
-// - 两个工具：rehab-medical（医疗经验）、rehab-muscle（肌肉训练）
-// - register：GET/PUT/POST reset 单 KV 笔记（rehab:<id>）
-// 依赖下层公共模块：core/kvStore、core/dataRegistry
+// 业务模块：康复（features/rehab）
+// - 工具：rehab-medical（医学知识库，Chat 导入 + 问答）
+// - register：GET/PUT/POST reset 单 KV 笔记（rehab:<id>）+ medical-kb 路由
+// 依赖下层公共模块：core/kvStore、core/dataRegistry、core/knowledge、core/tasks
 // ============================================================
 
 import { Hono } from "hono";
@@ -18,7 +18,7 @@ registerDataSource({
   name: PREFIX,
   page: "康复",
   tag: "个人笔记",
-  description: "康复经验笔记（rehab:medical 医疗经验 / rehab:muscle 肌肉训练），可编辑",
+  description: "康复笔记（rehab:medical，历史数据保留，页面已改为医学知识库）",
 });
 // 注册数据源：医学知识库（medical 实例，知识库公共模块业务落地）
 registerDataSource({
@@ -34,13 +34,6 @@ export const meta: ToolMeta = {
   name: "医学知识库",
   description: "医学知识库：Chat 分享链接导入知识 + 知识问答（medical 实例，基于 core/knowledge）",
   path: "/tools/rehab-medical",
-};
-
-export const muscleMeta: ToolMeta = {
-  id: "rehab-muscle",
-  name: "肌肉训练",
-  description: "小腿肌肉训练方案（个人经验笔记，可编辑）",
-  path: "/tools/rehab-muscle",
 };
 
 export function register(app: Hono): void {
