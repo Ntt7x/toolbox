@@ -29,8 +29,8 @@ afterEach(() => {
 
 test("key 校验：合法通过，非法抛错", () => {
   assertValidKey("project.module.attribute");
+  assertValidKey("含中文.知识条目"); // Unicode 中文 key 合法（zhihu 导入中文标题等场景）
   assert.throws(() => assertValidKey(""), /知识 key/);
-  assert.throws(() => assertValidKey("含中文"), /知识 key/);
   assert.throws(() => assertValidKey("a/b"), /知识 key/);
   assert.throws(() => assertValidKey("a b"), /知识 key/);
   assert.throws(() => assertValidKey("..bad..name"), /知识 key/); // 连续点
