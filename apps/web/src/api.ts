@@ -29,6 +29,9 @@
   type AgentSessionAskResult,
   type ChatSessionDetail,
   type ReasonixSessionDetail,
+  type ReasonixProcessStatus,
+  type McpServersResult,
+  type McpServerConfigItem,
   type LocalDataResult,
   type LocalDataUpdateRequest,
   type PromptDetailResult,
@@ -242,6 +245,11 @@ export const api = {
     request<AgentSessionCreateResult>(`/llm/agent-sessions/${kind}`, jsonInit("POST", req)),
   agentSessionDetail: (id: string) => request<ChatSessionDetail>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}`),
   agentSessionReasonixDetail: (id: string) => request<ReasonixSessionDetail>(`/llm/agent-sessions/reasonix/${encodeURIComponent(id)}`),
+  reasonixProcess: () => request<ReasonixProcessStatus>("/llm/agent-sessions/process"),
+  reasonixProcessStart: () => request<ReasonixProcessStatus>("/llm/agent-sessions/process/start", jsonInit("POST", {})),
+  reasonixProcessStop: () => request<ReasonixProcessStatus>("/llm/agent-sessions/process/stop", jsonInit("POST", {})),
+  mcpServers: () => request<McpServersResult>("/llm/mcp-servers"),
+  mcpServersSave: (servers: McpServerConfigItem[]) => request<McpServersResult>("/llm/mcp-servers", jsonInit("PUT", { servers })),
   agentSessionRestore: (id: string) =>
     request<{ ok: boolean; message: string }>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
   agentSessionAsk: (kind: "chat" | "reasonix", id: string, text: string) =>

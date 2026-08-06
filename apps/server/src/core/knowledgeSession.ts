@@ -12,6 +12,7 @@ import { kvGet, kvSet, kvDelete } from "./kvStore.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { kbCountInstance } from "./knowledge.js";
+import { enabledMcpServers } from "./mcpConfig.js";
 
 const require_ = createRequire(import.meta.url);
 /** MCP 子进程入口：node + tsx CLI（支持 .ts 直跑；./cli 为 exports 入口） */
@@ -20,7 +21,6 @@ const TSX_CLI = require_.resolve("tsx/cli");
 const KB_MCP_SCRIPT = fileURLToPath(new URL("./knowledgeMcp.ts", import.meta.url)).replace(/\\/g, "/");
 
 export const KNOWLEDGE_SESSION_PREFIX = "knowledgeSession:";
-
 registerDataSource({
   kind: "kv",
   name: "knowledgeSession:",
@@ -29,14 +29,9 @@ registerDataSource({
   description: "知识库实例的 Reasonix Agent 会话注册表（KV 持久化，续用/恢复）",
 });
 
-/** Reasonix 会话挂载的知识库 MCP server（stdio） */
-function kbMcpServer(): { name: string; command: string; args: string[]; env: Record<string, string> } {
-  return {
-    name: "kb",
-    command: process.execPath,
-    args: [TSX_CLI, KB_MCP_SCRIPT],
-    env: { PATH: process.env.PATH ?? "" },
-  };
+/** 知识库会话挂载的 MCP 列表（全局配置的启用项，默认含 kb 知识库 MCP） */
+function kbMcpServers(): ReturnType<typeof enabledMcpServers> {
+  return enabledMcpServers();
 }
 
 function sessionKey(instance: string): string {
@@ -70,7 +65,7 @@ export async function ensureKnowledgeSession(instance: string): Promise<{ ok: bo
     kvSet(key, { ...existing, lastAt: Date.now() }); // 访问即刷新（元数据）
     return { ok: true, regId: existing.regId };
   }
-  const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: [kbMcpServer()] });
+  const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: kbMcpServers() });
   if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话创建失败" };
   kvSet(key, { regId: s.id, instance, createdAt: Date.now(), lastAt: Date.now() } satisfies KnowledgeSessionReg);
   return { ok: true, regId: s.id };

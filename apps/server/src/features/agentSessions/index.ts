@@ -8,7 +8,8 @@
 import { Hono } from "hono";
 import { API_PREFIX, type AgentSessionAskResult, type AgentSessionCreateResult, type AgentSessionCreateRequest, type AgentSessionsResult, type ChatSessionDetail, type ToolMeta } from "@toolbox/shared";
 import { createChatSession, chatSessionAsk, listChatSessions, deleteChatSession, getChatSessionDetail, restoreArchivedSession } from "../../core/chatSession.js";
-import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory, backfillReasonixHistory } from "../../core/reasonix.js";
+import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory, backfillReasonixHistory, getAcpStatus, ensureAcpRunning, stopAcp } from "../../core/reasonix.js";
+import { getMcpServers, setMcpServers, type McpServerConfig } from "../../core/mcpConfig.js";
 import { createTask } from "../../core/tasks.js";
 
 export const meta: ToolMeta = {
@@ -126,6 +127,38 @@ export function register(app: Hono): void {
   app.delete(`${API_PREFIX}/llm/agent-sessions/chat/:id`, (c) => {
     const ok = deleteChatSession(c.req.param("id"));
     return c.json({ ok, message: ok ? "已删除" : "会话不存在" }, ok ? 200 : 404);
+  });
+
+  // Reasonix 进程状态：GET /api/llm/agent-sessions/process
+  app.get(`${API_PREFIX}/llm/agent-sessions/process`, (c) => {
+    const st = getAcpStatus();
+    return c.json({ ok: true, ...st, sessionCount: listReasonixSessions().length });
+  });
+
+  // 显式启动：POST /api/llm/agent-sessions/process/start
+  app.post(`${API_PREFIX}/llm/agent-sessions/process/start`, (c) => {
+    const r = ensureAcpRunning();
+    const st = getAcpStatus();
+    return c.json({ ok: r.ok, running: r.running, pid: r.pid, message: r.message, sessionCount: listReasonixSessions().length, ...(r.ok ? { startedAt: st.startedAt } : {}) });
+  });
+
+  // 显式停止：POST /api/llm/agent-sessions/process/stop
+  app.post(`${API_PREFIX}/llm/agent-sessions/process/stop`, (c) => {
+    const r = stopAcp();
+    return c.json({ ok: r.ok, running: false, message: r.message });
+  });
+
+  // MCP 配置：GET /api/llm/mcp-servers
+  app.get(`${API_PREFIX}/llm/mcp-servers`, (c) => {
+    return c.json({ ok: true, servers: getMcpServers() });
+  });
+
+  // MCP 配置：PUT /api/llm/mcp-servers { servers }
+  app.put(`${API_PREFIX}/llm/mcp-servers`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { servers?: McpServerConfig[] } | null;
+    if (!raw || !Array.isArray(raw.servers)) return c.json({ ok: false, message: "缺少 servers 数组" }, 400);
+    const saved = setMcpServers(raw.servers);
+    return c.json({ ok: true, servers: saved });
   });
 
   // Reasonix 详情：GET /api/llm/agent-sessions/reasonix/:id（含服务端托管对话数据；存量会话自动回填）

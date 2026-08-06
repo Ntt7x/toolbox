@@ -106,6 +106,9 @@ interface ReasonixUsageShape {
 }
 
 let acp: AcpClient | null = null;
+/** 当前 ACP 进程元数据（显式进程管理用） */
+let acpStartedAt = 0;
+let acpBinary = "";
 
 // ---------- ACP 启动与消息处理 ----------
 
@@ -115,6 +118,8 @@ function startAcp(): AcpClient {
   if (!existsSync(bin)) throw new Error(`reasonix 二进制不存在：${bin}`);
   const apiKey = loadApiKey();
   if (!apiKey) throw new Error("未配置 DeepSeek API key（模式 3 需 DEEPSEEK_API_KEY）");
+  acpStartedAt = Date.now();
+  acpBinary = bin;
   const child = spawn(bin, ["acp"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, DEEPSEEK_API_KEY: apiKey },
@@ -206,6 +211,52 @@ function startAcp(): AcpClient {
   });
   acp = client;
   return client;
+}
+
+/** ACP 进程状态（显式进程管理：页面展示/启停） */
+export function getAcpStatus(): {
+  running: boolean;
+  pid?: number;
+  startedAt?: number;
+  binary?: string;
+  pendingRequests: number;
+} {
+  if (acp && acp.child.exitCode === null && acp.child.pid) {
+    return { running: true, pid: acp.child.pid, startedAt: acpStartedAt || undefined, binary: acpBinary || undefined, pendingRequests: acp.pending.size };
+  }
+  return { running: false, pendingRequests: 0 };
+}
+
+/** 显式启动 ACP 进程（已运行则幂等）；返回状态 */
+export function ensureAcpRunning(): { ok: boolean; running: boolean; pid?: number; message?: string } {
+  try {
+    const client = getAcp();
+    return { ok: true, running: true, pid: client.child.pid };
+  } catch (e) {
+    return { ok: false, running: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 显式停止 ACP 进程（进程树，连带 MCP 子进程；会话注册表保留，续问时自动重启+resume） */
+export function stopAcp(): { ok: boolean; message?: string } {
+  const client = acp;
+  if (!client || client.child.exitCode !== null) {
+    acp = null;
+    return { ok: true, message: "进程未在运行" };
+  }
+  try {
+    // Windows：kill 进程树（reasonix 可能派生 MCP 子进程，一并终止以释放 stdio 管道）
+    spawnSync("taskkill", ["/pid", String(client.child.pid), "/T", "/F"], { windowsHide: true });
+  } catch {
+    // 兜底：直接 kill
+    try {
+      client.child.kill();
+    } catch {
+      // 忽略
+    }
+  }
+  acp = null;
+  return { ok: true, message: "已停止" };
 }
 
 function getAcp(): AcpClient {

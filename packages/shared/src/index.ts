@@ -710,6 +710,35 @@ export interface ReasonixSessionDetail {
   message?: string;
 }
 
+/** Reasonix ACP 进程状态（显式进程管理） */
+export interface ReasonixProcessStatus {
+  ok: boolean;
+  running: boolean;
+  pid?: number;
+  startedAt?: number;
+  binary?: string;
+  pendingRequests: number;
+  /** 会话数（注册表活跃会话） */
+  sessionCount: number;
+  message?: string;
+}
+
+/** MCP Server 配置项（存储于本地设置数据） */
+export interface McpServerConfigItem {
+  name: string;
+  url?: string;
+  transport?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface McpServersResult {
+  ok: boolean;
+  servers: McpServerConfigItem[];
+}
+
 // ============================================================
 // DeepSeek 分享链接对话提取（deepseek-share）
 // ============================================================

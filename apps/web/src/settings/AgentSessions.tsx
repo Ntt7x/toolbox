@@ -6,7 +6,7 @@
 // ============================================================
 import { useEffect, useState, type ReactNode, type CSSProperties } from "react";
 import { api } from "../api";
-import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail, ReasonixSessionDetail } from "@toolbox/shared";
+import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail, ReasonixSessionDetail, ReasonixProcessStatus, McpServerConfigItem } from "@toolbox/shared";
 
 const STATUS_BADGE: Record<string, { text: string; bg: string; color: string }> = {
   active: { text: "活跃", bg: "#dcfce7", color: "#15803d" },
@@ -210,6 +210,9 @@ const btn: CSSProperties = {
 export default function AgentSessions() {
   const [data, setData] = useState<AgentSessionsResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [proc, setProc] = useState<ReasonixProcessStatus | null>(null);
+  const [mcpServers, setMcpServers] = useState<McpServerConfigItem[]>([]);
+  const [procBusy, setProcBusy] = useState(false);
   const [showCreate, setShowCreate] = useState<"chat" | "reasonix" | null>(null);
   const [module, setModule] = useState("");
   const [system, setSystem] = useState("");
@@ -220,7 +223,10 @@ export default function AgentSessions() {
   const load = async () => {
     setLoading(true);
     try {
-      setData(await api.agentSessions());
+      const [s, p, m] = await Promise.all([api.agentSessions(), api.reasonixProcess(), api.mcpServers()]);
+      setData(s);
+      setProc(p);
+      setMcpServers(m.servers);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -231,6 +237,67 @@ export default function AgentSessions() {
   useEffect(() => {
     void load();
   }, []);
+
+  const doProcStart = async () => {
+    setProcBusy(true);
+    try {
+      setProc(await api.reasonixProcessStart());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProcBusy(false);
+    }
+  };
+
+  const doProcStop = async () => {
+    if (!confirm("停止 Reasonix ACP 进程？（会话注册表保留，续问时自动重启+resume）")) return;
+    setProcBusy(true);
+    try {
+      setProc(await api.reasonixProcessStop());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProcBusy(false);
+    }
+  };
+
+  const toggleMcp = async (idx: number) => {
+    const next = mcpServers.map((s, i) => (i === idx ? { ...s, enabled: !s.enabled } : s));
+    setMcpServers(next);
+    try {
+      const r = await api.mcpServersSave(next);
+      setMcpServers(r.servers);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const deleteMcp = async (idx: number) => {
+    if (!confirm(`删除 MCP server ${mcpServers[idx].name}？`)) return;
+    const next = mcpServers.filter((_, i) => i !== idx);
+    setMcpServers(next);
+    try {
+      const r = await api.mcpServersSave(next);
+      setMcpServers(r.servers);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const addMcp = async () => {
+    const name = prompt("MCP server 名称（如 kb）：");
+    if (!name?.trim()) return;
+    const command = prompt("启动命令（stdio，如 node）：") ?? "";
+    const argsRaw = prompt("参数（空格分隔，如 --import tsx 脚本路径）：") ?? "";
+    const next = [...mcpServers, { name: name.trim(), command: command.trim() || undefined, args: argsRaw.trim() ? argsRaw.trim().split(/\s+/) : undefined, enabled: true } as McpServerConfigItem];
+    setMcpServers(next);
+    try {
+      const r = await api.mcpServersSave(next);
+      setMcpServers(r.servers);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const doCreate = async () => {
     const m = module.trim();
@@ -276,6 +343,49 @@ export default function AgentSessions() {
         管理两类有状态 LLM 会话。会话共享前缀缓存（DeepSeek 缓存价 1/50），同主题多次调用建议复用同一会话以降本。
       </p>
       {err && <div style={{ color: "#b91c1c", marginBottom: "0.6rem", fontSize: "0.8rem" }}>❌ {err}</div>}
+      {/* Reasonix 进程状态（显式进程管理） */}
+      <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.6rem 0.8rem", marginBottom: "1rem", background: "#fff", display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
+        <b style={{ fontSize: "0.82rem", color: "#334155" }}>🛠 Reasonix 进程</b>
+        <span style={{ fontSize: "0.75rem", padding: "0.1rem 0.5rem", borderRadius: 6, background: proc?.running ? "#dcfce7" : "#fee2e2", color: proc?.running ? "#15803d" : "#b91c1c", fontWeight: 600 }}>
+          {proc?.running ? `运行中 · PID ${proc.pid}` : "未运行"}
+        </span>
+        {proc?.running && proc.startedAt && (
+          <span style={{ fontSize: "0.72rem", color: "#64748b" }}>启动于 {new Date(proc.startedAt).toLocaleString("zh-CN")} · 未决请求 {proc.pendingRequests}</span>
+        )}
+        <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>会话数 {proc?.sessionCount ?? 0}</span>
+        <span style={{ flex: 1 }} />
+        {proc?.running ? (
+          <button style={{ ...btn, color: "#b91c1c" }} disabled={procBusy} onClick={() => void doProcStop()} type="button">{procBusy ? "处理中…" : "■ 停止进程"}</button>
+        ) : (
+          <button style={{ ...btn, background: "#2563eb", color: "#fff", borderColor: "#2563eb" }} disabled={procBusy} onClick={() => void doProcStart()} type="button">{procBusy ? "处理中…" : "▶ 启动进程"}</button>
+        )}
+      </div>
+      {/* MCP 配置（Reasonix 会话挂载的 MCP server） */}
+      <details style={{ border: "1px solid #e2e8f0", borderRadius: 10, marginBottom: "1rem", background: "#fff", padding: "0.5rem 0.8rem" }}>
+        <summary style={{ cursor: "pointer", fontSize: "0.82rem", color: "#334155", fontWeight: 600 }}>
+          🔌 MCP Server 配置 <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "0.72rem" }}>（Reasonix 新会话挂载启用项；知识库 kb 为内置默认）</span>
+        </summary>
+        <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          {mcpServers.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: "0.78rem" }}>无 MCP server（默认将内置知识库 kb）</div>
+          ) : (
+            mcpServers.map((s, i) => (
+              <div key={s.name + i} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.75rem", border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.3rem 0.5rem" }}>
+                <span style={{ fontWeight: 600, color: "#1e293b", minWidth: 60 }}>{s.name}</span>
+                <span style={{ color: "#64748b", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.url ? `HTTP ${s.url}` : `${s.command ?? "?"} ${(s.args ?? []).join(" ")}`.slice(0, 80)}
+                </span>
+                <button style={btn} onClick={() => void toggleMcp(i)} type="button">{s.enabled ? "✓ 启用" : "停用"}</button>
+                <button style={{ ...btn, color: "#b91c1c" }} onClick={() => void deleteMcp(i)} type="button">删除</button>
+              </div>
+            ))
+          )}
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.3rem" }}>
+            <button style={btn} onClick={() => void addMcp()} type="button">＋ 新增 MCP server</button>
+            <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>stdio：命令 + 参数；HTTP：url（reasonix 支持 stdio / Streamable HTTP）</span>
+          </div>
+        </div>
+      </details>
       {loading ? (
         <div style={{ color: "#94a3b8" }}>加载中…</div>
       ) : (
