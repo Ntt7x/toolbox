@@ -40,8 +40,15 @@ registerDataSource({
 export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 /** 缓存 key：参数归一化（banks 排序）后的查询组合。v2 = 防幻觉/数据模式/缺失提示等 schema 升级（旧缓存自动失效） */
-export function cbRateCacheKey(req: CbRateRequest): string {
-  const banks = (req.banks ?? []).slice().sort().join(",");
+/** 用户可读任务名称：{查询月份} · 央行利率分析（选中央行数） */
+function cbRateTaskName(req: CbRateRequest): string {
+  const month = req.month ?? new Date().toISOString().slice(0, 7);
+  const bankCount = req.banks?.length ? req.banks.length : 9;
+  const scope = req.banks?.length ? `${bankCount} 家央行` : "九大央行";
+  return `${month} · 央行利率分析（${scope}）`;
+}
+
+export function cbRateCacheKey(req: CbRateRequest): string {  const banks = (req.banks ?? []).slice().sort().join(",");
   return [
     "cbRate",
     "v2",
@@ -94,6 +101,7 @@ export function register(app: Hono): void {
     }
 
     // 未命中：后台任务执行，完成后写缓存
+    const taskName = cbRateTaskName(req);
     const { taskId } = createTask<CbRateResponse>(
       async (signal) => {
         const r = await analyzeCentralBankRates(req, signal);
@@ -103,7 +111,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000, module: "cb-rate" },
+      { timeoutMs: 5 * 60 * 1000, module: "cb-rate", name: taskName },
     );
     return c.json(getTask<CbRateResponse>(taskId), 202);
   });

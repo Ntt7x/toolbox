@@ -1018,6 +1018,8 @@ export type AsyncTaskResult<T = unknown> = AsyncTaskResponse<T> | AsyncTaskError
 export interface TaskHistoryEntry {
   taskId: string;
   module: string;
+  /** 用户可读任务名称（如「2026-08 · 央行利率分析（九大央行）」）；旧数据缺省 */
+  name?: string;
   status: AsyncTaskStatus;
   createdAt: string;
   finishedAt?: string;

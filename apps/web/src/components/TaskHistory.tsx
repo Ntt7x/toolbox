@@ -99,7 +99,8 @@ export function TaskHistory(props: {
                   <span style={{ fontSize: "0.72rem", padding: "0.1rem 0.45rem", borderRadius: 6, background: badge.bg, color: badge.color, fontWeight: 600 }}>
                     {badge.text}
                   </span>
-                  <span style={{ color: "#64748b" }}>{new Date(e.createdAt).toLocaleString("zh-CN")}</span>
+                  <span style={{ fontWeight: 600, fontSize: "0.82rem" }}>{e.name ?? `任务 ${e.taskId.slice(0, 8)}…`}</span>
+                  <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{new Date(e.createdAt).toLocaleString("zh-CN")}</span>
                   {e.durationMs !== undefined && <span style={{ color: "#94a3b8" }}>⏱ {fmtDuration(e.durationMs)}</span>}
                   <span style={{ flex: 1 }} />
                   <span style={{ color: "#94a3b8" }}>{open ? "收起 ▴" : "查看 ▾"}</span>

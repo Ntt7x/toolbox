@@ -23,6 +23,8 @@ interface TaskHandle<T = unknown> {
   finishedAt?: number;
   /** 任务归属模块（如 cb-rate）；提供时结果会归档到历史 KV */
   module?: string;
+  /** 用户可读任务名称（归档到历史展示） */
+  name?: string;
   /** 取消控制器：cancelTask 或超时触发 abort */
   controller?: AbortController;
   /** 超时定时器 */
@@ -49,6 +51,7 @@ function finalizeTask(handle: TaskHandle): void {
     entries.push({
       taskId: handle.id,
       module: handle.module,
+      ...(handle.name ? { name: handle.name } : {}),
       status: handle.status,
       createdAt: new Date(handle.createdAt).toISOString(),
       finishedAt: new Date(handle.finishedAt).toISOString(),
@@ -70,6 +73,8 @@ interface CreateTaskOptions<T> {
   onError?: (e: unknown) => string;
   /** 任务归属模块（如 cb-rate）；提供时终态结果归档到 KV 历史（供页面回看） */
   module?: string;
+  /** 用户可读任务名称（如「2026-08 · 央行利率分析」）；归档到历史展示 */
+  name?: string;
 }
 
 /** 创建后台任务：立即返回 taskId，fn 异步执行（fn 可接收 AbortSignal 实现可中断） */
@@ -80,7 +85,7 @@ export function createTask<T>(
   const id = randomUUID();
   const controller = new AbortController();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const handle: TaskHandle<T> = { id, status: "pending", createdAt: Date.now(), controller, ...(opts.module ? { module: opts.module } : {}) };
+  const handle: TaskHandle<T> = { id, status: "pending", createdAt: Date.now(), controller, ...(opts.module ? { module: opts.module } : {}), ...(opts.name ? { name: opts.name } : {}) };
   tasks.set(id, handle);
 
   // 超时保护：超时未完成 → 自动终止
