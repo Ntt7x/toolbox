@@ -216,7 +216,9 @@ async function handleToolCall(params: AcpSessionUpdate & AcpStatusUpdate): Promi
   // 工具名：优先 _meta 内嵌，其次 title（如 write_file），再次 kind（read/edit）
   const tool = tc._meta?.["reasonix.io"]?.tool ?? tc.title ?? tc.kind ?? "";
   const targetPath = tc.locations?.[0]?.path ?? tc.rawInput?.path ?? "";
-  const allowed = ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool);
+  // 放行：文件类工具 + 会话挂载的 MCP 工具（mcp__<name>__*：连接/调用我们自己的知识库 MCP，直接读写 KV）
+  const allowed =
+    ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool) || tool.startsWith("mcp__");
   if (!allowed) {
     console.warn(`[reasonix-acp] 拒绝非文件工具 ${tool}（路径 ${targetPath}）`);
   }
@@ -292,18 +294,33 @@ function saveReg(r: ReasonixSessionReg): void {
 
 /** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复）
  * 默认 cwd = 数据目录 /.file（git 隔离）：Agent 文件资源集中在 .file 内，
- * 与本地数据（SQLite KV）同区，便于资源统一管理。 */
-export async function createReasonixSession(opts: { cwd?: string; module?: string } = {}): Promise<{ ok: boolean; id?: string; message?: string }> {
+ * 与本地数据（SQLite KV）同区，便于资源统一管理。
+ * mcpServers：挂载 MCP 工具（如知识库 kb_get/kb_set/kb_list/kb_delete），Agent 直接调用（无需文件视图）。 */
+/** ACP session/new 的 mcpServers 项：HTTP 用 url；stdio 用 command/args/env */
+export interface AcpMcpServer {
+  name: string;
+  url?: string;
+  transport?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export async function createReasonixSession(
+  opts: { cwd?: string; module?: string; mcpServers?: AcpMcpServer[] } = {},
+): Promise<{ ok: boolean; id?: string; message?: string }> {
   try {
     const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: {} }, 15000);
     if (init.error) return { ok: false, message: `reasonix initialize 失败：${init.error.message}` };
     const cwd = opts.cwd ?? DATA_DIR;
-    const res = await rpc("session/new", { cwd }, 15000);
+    const newParams: Record<string, unknown> = { cwd };
+    if (opts.mcpServers && opts.mcpServers.length > 0) newParams.mcpServers = opts.mcpServers;
+    const res = await rpc("session/new", newParams, 15000);
     if (res.error) return { ok: false, message: `reasonix session/new 失败：${res.error.message}` };
     const reasonixSessionId = (res.result as { sessionId?: string } | undefined)?.sessionId;
     if (!reasonixSessionId) return { ok: false, message: "reasonix 未返回 sessionId" };
-    // 本地个人站点：工具批准全自动（yolo）——Agent 可自由读写文件（含 /k/ 知识库），
-    // 不再逐次等待 host 批准；非文件类（bash/网络）仍由 request_permission 兜底拒绝。
+    // 本地个人站点：工具批准全自动（yolo）——Agent 可自由读写文件；
+    // 非文件类（bash/网络）仍由 request_permission 兜底拒绝。
     await rpc("session/set_config_option", { sessionId: reasonixSessionId, configId: "tool_approval", value: "yolo" }, 10000).catch(() => {});
     const now = Date.now();
     const reg: ReasonixSessionReg = {

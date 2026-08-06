@@ -11,6 +11,7 @@ import { registerDataSource } from "../../core/dataRegistry.js";
 import { getNote, isKnownNote, PREFIX, resetNote, saveNote } from "./store.js";
 import { createTask } from "../../core/tasks.js";
 import { kbAsk, kbDelete, kbImportFromChat, kbList } from "../../core/knowledge.js";
+import { knowledgeAgentAsk, knowledgeAgentImport } from "../../core/knowledgeSession.js";
 
 // 注册数据源：康复笔记（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -77,13 +78,21 @@ export function register(app: Hono): void {
 export const MEDICAL_INSTANCE = "medical";
 
 export function registerMedicalKb(app: Hono): void {
-  // 导入：POST /api/tools/medical-kb/import { url } —— 后台任务
+  // 导入：POST /api/tools/medical-kb/import { url } —— 后台任务（Reasonix Agent 执行，失败降级直调）
   app.post(`${API_PREFIX}/tools/medical-kb/import`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
     const url = typeof raw?.url === "string" ? raw.url.trim() : "";
     if (!url) return c.json({ ok: false, message: "缺少分享链接 url" }, 400);
-    const { taskId } = createTask(async (signal) => kbImportFromChat(url, { signal, instance: MEDICAL_INSTANCE }), {
-      timeoutMs: 5 * 60 * 1000,
+    const { taskId } = createTask(async () => {
+      // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
+      const r = await knowledgeAgentImport(MEDICAL_INSTANCE, url);
+      if (!r.ok) {
+        if (r.fallback) return kbImportFromChat(url, { instance: MEDICAL_INSTANCE });
+        throw new Error(r.message ?? "知识导入失败");
+      }
+      return { ok: true, note: r.message, imported: r.imported };
+    }, {
+      timeoutMs: 8 * 60 * 1000,
       module: "medical-kb.import",
       name: `医学知识导入 · ${new Date().toISOString().slice(0, 10)}`,
     });
@@ -105,13 +114,21 @@ export function registerMedicalKb(app: Hono): void {
     return c.json({ ok: true, deleted: 1 });
   });
 
-  // 问答：POST /api/tools/medical-kb/ask { question } —— 后台任务
+  // 问答：POST /api/tools/medical-kb/ask { question } —— 后台任务（Reasonix Agent 执行，失败降级直调）
   app.post(`${API_PREFIX}/tools/medical-kb/ask`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { question?: unknown } | null;
     const question = typeof raw?.question === "string" ? raw.question.trim() : "";
     if (!question) return c.json({ ok: false, message: "缺少问题 question" }, 400);
-    const { taskId } = createTask(async (signal) => kbAsk(question, { signal, instance: MEDICAL_INSTANCE }), {
-      timeoutMs: 5 * 60 * 1000,
+    const { taskId } = createTask(async () => {
+      // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
+      const r = await knowledgeAgentAsk(MEDICAL_INSTANCE, question);
+      if (!r.ok) {
+        if (r.fallback) return kbAsk(question, { instance: MEDICAL_INSTANCE });
+        throw new Error(r.message ?? "知识问答失败");
+      }
+      return { ok: true, answer: r.content };
+    }, {
+      timeoutMs: 8 * 60 * 1000,
       module: "medical-kb.ask",
       name: `医学知识问答 · ${question.slice(0, 24)}`,
     });

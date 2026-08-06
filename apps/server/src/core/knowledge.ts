@@ -202,6 +202,11 @@ export function kbCount(): number {
   return kvCount(KB_PREFIX);
 }
 
+/** 某实例条目数（key 首段 = instance 的行数；SQL COUNT） */
+export function kbCountInstance(instance: string): number {
+  return kvCount(`${KB_PREFIX}${instance}.`);
+}
+
 /**
  * 知识问答：检索与问题相关条目 → 知识注入提示词 → LLM 回答。
  * 检索策略：问题按分隔符拆词，取命中的条目（key 匹配优先，其次 value 包含）；

@@ -91,3 +91,14 @@ it("reasonix（模式3）：真实 ACP 会话 + 上下文续接", async () => {
     await closeReasonixSession(s.id!);
   }
 });
+
+it("知识库 × Reasonix（MCP 工具）：Agent 检索 medical 实例并回答（引用条目 key）", async () => {
+  const { knowledgeAgentAsk } = await import("../src/core/knowledgeSession.ts");
+  const r = await knowledgeAgentAsk("medical", "感冒发热一般怎么处理？", { timeoutMs: 240000 });
+  if (!r.ok) {
+    console.log(`  [it] knowledgeAgentAsk 不可用（skip 断言）：${r.message}`);
+    return;
+  }
+  assert.match(r.content!, /medical\./); // 回答应引用 medical.* 条目 key
+  console.log(`  [it] knowledgeAgentAsk OK（含条目引用，用量 hit=${String((r.usage as { cacheHitTokens?: number })?.cacheHitTokens ?? "?")}）`);
+});
