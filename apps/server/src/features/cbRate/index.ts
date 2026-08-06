@@ -27,12 +27,28 @@ registerDataSource({
   description: "利率分析结果持久化缓存（Key-结构化 Value，TTL 2 年）",
 });
 
+// 注册数据源：任务历史（异步分析任务归档）
+registerDataSource({
+  kind: "kv",
+  name: "taskHistory:",
+  page: "任务历史",
+  tag: "运行记录",
+  description: "异步分析任务历史（央行利率/国债汇率/逆回购等，结果快照归档，上限 50 条/模块）",
+});
+
 /** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
 export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 /** 缓存 key：参数归一化（banks 排序）后的查询组合。v2 = 防幻觉/数据模式/缺失提示等 schema 升级（旧缓存自动失效） */
-export function cbRateCacheKey(req: CbRateRequest): string {
-  const banks = (req.banks ?? []).slice().sort().join(",");
+/** 用户可读任务名称：{查询月份} · 央行利率分析（选中央行数） */
+function cbRateTaskName(req: CbRateRequest): string {
+  const month = req.month ?? new Date().toISOString().slice(0, 7);
+  const bankCount = req.banks?.length ? req.banks.length : 9;
+  const scope = req.banks?.length ? `${bankCount} 家央行` : "九大央行";
+  return `${month} · 央行利率分析（${scope}）`;
+}
+
+export function cbRateCacheKey(req: CbRateRequest): string {  const banks = (req.banks ?? []).slice().sort().join(",");
   return [
     "cbRate",
     "v2",
@@ -85,6 +101,7 @@ export function register(app: Hono): void {
     }
 
     // 未命中：后台任务执行，完成后写缓存
+    const taskName = cbRateTaskName(req);
     const { taskId } = createTask<CbRateResponse>(
       async (signal) => {
         const r = await analyzeCentralBankRates(req, signal);
@@ -94,7 +111,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000 },
+      { timeoutMs: 5 * 60 * 1000, module: "cb-rate", name: taskName },
     );
     return c.json(getTask<CbRateResponse>(taskId), 202);
   });

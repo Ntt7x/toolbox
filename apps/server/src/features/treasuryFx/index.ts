@@ -75,6 +75,7 @@ export function register(app: Hono): void {
     }
 
     // 未命中：后台任务执行，完成后写缓存
+    const taskName = `${new Date().toISOString().slice(0, 10)} · 国债汇率分析（近 ${req.days ?? 5} 天）`;
     const { taskId } = createTask<TreasuryFxResponse>(
       async (signal) => {
         const r = await analyzeTreasuryFx(req, signal);
@@ -84,7 +85,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000 },
+      { timeoutMs: 5 * 60 * 1000, module: "treasury-fx", name: taskName },
     );
     return c.json(getTask<TreasuryFxResponse>(taskId), 202);
   });

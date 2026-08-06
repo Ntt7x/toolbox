@@ -17,6 +17,8 @@
   type LlmStatusResponse,
   type LlmTestResult,
   type LlmBalanceResult,
+  type TaskHistoryEntry,
+  type TaskHistoryListResponse,
   type LlmUsageSummary,
   type LocalDataResult,
   type LocalDataUpdateRequest,
@@ -157,7 +159,7 @@ export const api = {
     ),
   // 改进备忘录（TODO list）
   memoList: () => request<MemoListResult>("/tools/memo"),
-  memoCreate: (text: string) => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text })),
+  memoCreate: (text: string, kind: "fix" | "feature" = "fix") => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text, kind })),
   memoUpdate: (id: string, patch: MemoUpdateRequest) =>
     request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
@@ -184,6 +186,10 @@ export const api = {
       `/tasks/${encodeURIComponent(taskId)}/cancel`,
       jsonInit("POST", {}),
     ),
+  // 任务历史（KV 持久化，页面回看）：列表 + 单条详情
+  taskHistoryList: (module: string) => request<TaskHistoryListResponse>(`/tasks/history?module=${encodeURIComponent(module)}`),
+  taskHistoryEntry: (taskId: string) =>
+    request<{ ok: true; entry: TaskHistoryEntry } | { ok: false; message: string }>(`/tasks/history/${encodeURIComponent(taskId)}`),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
   localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) => {

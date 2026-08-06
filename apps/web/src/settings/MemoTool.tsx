@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
-import type { MemoItem, MemoStatus } from "@toolbox/shared";
+import type { MemoItem, MemoKind, MemoStatus } from "@toolbox/shared";
 
 const card: CSSProperties = {
   background: "#fff",
@@ -44,6 +44,12 @@ const STATUS_META: Record<MemoStatus, { label: string; color: string; bg: string
   done: { label: "已完成", color: "#15803d", bg: "#dcfce7", next: "open" },
 };
 
+/** 改进类型徽章：fix 修复型 / feature 需求型 */
+const KIND_META: Record<MemoKind, { label: string; color: string; bg: string; hint: string }> = {
+  fix: { label: "🔧 修复型", color: "#6d28d9", bg: "#f3e8ff", hint: "简短的改进要求（Agent 默认优先处理）" },
+  feature: { label: "🧩 需求型", color: "#0e7490", bg: "#cffafe", hint: "详细的需求描述（需要用户确认后实现）" },
+};
+
 const STATUS_ORDER: MemoStatus[] = ["open", "doing", "done"];
 
 export default function MemoTool() {
@@ -53,6 +59,7 @@ export default function MemoTool() {
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [kindSel, setKindSel] = useState<MemoKind>("fix");
 
   const refresh = useCallback(async () => {
     try {
@@ -73,7 +80,7 @@ export default function MemoTool() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await api.memoCreate(t);
+      const r = await api.memoCreate(t, kindSel);
       if (r.ok) {
         setText("");
         await refresh();
@@ -145,10 +152,34 @@ export default function MemoTool() {
             ➕ 记录
           </button>
         </div>
-        <div style={{ display: "flex", gap: "1rem", fontSize: "0.82rem", color: "#64748b" }}>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", fontSize: "0.82rem", color: "#64748b" }}>
+          <span>类型：</span>
+          {(Object.keys(KIND_META) as MemoKind[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKindSel(k)}
+              title={KIND_META[k].hint}
+              style={{
+                padding: "0.2rem 0.6rem",
+                borderRadius: 999,
+                border: kindSel === k ? `1px solid ${KIND_META[k].color}` : "1px solid #e2e8f0",
+                background: kindSel === k ? KIND_META[k].bg : "#fff",
+                color: KIND_META[k].color,
+                fontSize: "0.78rem",
+                cursor: "pointer",
+              }}
+            >
+              {KIND_META[k].label}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
           <span>📋 待处理 {count("open")}</span>
           <span>🔧 修复中 {count("doing")}</span>
           <span>✅ 已完成 {count("done")}</span>
+        </div>
+        <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "0.4rem" }}>
+          🔧 修复型 = 简短改进要求（Agent 默认优先处理）；🧩 需求型 = 详细需求描述（需用户确认后实现）。
         </div>
       </div>
 
@@ -199,6 +230,12 @@ export default function MemoTool() {
                       onDoubleClick={() => { setEditingId(item.id); setEditText(item.text); }}
                       title="双击编辑"
                     >
+                      <span
+                        style={{ ...KIND_META[item.kind ?? "fix"], padding: "0.1rem 0.5rem", borderRadius: 999, fontSize: "0.72rem", marginRight: "0.4rem", fontWeight: 600 }}
+                        title={KIND_META[item.kind ?? "fix"].hint}
+                      >
+                        {KIND_META[item.kind ?? "fix"].label}
+                      </span>
                       {item.text}
                       <div style={{ color: "#94a3b8", fontSize: "0.72rem", marginTop: "0.2rem" }}>
                         创建 {item.createdAt.slice(0, 10)} · 更新 {item.updatedAt.slice(0, 10)}

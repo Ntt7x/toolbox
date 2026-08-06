@@ -4,15 +4,20 @@
 // ============================================================
 
 import { kvGet, kvSet } from "../../core/kvStore.js";
-import type { MemoItem, MemoStatus } from "@toolbox/shared";
+import type { MemoItem, MemoKind, MemoStatus } from "@toolbox/shared";
 
 /** KV key（数据源注册名） */
 export const MEMO_KEY = "memo:items";
 
 const STATUSES: MemoStatus[] = ["open", "doing", "done"];
+const KINDS: MemoKind[] = ["fix", "feature"];
 
 export function isMemoStatus(v: unknown): v is MemoStatus {
   return typeof v === "string" && (STATUSES as string[]).includes(v);
+}
+
+export function isMemoKind(v: unknown): v is MemoKind {
+  return typeof v === "string" && (KINDS as string[]).includes(v);
 }
 
 /** 生成条目 id */
@@ -26,6 +31,7 @@ function normalize(item: Partial<MemoItem>): MemoItem | null {
     id: item.id,
     text: item.text.trim(),
     status: isMemoStatus(item.status) ? item.status : "open",
+    ...(item.kind && isMemoKind(item.kind) ? { kind: item.kind } : {}),
     createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
   };
@@ -51,18 +57,18 @@ export function listItems(): MemoItem[] {
   return readAll();
 }
 
-/** 新增条目 */
-export function createItem(text: string): MemoItem {
+/** 新增条目（kind 缺省 fix） */
+export function createItem(text: string, kind: MemoKind = "fix"): MemoItem {
   const now = new Date().toISOString();
-  const item: MemoItem = { id: genId(), text: text.trim(), status: "open", createdAt: now, updatedAt: now };
+  const item: MemoItem = { id: genId(), text: text.trim(), status: "open", kind, createdAt: now, updatedAt: now };
   const items = readAll();
   items.push(item);
   writeAll(items);
   return item;
 }
 
-/** 更新条目（文本/状态）；无则 null */
-export function updateItem(id: string, patch: { text?: string; status?: MemoStatus }): MemoItem | null {
+/** 更新条目（文本/状态/类型）；无则 null */
+export function updateItem(id: string, patch: { text?: string; status?: MemoStatus; kind?: MemoKind }): MemoItem | null {
   const items = readAll();
   const idx = items.findIndex((i) => i.id === id);
   if (idx < 0) return null;
@@ -70,6 +76,7 @@ export function updateItem(id: string, patch: { text?: string; status?: MemoStat
     ...items[idx],
     text: typeof patch.text === "string" && patch.text.trim() ? patch.text.trim() : items[idx].text,
     status: patch.status && isMemoStatus(patch.status) ? patch.status : items[idx].status,
+    ...(patch.kind && isMemoKind(patch.kind) ? { kind: patch.kind } : {}),
     updatedAt: new Date().toISOString(),
   };
   items[idx] = next;

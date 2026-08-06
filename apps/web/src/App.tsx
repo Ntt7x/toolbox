@@ -4,6 +4,7 @@ import { api } from "./api";
 import type { HealthResponse, ToolMeta } from "@toolbox/shared";
 import Overview from "./pages/Overview";
 import ToolPlaceholder from "./pages/ToolPlaceholder";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import GridPlanTool from "./tools/GridPlanTool";
 import KellyTool from "./tools/KellyTool";
 import DeepSeekShareTool from "./tools/DeepSeekShareTool";
@@ -32,10 +33,10 @@ const toolPages: Record<string, ComponentType> = {
   "rehab-muscle": RehabMuscleTool,
 };
 
-/** 已实现工具页渲染；未映射的工具回退到占位页 */
+/** 已实现工具页渲染；未映射的工具回退到占位页（ErrorBoundary 捕获运行时崩溃，显示错误而非白屏） */
 function ToolPage({ t }: { t: ToolMeta }) {
   const C = toolPages[t.id];
-  return C ? <C /> : <ToolPlaceholder tool={t} />;
+  return <ErrorBoundary>{C ? <C /> : <ToolPlaceholder tool={t} />}</ErrorBoundary>;
 }
 interface MenuGroup {
   label: string;

@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
+import { TaskHistory } from "../components/TaskHistory";
 import type { TreasuryFxResponse, TreasuryFxRow } from "@toolbox/shared";
 
 const card: CSSProperties = {
@@ -55,6 +56,17 @@ export default function TreasuryFxTool() {
   const err = task.error ?? localErr;
   const taskRunning = task.running;
   const taskId = task.taskId;
+
+  // 任务运行计时（任务信息：已运行时长）
+  const [runSec, setRunSec] = useState(0);
+  useEffect(() => {
+    if (!taskRunning) {
+      setRunSec(0);
+      return;
+    }
+    const t = setInterval(() => setRunSec((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [taskRunning]);
 
   const run = async () => {
     setShowRaw(false);
@@ -172,7 +184,7 @@ export default function TreasuryFxTool() {
         <div style={{ ...card, borderColor: "#fcd34d", background: "#fffbeb", color: "#b45309" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
             <div style={{ fontWeight: 600 }}>
-              ⏳ 分析任务已在后台运行{taskId ? `（任务 ${taskId.slice(0, 8)}…）` : ""}，每 3 秒自动刷新。
+              ⏳ 分析任务已在后台运行{taskId ? `（任务 ${taskId.slice(0, 8)}…）` : ""}，已耗时 <b>{runSec}s</b>，每 3 秒自动刷新。
             </div>
             <button style={{ ...btn, background: "#dc2626", marginLeft: "auto" }} onClick={() => void task.cancel()} type="button">
               ⏹ 停止分析
@@ -189,6 +201,13 @@ export default function TreasuryFxTool() {
 
       {/* 结果 */}
       {result && <ResultView r={result} showRaw={showRaw} setShowRaw={setShowRaw} />}
+
+      {/* 历史任务（KV 持久化，回看以往分析） */}
+      <TaskHistory
+        module="treasury-fx"
+        refreshKey={taskId}
+        renderResult={(v) => <ResultView r={v as TreasuryFxResponse} showRaw={false} setShowRaw={() => undefined} />}
+      />
     </div>
   );
 }

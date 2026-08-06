@@ -999,6 +999,12 @@ export interface AsyncTaskResponse<T = unknown> {
   message?: string;
   /** 任务创建时间（ISO） */
   createdAt: string;
+  /** 任务结束时间（ISO；终态时存在） */
+  finishedAt?: string;
+  /** 任务耗时（ms；终态时存在） */
+  durationMs?: number;
+  /** 任务归属模块（如 cb-rate），用于历史归档 */
+  module?: string;
 }
 
 export interface AsyncTaskErrorResponse {
@@ -1007,6 +1013,29 @@ export interface AsyncTaskErrorResponse {
 }
 
 export type AsyncTaskResult<T = unknown> = AsyncTaskResponse<T> | AsyncTaskErrorResponse;
+
+/** 任务历史条目（持久化于 KV taskHistory:<module>，供页面回看） */
+export interface TaskHistoryEntry {
+  taskId: string;
+  module: string;
+  /** 用户可读任务名称（如「2026-08 · 央行利率分析（九大央行）」）；旧数据缺省 */
+  name?: string;
+  status: AsyncTaskStatus;
+  createdAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  /** done 时的结果（全量快照） */
+  result?: unknown;
+  /** error/cancelled 信息 */
+  message?: string;
+}
+
+export interface TaskHistoryListResponse {
+  ok: true;
+  module: string;
+  entries: TaskHistoryEntry[];
+  total: number;
+}
 
 // ============================================================
 // 本地数据管理（local-data）：查询/删改本地表与 KV 数据
@@ -1212,10 +1241,15 @@ export type WatchlistResult =
 /** 备忘录条目状态 */
 export type MemoStatus = "open" | "doing" | "done";
 
+/** 改进类型：fix 修复型（简短改进要求）/ feature 需求型（详细需求描述） */
+export type MemoKind = "fix" | "feature";
+
 export interface MemoItem {
   id: string;
   text: string;
   status: MemoStatus;
+  /** 改进类型（缺省 fix；开发者驱动 Agent 默认只完成修复型） */
+  kind?: MemoKind;
   createdAt: string;
   updatedAt: string;
 }
@@ -1234,10 +1268,11 @@ export interface MemoCreateResult {
   item: MemoItem;
 }
 
-/** 更新：改文本 / 改状态 */
+/** 更新：改文本 / 改状态 / 改类型 */
 export interface MemoUpdateRequest {
   text?: string;
   status?: MemoStatus;
+  kind?: MemoKind;
 }
 
 export interface MemoDetailResult {
