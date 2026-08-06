@@ -348,7 +348,7 @@ export async function reasonixAsk(
   regId: string,
   text: string,
   opts: { timeoutMs?: number } = {},
-): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
+): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
 

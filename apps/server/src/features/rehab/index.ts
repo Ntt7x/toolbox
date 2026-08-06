@@ -21,14 +21,7 @@ registerDataSource({
   tag: "个人笔记",
   description: "康复笔记（rehab:medical，历史数据保留，页面已改为医学知识库）",
 });
-// 注册数据源：医学知识库（medical 实例，知识库公共模块业务落地）
-registerDataSource({
-  kind: "kv",
-  name: "medical.",
-  page: "医学知识库",
-  tag: "知识数据",
-  description: "医学知识库（medical 实例）：Chat 分享链接导入 + 知识问答（基于 core/knowledge 公共模块）",
-});
+// 医学知识库数据归属 core/knowledge 注册的 knowledge: 源（medical.* 实例；此处不再重复注册避免 0 条误导源）
 
 export const meta: ToolMeta = {
   id: "rehab-medical",

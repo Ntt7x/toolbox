@@ -11,6 +11,7 @@ import { createReasonixSession, reasonixAsk } from "./reasonix.js";
 import { kvGet, kvSet, kvDelete } from "./kvStore.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
+import { kbCountInstance } from "./knowledge.js";
 
 const require_ = createRequire(import.meta.url);
 /** MCP 子进程入口：node + tsx CLI（支持 .ts 直跑；./cli 为 exports 入口） */
@@ -42,6 +43,18 @@ function sessionKey(instance: string): string {
   return `${KNOWLEDGE_SESSION_PREFIX}${instance}`;
 }
 
+/** 实例级串行队列：reasonix 会话同一时刻只能一个 prompt（并发冲突会报 "already has an active prompt"） */
+const instanceQueues = new Map<string, Promise<unknown>>();
+function enqueue<T>(instance: string, fn: () => Promise<T>): Promise<T> {
+  const prev = instanceQueues.get(instance) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // 前一个失败不阻塞后续
+  instanceQueues.set(
+    instance,
+    next.catch(() => {}), // 队列保持可继续
+  );
+  return next;
+}
+
 interface KnowledgeSessionReg {
   regId: string;
   instance: string;
@@ -54,6 +67,7 @@ export async function ensureKnowledgeSession(instance: string): Promise<{ ok: bo
   const key = sessionKey(instance);
   const existing = kvGet<KnowledgeSessionReg>(key);
   if (existing && typeof existing.regId === "string") {
+    kvSet(key, { ...existing, lastAt: Date.now() }); // 访问即刷新（元数据）
     return { ok: true, regId: existing.regId };
   }
   const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: [kbMcpServer()] });
@@ -85,12 +99,21 @@ export async function knowledgeAgentAsk(
   question: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
+  return enqueue(instance, () => doAsk(instance, question, opts));
+}
+
+async function doAsk(
+  instance: string,
+  question: string,
+  opts: { timeoutMs?: number },
+): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
   const s = await ensureKnowledgeSession(instance);
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
   const prompt = `${guideFor(instance, "回答用户问题")}\n回答前必须先用 kb_search（question 取用户问题，instance 为 ${instance}）检索知识库；基于检索到的条目回答，并标注引用条目 key；检索无结果时如实说明。\n\n【用户问题】\n${question}`;
   const r = await reasonixAsk(s.regId, prompt, opts);
   if (!r.ok) {
-    dropSession(instance); // 会话可能失效 → 下次重建
+    // 仅会话真失效（reasonix 侧进程崩溃/重启）才重建；临时错误（超时等）保留会话复用
+    if (r.sessionGone) dropSession(instance);
     return { ok: false, message: r.message, fallback: true };
   }
   return { ok: true, content: r.content, usage: r.usage };
@@ -105,12 +128,21 @@ export async function knowledgeAgentImport(
   shareUrl: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; imported?: number; message?: string; fallback?: boolean }> {
+  return enqueue(instance, () => doImport(instance, shareUrl, opts));
+}
+
+async function doImport(
+  instance: string,
+  shareUrl: string,
+  opts: { timeoutMs?: number },
+): Promise<{ ok: boolean; imported?: number; message?: string; fallback?: boolean }> {
   const conv = await extractShare(shareUrl);
   if (!conv.ok || !Array.isArray(conv.messages) || conv.messages.length === 0) {
     return { ok: false, message: "分享链接对话提取失败", fallback: true };
   }
   const s = await ensureKnowledgeSession(instance);
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
+  const before = kbCountInstance(instance);
   const dialog = conv.messages
     .map((m, i) => `${i + 1}. [${m.role}] ${typeof m.content === "string" ? m.content.slice(0, 2000) : JSON.stringify(m.content).slice(0, 2000)}`)
     .join("\n");
@@ -121,10 +153,11 @@ export async function knowledgeAgentImport(
     `3) 所有 kb_set 的 source 参数统一用分享链接。\n\n【对话原文】\n${dialog}`;
   const r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000 });
   if (!r.ok) {
-    dropSession(instance);
+    if (r.sessionGone) dropSession(instance);
     return { ok: false, message: r.message, fallback: true };
   }
-  return { ok: true, imported: 0, message: r.content };
+  const after = kbCountInstance(instance);
+  return { ok: true, imported: Math.max(after - before, 0), message: r.content };
 }
 
 /** 关闭某实例的会话并删注册表（本地数据管理清理用） */
