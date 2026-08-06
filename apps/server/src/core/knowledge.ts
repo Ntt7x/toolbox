@@ -8,15 +8,12 @@
 // 成本：提取/问答按需调 LLM；平时只读 KV 零成本。
 // ============================================================
 
-import { readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import { kvGet, kvSet, kvDelete, kvListRaw, kvCount } from "./kvStore.js";
 import { chat } from "./llm.js";
 import { getPromptTemplate } from "./prompts.js";
 import { robustJsonParse } from "./jsonParse.js";
 import { extractShare } from "./deepseekShare.js";
 import { registerDataSource } from "./dataRegistry.js";
-import { DATA_DIR } from "./db.js";
 import type { KnowledgeAskResult, KnowledgeEntry, KnowledgeErrorResult, KnowledgeImportResult } from "@toolbox/shared";
 
 // 数据源注册（本地数据管理可见；知识库为服务端公共数据）
@@ -25,7 +22,7 @@ registerDataSource({
   name: "knowledge:",
   page: "知识库",
   tag: "知识数据",
-  description: "知识库条目（SQLite KV 精确存储；Reasonix Agent 经 /k/ 虚拟路径读写，服务端精细控制）",
+  description: "知识库条目（SQLite KV 精确存储；Chat 链接导入内化 + 检索问答）",
 });
 
 /** KV 前缀（数据源注册名） */
@@ -43,8 +40,6 @@ export function setInstanceLimit(v: number): void {
 const KB_SCAN_LIMIT = 5000;
 
 /** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
-export const KB_ROOT_DIR = join(DATA_DIR, "k");
-
 /** key 规范：分层点分隔（project.module.attribute）；仅字母数字._-；禁连续点/边界点（防 ../ 语义与脏 key） */
 const KEY_RE = /^(?!\.)(?!.*\.\.)(?!.*\.$)[a-zA-Z0-9._-]{1,120}$/;
 
@@ -205,84 +200,6 @@ export function kbSetMany(items: { key: string; value: string; source?: string }
 /** 知识总数（供数据源展示；kvCount 直接 SQL COUNT，不解析 value） */
 export function kbCount(): number {
   return kvCount(KB_PREFIX);
-}
-
-// ---------- 知识库 ↔ 真实目录同步（Reasonix ACP 适配） ----------
-// Agent（Reasonix）通过标准 read_file/write_file 访问 /k/{key}，解析为 KB_ROOT_DIR/{key}；
-// Host 在会话前后把知识库同步为目录文件（读路径）并把目录变化写回知识库（写路径）。
-// 目录位于项目根 /.file/k（git 隔离），由服务端（ACP Host）精细控制。
-
-/** 全量同步：知识库 → KB_ROOT_DIR/（文件内容 = value 纯文本；陈旧文件删除）；返回写入数 */
-export function kbSyncToDir(): number {
-  const kDir = KB_ROOT_DIR;
-  try {
-    mkdirSync(kDir, { recursive: true });
-  } catch {
-    return 0;
-  }
-  let written = 0;
-  const entries = kbList({ limit: KB_SCAN_LIMIT });
-  const desired = new Set<string>();
-  for (const e of entries) {
-    const f = join(kDir, e.key);
-    desired.add(e.key);
-    try {
-      if (!existsSync(f) || readFileSync(f, "utf8") !== e.value) {
-        writeFileSync(f, e.value, "utf8");
-        written++;
-      }
-    } catch {
-      // 单文件失败跳过
-    }
-  }
-  // 清理知识库中已不存在的陈旧文件
-  try {
-    for (const f of readdirSync(kDir)) {
-      if (!desired.has(f)) {
-        try {
-          unlinkSync(join(kDir, f));
-        } catch {
-          // 忽略
-        }
-      }
-    }
-  } catch {
-    // 目录不存在则跳过
-  }
-  return written;
-}
-
-/** 写回同步：KB_ROOT_DIR/ 变化 → 知识库（新增/变更 kbSet，删除 kbDelete）；返回变更数 */
-export function kbSyncFromDir(): number {
-  const kDir = KB_ROOT_DIR;
-  if (!existsSync(kDir)) return 0;
-  let changed = 0;
-  const seen = new Set<string>();
-  for (const f of readdirSync(kDir)) {
-    // key 规范校验（防目录穿越/非法 key 写入 KV；与 assertValidKey 同规则）
-    if (!KEY_RE.test(f)) continue;
-    seen.add(f);
-    const filePath = join(kDir, f);
-    let content: string;
-    try {
-      content = readFileSync(filePath, "utf8");
-    } catch {
-      continue;
-    }
-    const current = kbGet(f);
-    if (!current || current.value !== content) {
-      kbSet(f, content, "agent-write");
-      changed++;
-    }
-  }
-  // Agent 删除的文件 → 知识库同步删除
-  for (const e of kbList({ limit: KB_SCAN_LIMIT })) {
-    if (!seen.has(e.key)) {
-      kbDelete(e.key);
-      changed++;
-    }
-  }
-  return changed;
 }
 
 /**

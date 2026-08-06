@@ -19,13 +19,12 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, watch, type FSWatcher } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
 import { DATA_DIR } from "./db.js";
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
-import { kbSyncFromDir, kbSyncToDir, KB_ROOT_DIR } from "./knowledge.js";
 
 const require_ = createRequire(import.meta.url);
 
@@ -92,47 +91,7 @@ interface ReasonixUsageShape {
 
 let acp: AcpClient | null = null;
 
-// ---------- 知识库目录 watcher（Reasonix ACP 适配） ----------
-// Agent 通过 read_file/write_file 访问 /k/{key}（物理映射 cwd/k/）；
-// 会话写 /k/ 后由 watcher 防抖写回知识库 KV。
-
-let kbWatcher: FSWatcher | null = null;
-let kbWatcherTimer: NodeJS.Timeout | null = null;
-let kbWatcherCwd = "";
-
-function ensureKbWatcher(): void {
-  if (kbWatcher && kbWatcherCwd === KB_ROOT_DIR) return;
-  try {
-    kbWatcher?.close();
-    kbWatcher = null;
-    kbWatcher = watch(KB_ROOT_DIR, () => {
-      // 防抖 1s：批量写回（kbSyncFromDir 内部按内容比对，幂等）
-      if (kbWatcherTimer) clearTimeout(kbWatcherTimer);
-      kbWatcherTimer = setTimeout(() => {
-        try {
-          kbSyncFromDir();
-        } catch {
-          // 写回失败静默（下次事件重试）
-        }
-      }, 1000);
-    });
-    kbWatcherCwd = KB_ROOT_DIR;
-  } catch {
-    // 目录不存在等：忽略（read_file 会失败，写回同步由 ask/close 兜底）
-  }
-}
-
-/** 关闭知识库 watcher（服务端退出/测试清理用） */
-export function closeKbWatcher(): void {
-  try {
-    kbWatcher?.close();
-  } catch {
-    // 忽略
-  }
-  kbWatcher = null;
-  if (kbWatcherTimer) clearTimeout(kbWatcherTimer);
-  kbWatcherTimer = null;
-}
+// ---------- ACP 启动与消息处理 ----------
 
 function startAcp(): AcpClient {
   const bin = resolveBinary();
@@ -332,8 +291,8 @@ function saveReg(r: ReasonixSessionReg): void {
 }
 
 /** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复）
- * 默认 cwd = 数据目录 /.file（git 隔离）：Agent 的 /k/{key} 即知识库目录，
- * 文件访问天然限制在 .file 内，服务端经 watcher 精细控制。 */
+ * 默认 cwd = 数据目录 /.file（git 隔离）：Agent 文件资源集中在 .file 内，
+ * 与本地数据（SQLite KV）同区，便于资源统一管理。 */
 export async function createReasonixSession(opts: { cwd?: string; module?: string } = {}): Promise<{ ok: boolean; id?: string; message?: string }> {
   try {
     const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: {} }, 15000);
@@ -371,21 +330,10 @@ export async function createReasonixSession(opts: { cwd?: string; module?: strin
 export async function reasonixAsk(
   regId: string,
   text: string,
-  opts: { timeoutMs?: number; knowledge?: boolean } = {},
+  opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
-  const cwd = reg.cwd ?? process.cwd();
-
-  // 知识库适配：prompt 前把知识库同步为 /.file/k/（Agent 可 read_file 访问 /k/{key}），并启动目录 watcher
-  if (opts.knowledge) {
-    try {
-      kbSyncToDir();
-      ensureKbWatcher();
-    } catch {
-      // 同步失败不阻断主流程
-    }
-  }
 
   const doAsk = async (sid: string): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> => {
     let client: AcpClient;
@@ -435,14 +383,6 @@ export async function reasonixAsk(
   if (!r.ok && r.sessionGone) {
     const resume = await rpc("session/resume", { sessionId: reg.reasonixSessionId }, 15000).catch(() => ({ error: { message: "resume failed" } }));
     if (!resume.error) r = await doAsk(reg.reasonixSessionId);
-  }
-  // 知识库适配：prompt 后把目录变化写回知识库（Agent 若写了 /k/ 新条目或删除）
-  if (opts.knowledge) {
-    try {
-      kbSyncFromDir();
-    } catch {
-      // 写回失败静默
-    }
   }
   if (r.ok) {
     reg.lastAt = Date.now();
