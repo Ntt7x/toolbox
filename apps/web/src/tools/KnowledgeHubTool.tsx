@@ -70,6 +70,9 @@ export default function KnowledgeHubTool() {
   const [askRouted, setAskRouted] = useState("");
   const [importUrl, setImportUrl] = useState("");
   const [importMsg, setImportMsg] = useState("");
+  const [importResults, setImportResults] = useState<import("@toolbox/shared").KnowledgeImportRecordItem[]>([]);
+  const [importDistribution, setImportDistribution] = useState<Record<string, number> | null>(null);
+  const [importHistory, setImportHistory] = useState<import("@toolbox/shared").KnowledgeImportRecord[]>([]);
   const [busy, setBusy] = useState(false);
   // 领域配置状态
   const [tplAsk, setTplAsk] = useState("");
@@ -182,6 +185,7 @@ export default function KnowledgeHubTool() {
 
   useEffect(() => {
     if (detail && tab === "data") void loadEntries();
+    if (detail && tab === "import") void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, tab, entryOffset]);
 
@@ -210,24 +214,50 @@ export default function KnowledgeHubTool() {
     }
   };
 
-  // ---------- 导入 ----------
+  // ---------- 导入（批量：每行一条链接） ----------
   const doImport = async () => {
-    if (!detail || !importUrl.trim()) return;
+    if (!detail) return;
+    const urls = importUrl.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 20);
+    if (urls.length === 0) return setImportMsg("❌ 请至少输入一条 Chat 分享链接");
     setBusy(true);
     setImportMsg("");
+    setImportResults([]);
+    setImportDistribution(null);
     try {
       const r = detail.type === "virt"
-        ? await api.knowledgeHubImportVirt(detail.name, importUrl.trim())
-        : await api.knowledgeHubImportDomain(detail.name, importUrl.trim());
+        ? await api.knowledgeHubImportBatchVirt(detail.name, urls)
+        : await api.knowledgeHubImportBatchDomain(detail.name, urls);
       if (r.ok) {
-        const extra = detail.type === "virt" ? "（已自动分发到最匹配领域）" : "";
-        setImportMsg(`✅ 导入 ${r.imported} 条${extra}${r.skipped ? `（跳过 ${r.skipped}）` : ""}${r.conflicts ? `（冲突 ${r.conflicts}）` : ""}`);
+        setImportResults(r.items);
+        setImportDistribution((r as { distribution?: Record<string, number> }).distribution ?? null);
+        const fail = r.items.filter((i) => !i.ok).length;
+        setImportMsg(`✅ 批量导入完成：共导入 ${r.totalImported} 条（${r.items.length} 链接，${fail ? `${fail} 失败` : "全部成功"}）`);
+        await loadHistory();
         if (tab === "data") void loadEntries();
       } else setImportMsg(`❌ ${(r as { message?: string }).message ?? "导入失败"}`);
     } catch (e) {
       setImportMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await api.knowledgeHubImportHistory();
+      setImportHistory(r.items);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const clearHistory = async () => {
+    if (!confirm("清空全部导入历史记录？")) return;
+    try {
+      await api.knowledgeHubClearImportHistory();
+      setImportHistory([]);
+    } catch (e) {
+      setImportMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -419,13 +449,78 @@ export default function KnowledgeHubTool() {
         {tab === "import" && (
           <div style={card}>
             <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.6rem" }}>
-              {detail.type === "virt" ? "导入内容将自动分发到最匹配的子领域（按领域关键词匹配，无匹配归 other）。" : "导入内容直接写入本领域库。"}
+              {detail.type === "virt" ? "批量粘贴 Chat 分享链接（每行一条），导入内容将自动分发到最匹配的子领域（按领域关键词匹配，无匹配归 other）。" : "批量粘贴 Chat 分享链接（每行一条），导入内容直接写入本领域库。"}
             </div>
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input style={input} placeholder="Chat 分享链接（导入此知识库）…" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doImport(); }} />
-              <button style={btn} onClick={() => void doImport()} disabled={busy}>📥 导入</button>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+              <textarea
+                style={{ ...input, minHeight: 72, resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }}
+                placeholder={"https://chat.deepseek.com/share/xxxx\nhttps://chat.deepseek.com/share/yyyy\n（每行一条，最多 20 条）"}
+                value={importUrl}
+                onChange={(e) => setImportUrl(e.target.value)}
+              />
+              <button style={btn} onClick={() => void doImport()} disabled={busy}>
+                {busy ? "⏳ 导入中…" : `📥 批量导入（${importUrl.split("\n").map((s) => s.trim()).filter(Boolean).length} 条）`}
+              </button>
             </div>
             {importMsg && <div style={{ color: "#0e7490", marginTop: "0.5rem", fontSize: "0.85rem" }}>{importMsg}</div>}
+            {/* 逐条结果 */}
+            {importResults.length > 0 && (
+              <div style={{ marginTop: "0.8rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.7rem" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.88rem", marginBottom: "0.5rem" }}>
+                  导入结果（{importResults.filter((r) => r.ok).length} 成功 / {importResults.filter((r) => !r.ok).length} 失败，共 {importResults.reduce((s, r) => s + r.imported, 0)} 条）
+                  {importDistribution && Object.keys(importDistribution).length > 0 && (
+                    <span style={{ marginLeft: "0.6rem", fontWeight: 400 }}>
+                      分发：
+                      {Object.entries(importDistribution).map(([k, v]) => (
+                        <span key={k} style={{ ...chip, marginLeft: "0.3rem", background: "#ecfdf5", borderColor: "#a7f3d0", fontSize: "0.76rem", padding: "0.1rem 0.55rem" }}>{k} → {v}</span>
+                      ))}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "grid", gap: "0.4rem" }}>
+                  {importResults.map((r, idx) => (
+                    <div key={idx} style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", border: `1px solid ${r.ok ? "#bbf7d0" : "#fecaca"}`, borderRadius: 8, padding: "0.45rem 0.7rem", background: r.ok ? "#f0fdf4" : "#fef2f2" }}>
+                      <span style={{ fontSize: "0.85rem" }}>{r.ok ? "✅" : "❌"}</span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: "0.75rem", color: "#64748b", wordBreak: "break-all" }}>{r.url}</div>
+                        {r.title && <div style={{ fontSize: "0.8rem", color: "#334155" }}>「{r.title.slice(0, 50)}」</div>}
+                        {r.ok ? (
+                          <div style={{ fontSize: "0.78rem", color: "#15803d" }}>导入 {r.imported} 条{r.skipped ? ` · 跳过 ${r.skipped}` : ""}{r.conflicts ? ` · 冲突 ${r.conflicts}` : ""}</div>
+                        ) : (
+                          <div style={{ fontSize: "0.78rem", color: "#b91c1c" }}>{r.message}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* 历史导入记录 */}
+            <details style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.7rem" }}>
+              <summary style={{ cursor: "pointer", fontSize: "0.83rem", color: "#475569", fontWeight: 600 }}>
+                🕘 历史导入记录（{importHistory.length} 条）
+              </summary>
+              <div style={{ marginTop: "0.6rem" }}>
+                {importHistory.length > 0 && (
+                  <button style={{ ...btn, background: "#ef4444", fontSize: "0.75rem", padding: "0.3rem 0.7rem", marginBottom: "0.5rem" }} onClick={() => void clearHistory()}>🗑️ 清空历史</button>
+                )}
+                {importHistory.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>（暂无导入记录）</div>}
+                <div style={{ display: "grid", gap: "0.4rem" }}>
+                  {importHistory.map((h, idx) => (
+                    <div key={idx} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.5rem 0.7rem" }}>
+                      <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", fontSize: "0.8rem" }}>
+                        <span style={{ fontWeight: 600 }}>{h.targetType === "virt" ? "🧩" : "🏷️"} {h.target}</span>
+                        <span style={{ color: "#64748b" }}>{new Date(h.time).toLocaleString()}</span>
+                        <span style={{ color: "#15803d" }}>导入 {h.totalImported} 条（{h.items.length} 链接：{h.items.filter((i) => i.ok).length} 成功 / {h.items.filter((i) => !i.ok).length} 失败）</span>
+                        {h.distribution && Object.keys(h.distribution).length > 0 && (
+                          <span style={{ color: "#64748b" }}>分发：{Object.entries(h.distribution).map(([k, v]) => `${k}→${v}`).join("、")}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </details>
           </div>
         )}
 

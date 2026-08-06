@@ -1491,6 +1491,26 @@ export interface KnowledgeHubOverview {
   virst: VirtualKb[];
 }
 
+// ---------- 知识库导入历史 ----------
+export interface KnowledgeImportRecordItem {
+  url: string;
+  ok: boolean;
+  imported: number;
+  skipped?: number;
+  conflicts?: number;
+  title?: string;
+  message?: string;
+}
+
+export interface KnowledgeImportRecord {
+  time: number;
+  target: string;
+  targetType: "domain" | "virt";
+  items: KnowledgeImportRecordItem[];
+  totalImported: number;
+  distribution?: Record<string, number>;
+}
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
 

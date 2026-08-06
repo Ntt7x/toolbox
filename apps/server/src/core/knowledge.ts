@@ -379,6 +379,7 @@ export async function kbImportFromChat(
   let imported = 0;
   let skipped = 0;
   let conflicts = 0;
+  const importedFacts: { key: string; value: string; source?: string }[] = [];
   for (const it of instFacts) {
     try {
       if (existingKeys.has(it.key)) {
@@ -395,6 +396,7 @@ export async function kbImportFromChat(
         }
         imported++;
         conflicts++;
+        importedFacts.push(it);
         continue;
       }
       // 内容去重（value 与实例内已有条目一致）
@@ -406,10 +408,11 @@ export async function kbImportFromChat(
       existingKeys.add(it.key);
       existingValues.add(it.value.trim());
       imported++;
+      importedFacts.push(it);
     } catch {
       // 单条 key 非法跳过（不影响整体）
       skipped++;
     }
   }
-  return { ok: true, imported, skipped, conflicts, strategy, facts: instFacts, title: extracted.title, shareId: extracted.shareId };
+  return { ok: true, imported, skipped, conflicts, strategy, facts: importedFacts, title: extracted.title, shareId: extracted.shareId };
 }

@@ -21,6 +21,10 @@ import {
   seedMedicalTemplates,
   askVirtKb,
   importToVirtKb,
+  importBatchToDomain,
+  importBatchToVirt,
+  listImportHistory,
+  clearImportHistory,
 } from "../../core/knowledgeHub.js";
 import { kbListInstances, kbAsk, kbImportFromChat, kbDelete, kbList } from "../../core/knowledge.js";
 
@@ -143,6 +147,31 @@ export function register(app: Hono): void {
     } catch (e) {
       return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, 400);
     }
+  });
+
+  // 领域库批量导入（多条链接，逐条结果 + 历史）
+  route.post("/domain/:name/import-batch", async (c: Context) => {
+    const body = await c.req.json().catch(() => ({}));
+    const urls = (Array.isArray(body.urls) ? body.urls.map((u: unknown) => String(u).trim()).filter(Boolean) : []).slice(0, 20);
+    if (urls.length === 0) return c.json({ ok: false, message: "请输入至少一条 Chat 分享链接" }, 400);
+    const r = await importBatchToDomain(c.req.param("name") ?? "", urls);
+    return c.json(r);
+  });
+
+  // 虚拟库批量导入（自动匹配领域，逐条结果 + 分发统计 + 历史）
+  route.post("/virt/:name/import-batch", async (c: Context) => {
+    const body = await c.req.json().catch(() => ({}));
+    const urls = (Array.isArray(body.urls) ? body.urls.map((u: unknown) => String(u).trim()).filter(Boolean) : []).slice(0, 20);
+    if (urls.length === 0) return c.json({ ok: false, message: "请输入至少一条 Chat 分享链接" }, 400);
+    const r = await importBatchToVirt(c.req.param("name") ?? "", urls);
+    return c.json(r);
+  });
+
+  // 导入历史（全部库，最新在前）
+  route.get("/import-history", (c: Context) => c.json({ ok: true, items: listImportHistory() }));
+  route.delete("/import-history", (c: Context) => {
+    clearImportHistory();
+    return c.json({ ok: true, cleared: true });
   });
 
   // 新建领域知识库（显式建库；空库也可先建后导入；可选 LLM 自动生成领域模板）

@@ -314,4 +314,10 @@ export const api = {
     request<{ ok: boolean; message?: string; deleted?: number }>(`/tools/knowledge-hub/domain/${encodeURIComponent(domain)}/entry/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
   knowledgeHubImportDomain: (name: string, url: string) =>
     request<import("@toolbox/shared").KnowledgeImportResult>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/import`, jsonInit("POST", { url })),
+  knowledgeHubImportBatchDomain: (name: string, urls: string[]) =>
+    request<{ ok: boolean; items: import("@toolbox/shared").KnowledgeImportRecordItem[]; totalImported: number; message?: string }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/import-batch`, jsonInit("POST", { urls })),
+  knowledgeHubImportBatchVirt: (name: string, urls: string[]) =>
+    request<{ ok: boolean; items: import("@toolbox/shared").KnowledgeImportRecordItem[]; totalImported: number; distribution?: Record<string, number>; message?: string }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/import-batch`, jsonInit("POST", { urls })),
+  knowledgeHubImportHistory: () => request<{ ok: boolean; items: import("@toolbox/shared").KnowledgeImportRecord[] }>("/tools/knowledge-hub/import-history"),
+  knowledgeHubClearImportHistory: () => request<{ ok: boolean }>("/tools/knowledge-hub/import-history", jsonInit("DELETE", {})),
 };

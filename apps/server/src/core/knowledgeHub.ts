@@ -247,3 +247,101 @@ export async function importToVirtKb(
     module: opts.module ?? "knowledge-hub.import",
   });
 }
+
+// ---------- 批量导入 + 历史记录 ----------
+export interface ImportRecordItem {
+  url: string;
+  ok: boolean;
+  imported: number;
+  skipped?: number;
+  conflicts?: number;
+  title?: string;
+  message?: string;
+}
+
+export interface ImportRecord {
+  time: number;
+  target: string; // 知识库名
+  targetType: "domain" | "virt";
+  items: ImportRecordItem[];
+  totalImported: number;
+  /** 虚拟库分发统计：领域 → 条数（从 facts key 首段聚合） */
+  distribution?: Record<string, number>;
+}
+
+const IMPORT_HISTORY_KEY = "kbImport:history";
+const IMPORT_HISTORY_LIMIT = 50;
+
+function distributionOf(result: KnowledgeImportResult): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (const f of result.facts ?? []) {
+    const seg = f.key.split(".")[0] || "other";
+    dist[seg] = (dist[seg] ?? 0) + 1;
+  }
+  return dist;
+}
+
+function readImportHistory(): ImportRecord[] {
+  const raw = kvGet<ImportRecord[]>(IMPORT_HISTORY_KEY);
+  return Array.isArray(raw) ? raw : [];
+}
+
+function pushImportHistory(rec: ImportRecord): void {
+  const list = [rec, ...readImportHistory()].slice(0, IMPORT_HISTORY_LIMIT);
+  kvSet(IMPORT_HISTORY_KEY, list);
+}
+
+export function listImportHistory(): ImportRecord[] {
+  return readImportHistory();
+}
+
+export function clearImportHistory(): void {
+  kvDelete(IMPORT_HISTORY_KEY);
+}
+
+/** 批量导入领域库：逐条导入并聚合逐条结果 + 写历史 */
+export async function importBatchToDomain(
+  name: string,
+  urls: string[],
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ ok: boolean; items: ImportRecordItem[]; totalImported: number; message?: string }> {
+  const items: ImportRecordItem[] = [];
+  let totalImported = 0;
+  for (const url of urls) {
+    if (opts.signal?.aborted) break;
+    try {
+      const r = await kbImportFromChat(url, { instance: name, module: "knowledge-hub.import" });
+      items.push({ url, ok: true, imported: r.imported, skipped: r.skipped, conflicts: r.conflicts, title: r.title });
+      totalImported += r.imported;
+    } catch (e) {
+      items.push({ url, ok: false, imported: 0, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  pushImportHistory({ time: Date.now(), target: name, targetType: "domain", items, totalImported });
+  return { ok: true, items, totalImported };
+}
+
+/** 批量导入虚拟库：逐条导入（自动匹配领域）并聚合逐条结果 + 分发统计 + 写历史 */
+export async function importBatchToVirt(
+  name: string,
+  urls: string[],
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ ok: boolean; items: ImportRecordItem[]; totalImported: number; distribution?: Record<string, number>; message?: string }> {
+  const items: ImportRecordItem[] = [];
+  let totalImported = 0;
+  const distribution: Record<string, number> = {};
+  for (const url of urls) {
+    if (opts.signal?.aborted) break;
+    try {
+      const r = await importToVirtKb(name, url);
+      items.push({ url, ok: true, imported: r.imported, skipped: r.skipped, conflicts: r.conflicts, title: r.title });
+      totalImported += r.imported;
+      const d = distributionOf(r);
+      for (const [k, v] of Object.entries(d)) distribution[k] = (distribution[k] ?? 0) + v;
+    } catch (e) {
+      items.push({ url, ok: false, imported: 0, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  pushImportHistory({ time: Date.now(), target: name, targetType: "virt", items, totalImported, distribution });
+  return { ok: true, items, totalImported, distribution };
+}
