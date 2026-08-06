@@ -81,18 +81,8 @@ interface MenuEntry {
   icon: string;
 }
 
-/** 侧边栏菜单项样式（active 高亮） */
-const menuItemStyle = (isActive: boolean): CSSProperties => ({
-  display: "block",
-  padding: "0.55rem 0.9rem",
-  margin: "0.15rem 0",
-  borderRadius: 8,
-  color: isActive ? "#fff" : "#c7cdd6",
-  background: isActive ? "#3b82f6" : "transparent",
-  textDecoration: "none",
-  fontSize: "0.925rem",
-  transition: "background 0.15s, color 0.15s",
-});
+/** 侧边栏菜单项（使用全局 .menu-item 类 + active 状态类） */
+const menuItemClassName = (isActive: boolean): string => `menu-item${isActive ? " active" : ""}`;
 
 const editBtn: CSSProperties = {
   width: "100%",
@@ -254,18 +244,22 @@ export default function App() {
         {/* 左侧菜单栏 */}
         <aside
           style={{
-            width: 220,
+            width: 232,
             flexShrink: 0,
-            background: "#1e293b",
+            background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
             display: "flex",
             flexDirection: "column",
+            position: "sticky",
+            top: 0,
+            height: "100vh",
+            overflowY: "auto",
           }}
         >
-          <div style={{ padding: "1.1rem 1.25rem", color: "#fff", fontWeight: 700, fontSize: "1.05rem" }}>
-            🛠️ Toolbox
+          <div style={{ padding: "1.2rem 1.3rem 0.8rem", color: "#fff", fontWeight: 800, fontSize: "1.1rem", letterSpacing: "0.01em", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontSize: "1.25rem" }}>🛠️</span> Toolbox
           </div>
-          <nav style={{ padding: "0.25rem 0.5rem 1rem" }}>
-            <NavLink to="/" end style={({ isActive }) => menuItemStyle(isActive)}>
+          <nav style={{ padding: "0.25rem 0.4rem 1.2rem" }}>
+            <NavLink to="/" end className={({ isActive }) => menuItemClassName(isActive)}>
               📊 工作台
             </NavLink>
 
@@ -346,7 +340,7 @@ export default function App() {
                           <span style={{ color: "#64748b", fontSize: "0.65rem" }}>{idx + 1}</span>
                         </div>
                       ) : (
-                        <NavLink key={it.key} to={it.path} style={({ isActive }) => menuItemStyle(isActive)}>
+                        <NavLink key={it.key} to={it.path} className={({ isActive }) => menuItemClassName(isActive)}>
                           {it.icon} {it.name}
                         </NavLink>
                       ),
@@ -358,19 +352,21 @@ export default function App() {
         </aside>
 
         {/* 右侧内容区 */}
-        <main style={{ flex: 1, minWidth: 0, padding: "1.5rem 2rem", background: "#f5f6f8" }}>
-          <Routes>
-            <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
-            <Route path="/settings/llm" element={<LlmSettings />} />
-            <Route path="/settings/agent-sessions" element={<AgentSessions />} />
-            <Route path="/settings/arch-graph" element={<ArchGraph />} />
-            <Route path="/settings/local-data" element={<LocalData />} />
-            <Route path="/settings/memo" element={<MemoTool />} />
-            {tools.map((t) => (
-              <Route key={t.id} path={t.path} element={<ToolPage t={t} />} />
-            ))}
-            <Route path="*" element={<ToolPlaceholder tool={null} />} />
-          </Routes>
+        <main style={{ flex: 1, minWidth: 0, padding: "1.75rem 2.25rem", background: "linear-gradient(180deg, #fafbfc 0%, var(--bg) 100%)" }}>
+          <div className="fade-in" style={{ maxWidth: 1280, margin: "0 auto" }}>
+            <Routes>
+              <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
+              <Route path="/settings/llm" element={<LlmSettings />} />
+              <Route path="/settings/agent-sessions" element={<AgentSessions />} />
+              <Route path="/settings/arch-graph" element={<ArchGraph />} />
+              <Route path="/settings/local-data" element={<LocalData />} />
+              <Route path="/settings/memo" element={<MemoTool />} />
+              {tools.map((t) => (
+                <Route key={t.id} path={t.path} element={<ToolPage t={t} />} />
+              ))}
+              <Route path="*" element={<ToolPlaceholder tool={null} />} />
+            </Routes>
+          </div>
         </main>
       </div>
     </BrowserRouter>

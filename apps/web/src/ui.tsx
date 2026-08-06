@@ -5,21 +5,22 @@
 
 import type { CSSProperties, ReactNode } from "react";
 
-/** 白色圆角卡片容器（页面主要区块） */
+/** 白色圆角卡片容器（页面主要区块；使用全局设计体系阴影/圆角） */
 export const card: CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e2e8f0",
-  borderRadius: 12,
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius)",
   padding: "1.25rem 1.5rem",
   marginBottom: "1rem",
+  boxShadow: "var(--shadow)",
 };
 
 /** 页面标题 + 描述（灰色小字） */
 export function PageHeader({ title, desc }: { title: ReactNode; desc?: ReactNode }) {
   return (
     <>
-      <h1 style={{ marginTop: 0 }}>{title}</h1>
-      {desc !== undefined && desc !== null && <p style={{ color: "#666", marginTop: "-0.4rem" }}>{desc}</p>}
+      <h1 className="page-title">{title}</h1>
+      {desc !== undefined && desc !== null && <p className="page-desc">{desc}</p>}
     </>
   );
 }
