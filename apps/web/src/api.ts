@@ -295,4 +295,20 @@ export const api = {
   zhihuFavoriteAdd: (target: string, name?: string) =>
     request<{ ok: boolean; favorites: import("@toolbox/shared").ZhihuFavoriteEntry[] }>("/tools/zhihu-crawler/favorites", jsonInit("PUT", { target, name })),
   zhihuFavoriteDelete: (token: string) => request<{ ok: boolean; favorites: import("@toolbox/shared").ZhihuFavoriteEntry[] }>(`/tools/zhihu-crawler/favorites/${encodeURIComponent(token)}`, jsonInit("DELETE", {})),
+
+  // ---------- 知识库中心（虚拟知识库） ----------
+  knowledgeHubOverview: () => request<import("@toolbox/shared").KnowledgeHubOverview>("/tools/knowledge-hub/overview"),
+  knowledgeHubCreateVirt: (name: string, domains: string[], desc?: string) =>
+    request<{ ok: boolean; virt?: import("@toolbox/shared").VirtualKb; message?: string }>("/tools/knowledge-hub/virt", jsonInit("POST", { name, domains, desc })),
+  knowledgeHubDeleteVirt: (name: string) => request<{ ok: boolean }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}`, jsonInit("DELETE", {})),
+  knowledgeHubAskVirt: (name: string, question: string) =>
+    request<{ ok: boolean; answer?: string; message?: string }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/ask`, jsonInit("POST", { question })),
+  knowledgeHubImportVirt: (name: string, url: string) =>
+    request<import("@toolbox/shared").KnowledgeImportResult>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/import`, jsonInit("POST", { url })),
+  knowledgeHubSetDomain: (name: string, meta: { desc?: string; keywords?: string[] }) =>
+    request<{ ok: boolean; domain: import("@toolbox/shared").KnowledgeDomainMeta }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}`, jsonInit("PUT", meta)),
+  knowledgeHubAskDomain: (name: string, question: string) =>
+    request<{ ok: boolean; answer?: string; message?: string }>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/ask`, jsonInit("POST", { question })),
+  knowledgeHubImportDomain: (name: string, url: string) =>
+    request<import("@toolbox/shared").KnowledgeImportResult>(`/tools/knowledge-hub/domain/${encodeURIComponent(name)}/import`, jsonInit("POST", { url })),
 };

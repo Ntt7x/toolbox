@@ -237,13 +237,15 @@ export function kbListInstances(): KnowledgeInstanceInfo[] {
  */
 export async function kbAsk(
   question: string,
-  opts: { signal?: AbortSignal; topN?: number; instance?: string; module?: string } = {},
+  opts: { signal?: AbortSignal; topN?: number; instance?: string; instances?: string[]; module?: string } = {},
 ): Promise<KnowledgeAskResult | KnowledgeErrorResult> {
   const q = question.trim();
   if (!q) return { ok: false, message: "请输入问题" };
   const topN = Math.min(Math.max(opts.topN ?? 6, 1), 20);
-  // 实例限定检索（如 medical 实例 → 只搜 medical.* 前缀；缺省全库）
-  const prefix = opts.instance ? `${opts.instance}.` : undefined;
+  // 实例限定检索（如 medical 实例 → 只搜 medical.* 前缀；instances 数组 → 多领域聚合；缺省全库）
+  const prefixes = (opts.instances?.length ? opts.instances : opts.instance ? [opts.instance] : [])
+    .filter((i) => i)
+    .map((i) => `${i}.`);
 
   // 1) 检索：拆词（中英文/数字）→ 词集；中文长词补 2-gram 滑动片段（提升命中率）
   const rawTokens = q.toLowerCase().split(/[\s,，。.!！?？;；:：、/\\()（）[\]{}"']+/).filter((t) => t.length >= 2);
@@ -255,7 +257,7 @@ export async function kbAsk(
       for (let i = 0; i <= t.length - 2; i++) tokens.add(t.slice(i, i + 2));
     }
   }
-  const all = kbList({ prefix, limit: KB_SCAN_LIMIT });
+  const all = prefixes.length > 0 ? readAllEntries().filter((e) => prefixes.some((p) => e.key.startsWith(p))) : kbList({ limit: KB_SCAN_LIMIT });
   const scored: { e: KnowledgeEntry; score: number }[] = [];
   for (const e of all) {
     const keyL = e.key.toLowerCase();
@@ -294,9 +296,24 @@ export async function kbAsk(
  * 链路：extractShare（对话原文）→ LLM 提取 {key,value} 事实列表 → 批量写入。
  * 返回写入条数 + 提取结果；失败抛错（调用方兜底）。
  */
+/** 静态领域匹配（低成本；内容 → 领域库，关键词打分）；无关键词命中返回 null */
+export function matchDomain(text: string, domains: { name: string; keywords: string[] }[]): { domain: string; score: number } | null {
+  const t = text.toLowerCase();
+  let best: { domain: string; score: number } | null = null;
+  for (const d of domains) {
+    let s = 0;
+    for (const kw of d.keywords) {
+      const k = kw.toLowerCase();
+      if (k && t.includes(k)) s += 1;
+    }
+    if (!best || s > best.score) best = { domain: d.name, score: s };
+  }
+  return best && best.score > 0 ? best : null;
+}
+
 export async function kbImportFromChat(
   url: string,
-  opts: { signal?: AbortSignal; instance?: string; module?: string; conflict?: "skip" | "overwrite" | "merge" } = {},
+  opts: { signal?: AbortSignal; instance?: string; module?: string; conflict?: "skip" | "overwrite" | "merge"; matchDomains?: { name: string; keywords: string[] }[] } = {},
 ): Promise<KnowledgeImportResult> {
   const extracted = await extractShare(url);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
@@ -331,9 +348,17 @@ export async function kbImportFromChat(
     .filter((f) => f.key && f.value);
 
   const source = extracted.title && extracted.title !== "Shared Conversation" ? extracted.title : extracted.shareId;
-  // 实例前缀（如 medical 实例 → medical.<原始key>），实现特定业务知识库隔离
+  // 实例前缀（如 medical 实例 → medical.<原始key>），实现特定业务知识库隔离；
+  // matchDomains（虚拟库导入）→ 逐条静态匹配领域前缀，无匹配归 other
   const prefix = opts.instance ? `${opts.instance}.` : "";
-  const instFacts = facts.map((f) => ({ key: prefix + f.key, value: f.value, source: f.source ?? source }));
+  const instFacts = facts.map((f) => {
+    let k = prefix + f.key;
+    if (!opts.instance && opts.matchDomains?.length) {
+      const m = matchDomain(`${f.value} ${f.key}`, opts.matchDomains);
+      k = `${m?.domain ?? "other"}.${f.key}`;
+    }
+    return { key: k, value: f.value, source: f.source ?? source };
+  });
   // 去重 + 冲突检测/解决：key 已存在 → 冲突（按策略处理）；value 与实例内已有条目重复 → 跳过
   const strategy = opts.conflict ?? "skip";
   const existing = readAllEntries().filter((e) => e.key.startsWith(prefix));

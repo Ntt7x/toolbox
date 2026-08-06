@@ -1459,6 +1459,34 @@ export interface KnowledgeErrorResult {
   message: string;
 }
 
+// ---------- 知识库中心（虚拟知识库） ----------
+export interface KnowledgeInstanceInfo {
+  instance: string;
+  count: number;
+  updatedAt?: string;
+}
+
+export interface KnowledgeDomainMeta {
+  name: string;
+  desc: string;
+  keywords: string[];
+}
+
+export interface VirtualKb {
+  name: string;
+  domains: string[];
+  desc?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface KnowledgeHubOverview {
+  ok: true;
+  instances: (KnowledgeInstanceInfo & { meta?: KnowledgeDomainMeta | null })[];
+  domains: KnowledgeDomainMeta[];
+  virst: VirtualKb[];
+}
+
 /** API 统一前缀（前端 dev server 会代理到后端） */
 export const API_PREFIX = "/api";
 

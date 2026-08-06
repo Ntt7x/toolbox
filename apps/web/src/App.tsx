@@ -15,6 +15,7 @@ import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
 import RehabMedicalTool from "./tools/RehabMedicalTool";
+import KnowledgeHubTool from "./tools/KnowledgeHubTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
@@ -33,6 +34,7 @@ const toolPages: Record<string, ComponentType> = {
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
   "rehab-medical": RehabMedicalTool,
+  "knowledge-hub": KnowledgeHubTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页（ErrorBoundary 捕获运行时崩溃，显示错误而非白屏） */
@@ -58,8 +60,7 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
-  { label: "工具", toolIds: ["deepseek-share", "zhihu-crawler", "books"] },
-  { label: "知识库", toolIds: ["rehab-medical"] },
+  { label: "工具", toolIds: ["deepseek-share", "zhihu-crawler", "books", "knowledge-hub"] },
 ];
 
 /** 菜单顺序服务端设置 key（本地设置数据：settings:menu.order） */
