@@ -292,11 +292,13 @@ export function kbSyncFromDir(): number {
  */
 export async function kbAsk(
   question: string,
-  opts: { signal?: AbortSignal; topN?: number } = {},
+  opts: { signal?: AbortSignal; topN?: number; instance?: string } = {},
 ): Promise<KnowledgeAskResult | KnowledgeErrorResult> {
   const q = question.trim();
   if (!q) return { ok: false, message: "请输入问题" };
   const topN = Math.min(Math.max(opts.topN ?? 6, 1), 20);
+  // 实例限定检索（如 medical 实例 → 只搜 medical.* 前缀；缺省全库）
+  const prefix = opts.instance ? `${opts.instance}.` : undefined;
 
   // 1) 检索：拆词（中英文/数字）→ 词集；中文长词补 2-gram 滑动片段（提升命中率）
   const rawTokens = q.toLowerCase().split(/[\s,，。.!！?？;；:：、/\\()（）[\]{}"']+/).filter((t) => t.length >= 2);
@@ -308,7 +310,7 @@ export async function kbAsk(
       for (let i = 0; i <= t.length - 2; i++) tokens.add(t.slice(i, i + 2));
     }
   }
-  const all = kbList({ limit: KB_SCAN_LIMIT });
+  const all = kbList({ prefix, limit: KB_SCAN_LIMIT });
   const scored: { e: KnowledgeEntry; score: number }[] = [];
   for (const e of all) {
     const keyL = e.key.toLowerCase();
@@ -349,7 +351,7 @@ export async function kbAsk(
  */
 export async function kbImportFromChat(
   url: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; instance?: string } = {},
 ): Promise<KnowledgeImportResult> {
   const extracted = await extractShare(url);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
@@ -384,6 +386,9 @@ export async function kbImportFromChat(
     .filter((f) => f.key && f.value);
 
   const source = extracted.title && extracted.title !== "Shared Conversation" ? extracted.title : extracted.shareId;
-  const imported = kbSetMany(facts.map((f) => ({ key: f.key, value: f.value, source: f.source ?? source })));
-  return { ok: true, imported, facts, title: extracted.title, shareId: extracted.shareId };
+  // 实例前缀（如 medical 实例 → medical.<原始key>），实现特定业务知识库隔离
+  const prefix = opts.instance ? `${opts.instance}.` : "";
+  const instFacts = facts.map((f) => ({ key: prefix + f.key, value: f.value, source: f.source ?? source }));
+  const imported = kbSetMany(instFacts);
+  return { ok: true, imported, facts: instFacts, title: extracted.title, shareId: extracted.shareId };
 }

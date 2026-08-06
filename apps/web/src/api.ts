@@ -19,6 +19,9 @@
   type LlmBalanceResult,
   type TaskHistoryEntry,
   type TaskHistoryListResponse,
+  type KnowledgeAskResult,
+  type KnowledgeEntry,
+  type KnowledgeImportResult,
   type LlmUsageSummary,
   type LocalDataResult,
   type LocalDataUpdateRequest,
@@ -104,6 +107,11 @@ export const api = {
   rehabSave: (id: string, patch: RehabNoteUpdateRequest) =>
     request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   rehabReset: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}/reset`, jsonInit("POST", {})),
+  // 医学知识库（medical 实例，core/knowledge 业务落地）
+  medicalKbImport: (url: string) => request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { url })),
+  medicalKbList: () => request<{ ok: true; entries: KnowledgeEntry[]; total: number }>("/tools/medical-kb"),
+  medicalKbDelete: (key: string) => request<{ ok: true; deleted: number } | { ok: false; message: string }>(`/tools/medical-kb/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
+  medicalKbAsk: (question: string) => request<AsyncTaskResult<KnowledgeAskResult>>("/tools/medical-kb/ask", jsonInit("POST", { question })),
   /** 历史网格计划（列表/详情/删除） */
   gridPlanHistory: () => request<GridPlanHistoryListResult>("/tools/grid-plan/history"),
   gridPlanHistoryDetail: (id: string) => request<GridPlanHistoryDetailResult>(`/tools/grid-plan/history/${encodeURIComponent(id)}`),
@@ -190,6 +198,8 @@ export const api = {
   taskHistoryList: (module: string) => request<TaskHistoryListResponse>(`/tasks/history?module=${encodeURIComponent(module)}`),
   taskHistoryEntry: (taskId: string) =>
     request<{ ok: true; entry: TaskHistoryEntry } | { ok: false; message: string }>(`/tasks/history/${encodeURIComponent(taskId)}`),
+  // 任务实时状态（轮询兜底；SSE 优先）
+  taskStatus: <T = unknown>(taskId: string) => request<AsyncTaskResult<T>>(`/tasks/${encodeURIComponent(taskId)}`),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
   localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) => {

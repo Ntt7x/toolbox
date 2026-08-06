@@ -9,6 +9,8 @@ import { Hono } from "hono";
 import { API_PREFIX, type ToolMeta } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getNote, isKnownNote, PREFIX, resetNote, saveNote } from "./store.js";
+import { createTask } from "../../core/tasks.js";
+import { kbAsk, kbDelete, kbImportFromChat, kbList } from "../../core/knowledge.js";
 
 // 注册数据源：康复笔记（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -18,11 +20,19 @@ registerDataSource({
   tag: "个人笔记",
   description: "康复经验笔记（rehab:medical 医疗经验 / rehab:muscle 肌肉训练），可编辑",
 });
+// 注册数据源：医学知识库（medical 实例，知识库公共模块业务落地）
+registerDataSource({
+  kind: "kv",
+  name: "medical.",
+  page: "医学知识库",
+  tag: "知识数据",
+  description: "医学知识库（medical 实例）：Chat 分享链接导入 + 知识问答（基于 core/knowledge 公共模块）",
+});
 
 export const meta: ToolMeta = {
   id: "rehab-medical",
-  name: "医疗经验",
-  description: "后新冠时期感冒治疗方案 + SIBO 方案（个人经验笔记，可编辑）",
+  name: "医学知识库",
+  description: "医学知识库：Chat 分享链接导入知识 + 知识问答（medical 实例，基于 core/knowledge）",
   path: "/tools/rehab-medical",
 };
 
@@ -62,5 +72,56 @@ export function register(app: Hono): void {
     const note = resetNote(id);
     if (!note) return c.json({ ok: false, message: "重置失败" }, 400);
     return c.json({ ok: true, note });
+  });
+}
+
+// ============================================================
+// 医学知识库（medical 实例，基于 core/knowledge 公共模块）
+// - Chat 分享链接导入（LLM 提取事实 → medical.* 实例）
+// - 知识列表/删除
+// - 知识问答（限定 medical 实例检索）
+// ============================================================
+export const MEDICAL_INSTANCE = "medical";
+
+export function registerMedicalKb(app: Hono): void {
+  // 导入：POST /api/tools/medical-kb/import { url } —— 后台任务
+  app.post(`${API_PREFIX}/tools/medical-kb/import`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+    const url = typeof raw?.url === "string" ? raw.url.trim() : "";
+    if (!url) return c.json({ ok: false, message: "缺少分享链接 url" }, 400);
+    const { taskId } = createTask(async (signal) => kbImportFromChat(url, { signal, instance: MEDICAL_INSTANCE }), {
+      timeoutMs: 5 * 60 * 1000,
+      module: "medical-kb.import",
+      name: `医学知识导入 · ${new Date().toISOString().slice(0, 10)}`,
+    });
+    return c.json({ ok: true, taskId, status: "running" }, 202);
+  });
+
+  // 列表：GET /api/tools/medical-kb（medical 实例内，新的在前）
+  app.get(`${API_PREFIX}/tools/medical-kb`, (c) => {
+    const entries = kbList({ prefix: `${MEDICAL_INSTANCE}.`, limit: 500 });
+    return c.json({ ok: true, entries, total: entries.length });
+  });
+
+  // 删除：DELETE /api/tools/medical-kb/:key（key 必须属于 medical 实例）
+  app.delete(`${API_PREFIX}/tools/medical-kb/:key`, (c) => {
+    const key = c.req.param("key");
+    if (!key.startsWith(`${MEDICAL_INSTANCE}.`)) return c.json({ ok: false, message: "key 不属于医学知识库" }, 400);
+    const ok = kbDelete(key);
+    if (!ok) return c.json({ ok: false, message: "知识条目不存在" }, 404);
+    return c.json({ ok: true, deleted: 1 });
+  });
+
+  // 问答：POST /api/tools/medical-kb/ask { question } —— 后台任务
+  app.post(`${API_PREFIX}/tools/medical-kb/ask`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { question?: unknown } | null;
+    const question = typeof raw?.question === "string" ? raw.question.trim() : "";
+    if (!question) return c.json({ ok: false, message: "缺少问题 question" }, 400);
+    const { taskId } = createTask(async (signal) => kbAsk(question, { signal, instance: MEDICAL_INSTANCE }), {
+      timeoutMs: 5 * 60 * 1000,
+      module: "medical-kb.ask",
+      name: `医学知识问答 · ${question.slice(0, 24)}`,
+    });
+    return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 }

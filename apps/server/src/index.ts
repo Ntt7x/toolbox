@@ -78,6 +78,7 @@ reverseRepoFeature.register(app);
 watchlistFeature.register(app);
 kellyFeature.register(app);
 rehabFeature.register(app);
+rehabFeature.registerMedicalKb(app);
 memoFeature.register(app);
 booksFeature.register(app);
 deepseekShareFeature.register(app);

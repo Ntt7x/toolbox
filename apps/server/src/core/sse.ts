@@ -43,6 +43,14 @@ export function registerTaskRoutes(app: Hono): void {
     return c.json({ ok: true, taskId, status: "cancelled" });
   });
 
+  // 任务实时状态（轮询兜底；SSE 走 /api/tasks/:taskId/stream）：GET /api/tasks/:taskId
+  // 注：注册在 /history 静态路由之后，避免参数路由吞掉 /history
+  app.get(`${API_PREFIX}/tasks/:taskId`, (c) => {
+    const task = getTask(c.req.param("taskId"));
+    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
+    return c.json(task);
+  });
+
   app.get(`${API_PREFIX}/tasks/:taskId/stream`, (c) => {
     const taskId = c.req.param("taskId");
     const initial = getTask(taskId);
