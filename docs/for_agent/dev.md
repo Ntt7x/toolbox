@@ -233,7 +233,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - 领域知识库 = 实例前缀（`medical.`/`trading.`…）；虚拟知识库 = 多领域集合（KV `kbVirt:<name>`，名称支持中文）
   - 虚拟库导入自动匹配：`kbImportFromChat(..., matchDomains)` 逐条静态关键词匹配（领域元数据 `kbDomain:<name>.keywords`）→ 写入 `medical.`/`trading.` 等前缀，无匹配归 `other.`（低成本；LLM 匹配可后续做兜底）
   - 聚合问答：`kbAsk(question, { instances: [...] })` 多前缀检索 → 单次 LLM
+  - **领域特化模板（医学模板已迁入）**：`kbDomain:<name>` 支持 `askTemplate/extractTemplate`（问答/导入 system 模板）；`kbAsk/kbImportFromChat` 按实例读取（`getInstanceTemplate` 内联在 knowledge.ts，避免与 knowledgeHub 循环依赖），无配置回退 medical/通用；`seedMedicalTemplates(force)` 幂等初始化（force 强制还原内置医学模板）；路由 `POST /domain/medical/seed`
   - 数据源已注册：`kbVirt:`/`kbDomain:`（知识库中心）
+  - 前端交互要点：新建虚拟库用**领域多选 checkbox**（勿让用户手输领域名）；虚拟库卡片式列表展示总条目数
 - **A/H 股行情（多源，2026-08 实测选型）**：`core/quote.ts` 提供两个能力——
   - `getQuoteSnapshot(code)`：**实时快照**（现价/涨跌/换手/PE/PB/市值/52周区间/币种），
     腾讯 `qt.gtimg.cn` 主源（A/H 一体、字段最全、GBK 需 TextDecoder('gbk') 转码），
