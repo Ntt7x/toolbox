@@ -367,29 +367,29 @@ export default function LocalData() {
           ) : entries.length === 0 ? (
             <div style={card}>（空）</div>
           ) : (
-            <div style={card}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+              <table className="table" style={{ margin: 0 }}>
                 <thead>
                   <tr>
-                    <th style={th}>key</th>
-                    <th style={th}>更新时间</th>
-                    <th style={{ ...th, width: 70 }}>大小</th>
-                    <th style={th}>预览</th>
-                    <th style={{ ...th, width: 130 }}>操作</th>
+                    <th>key</th>
+                    <th>更新时间</th>
+                    <th style={{ width: 70 }}>大小</th>
+                    <th>预览</th>
+                    <th style={{ width: 130 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.map((e) => (
                     <tr key={e.key}>
-                      <td style={thTd}><b>{e.key}</b></td>
-                      <td style={thTd}>{e.updatedAt ? new Date(e.updatedAt).toLocaleString() : "—"}</td>
-                      <td style={{ ...thTd, fontSize: "0.72rem", color: "#64748b" }} title={`${e.size ?? 0} 字节`}>
+                      <td><b>{e.key}</b></td>
+                      <td style={{ fontSize: "0.76rem", color: "#64748b" }}>{e.updatedAt ? new Date(e.updatedAt).toLocaleString() : "—"}</td>
+                      <td style={{ fontSize: "0.72rem", color: "#64748b" }} title={`${e.size ?? 0} 字节`}>
                         {(e.size ?? 0) >= 1024 ? ((e.size ?? 0) / 1024).toFixed(1) + " KB" : (e.size ?? 0) + " B"}
                       </td>
-                      <td style={thTd}>
+                      <td style={{ padding: "0.5rem 0.7rem" }}>
                         <code style={{ fontSize: "0.75rem", color: "#475569" }}>{e.preview}</code>
                       </td>
-                      <td style={thTd}>
+                      <td style={{ padding: "0.5rem 0.7rem" }}>
                         <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem" }} onClick={() => void openDetail(e.key)} type="button">
                           查看
                         </button>{" "}
