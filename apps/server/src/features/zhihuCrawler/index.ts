@@ -10,7 +10,7 @@ import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
 import { kbListInstances, kbSet } from "../../core/knowledge.js";
-import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken, type CrawlProgress } from "./service.js";
+import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
 const HISTORY_KEY = "zhihuCrawl:history";
@@ -20,8 +20,8 @@ registerDataSource({
   kind: "kv",
   name: "zhihuCrawl:",
   page: "知乎爬虫",
-  tag: "历史记录",
-  description: "知乎爬虫抓取历史与结果（zhihuCrawl:history，上限 50 条）",
+  tag: "爬取数据",
+  description: "知乎爬虫数据：history（抓取历史）/ progress（断点续爬进度）/ favorites（收藏目标）/ result（完整结果）",
 });
 
 export const meta: ToolMeta = {
@@ -106,6 +106,11 @@ export function register(app: Hono): void {
     const progress = kvGet<ZhihuCrawlProgress>(`zhihuCrawl:progress:${progressId}`);
     if (!progress || !Array.isArray(progress.items)) {
       return c.json({ ok: false, message: "进度不存在或已过期（可重新开始爬取）" }, 404);
+    }
+    // 过期进度（7 天未续爬）拒绝并清理
+    if (Date.now() - (progress.updatedAt ?? 0) > 7 * 24 * 60 * 60 * 1000) {
+      kvDelete(`zhihuCrawl:progress:${progressId}`);
+      return c.json({ ok: false, message: "进度已超过 7 天未续爬，已清理（可重新开始爬取）" }, 404);
     }
     const snap = progress as ZhihuCrawlProgress;
     const { taskId } = createTask<ZhihuCrawlResult>(
