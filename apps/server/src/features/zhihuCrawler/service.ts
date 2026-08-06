@@ -632,6 +632,37 @@ async function crawlSingleContent(
   });
 }
 
+/** 链接目标解析（识别阶段轻量版）：parseZhihuTarget + 打开页面取标题，不抓正文；用户目标走 getUserInfo */
+export async function resolveLink(
+  input: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ ok: boolean; kind?: string; ref?: string; url?: string; title?: string; message?: string }> {
+  const ti = parseZhihuTarget(input);
+  if (ti.kind === "unknown") return { ok: false, message: "无法识别的知乎目标" };
+  if (ti.kind === "user") {
+    const info = await getUserInfo(ti.ref);
+    return info.ok ? { ok: true, kind: "user", ref: ti.ref, url: ti.url, title: info.name } : { ok: false, message: info.message };
+  }
+  // 链接目标：打开页面取标题（浏览器，人类频率外；失败降级无标题）
+  return withBrowserLock(async () => {
+    let context: BrowserContext | null = null;
+    try {
+      context = await launchZhihuContext();
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.goto(ti.url ?? "", { timeout: 25000, waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.waitForTimeout(2500);
+      const title = (await page.title().catch(() => "")).replace(/\s*-\s*知乎$/, "").trim();
+      const kindLabel = ti.kind === "question" ? "问题" : ti.kind === "article" ? "文章" : ti.kind === "answer" ? "回答" : "想法";
+      if (!title || /^404/.test(title)) {
+        return { ok: true, kind: ti.kind, ref: ti.ref, url: ti.url, title: `（${kindLabel}，标题获取失败）` };
+      }
+      return { ok: true, kind: ti.kind, ref: ti.ref, url: ti.url, title };
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+  });
+}
+
 // ---------- 主抓取流程（支持断点续爬：数量上限/超时自动暂停、取消返回已抓结果、续爬 seed） ----------
 export interface CrawlProgress {
   kind: string;

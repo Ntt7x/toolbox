@@ -270,6 +270,7 @@ export const api = {
   zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),
   zhihuAuth: () => request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/auth", jsonInit("POST", {})),
   zhihuUser: (target: string) => request<import("@toolbox/shared").ZhihuUserInfo>(`/tools/zhihu-crawler/user?target=${encodeURIComponent(target)}`),
+  zhihuResolveLink: (input: string) => request<{ ok: boolean; kind?: string; ref?: string; url?: string; title?: string; message?: string }>("/tools/zhihu-crawler/resolve-link", jsonInit("POST", { input })),
   zhihuCrawl: (req: import("@toolbox/shared").ZhihuCrawlRequest) =>
     request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/crawl", jsonInit("POST", req)),
   zhihuResume: (progressId: string) =>

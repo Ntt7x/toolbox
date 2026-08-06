@@ -138,10 +138,25 @@ export default function ZhihuCrawlerTool() {
     setUserErr("");
     setUser(null);
     const t = target.trim();
-    // 非用户链接：识别类型提示（问题→抓回答、回答/文章/想法→单条）
+    // 非用户链接：调 resolve-link 解析类型+标题（链接目标显示带标题的超链接）
     if (/zhihu\.com\/(question|answer|p|pin|zhuanlan|collection)/.test(t)) {
-      const kindLabel = t.includes("/answer/") ? "回答" : t.includes("/question/") ? "问题" : t.includes("/p/") ? "文章" : t.includes("/pin/") ? "想法" : "内容";
-      setUser({ ok: true, name: `将抓取「${kindLabel}」`, urlToken: "link" });
+      try {
+        setUser({ ok: true, name: "正在解析链接标题…", urlToken: "link" });
+        const r = await api.zhihuResolveLink(t);
+        if (r.ok) {
+          const kindLabel = r.kind === "question" ? "问题" : r.kind === "article" ? "文章" : r.kind === "answer" ? "回答" : r.kind === "user" ? "用户" : "内容";
+          setUser({
+            ok: true,
+            name: r.title ?? `将抓取「${kindLabel}」`,
+            headline: `类型：${kindLabel}${r.url ? `（${r.url.slice(0, 60)}）` : ""}`,
+            urlToken: r.url ? r.url : "link",
+          });
+        } else {
+          setUser({ ok: true, name: `将抓取「${kindLabelOf(t)}」`, urlToken: "link" });
+        }
+      } catch {
+        setUser({ ok: true, name: `将抓取「${kindLabelOf(t)}」`, urlToken: "link" });
+      }
       return;
     }
     try {
@@ -152,6 +167,7 @@ export default function ZhihuCrawlerTool() {
       setUserErr(e instanceof Error ? e.message : String(e));
     }
   };
+  const kindLabelOf = (t: string) => (t.includes("/answer/") ? "回答" : t.includes("/question/") ? "问题" : t.includes("/zhuanlan/") || t.includes("/p/") ? "文章" : t.includes("/pin/") ? "想法" : "内容");
 
   const handleStart = async () => {
     if (!target.trim() || types.length === 0) return;
@@ -371,16 +387,22 @@ export default function ZhihuCrawlerTool() {
         {user?.ok && (
           <div style={{ fontSize: "0.85rem", marginTop: "0.5rem", color: "#334155" }}>
             {user.urlToken && user.urlToken !== "link" ? (
-              <a href={`https://www.zhihu.com/people/${user.urlToken}`} target="_blank" rel="noreferrer" style={{ fontWeight: 700, color: "#1d4ed8" }}>
-                🔗 {user.name}
+              <a
+                href={user.urlToken.startsWith("http") ? user.urlToken : `https://www.zhihu.com/people/${user.urlToken}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontWeight: 700, color: "#1d4ed8" }}
+                title={user.urlToken}
+              >
+                🔗 {(user.name ?? "").slice(0, 60)}{(user.name ?? "").length > 60 ? "…" : ""}
               </a>
             ) : (
               <b>{user.name}</b>
             )}
             {user.headline ? ` · ${user.headline}` : ""}
-            <span style={{ color: "#64748b", marginLeft: "0.5rem" }}>
-              回答 {user.answerCount ?? "?"} · 文章 {user.articleCount ?? "?"} · 想法 {user.pinCount ?? "?"}
-            </span>
+            {user.urlToken === "link" && (
+              <span style={{ color: "#64748b", marginLeft: "0.5rem" }}>回答 {user.answerCount ?? "?"} · 文章 {user.articleCount ?? "?"} · 想法 {user.pinCount ?? "?"}</span>
+            )}
           </div>
         )}
         <div style={{ marginTop: "0.8rem", display: "flex", gap: "1.2rem", alignItems: "center", flexWrap: "wrap" }}>

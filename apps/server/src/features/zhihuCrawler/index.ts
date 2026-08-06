@@ -10,7 +10,7 @@ import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
 import { kbListInstances, kbSet } from "../../core/knowledge.js";
-import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken } from "./service.js";
+import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken, resolveLink } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
 const HISTORY_KEY = "zhihuCrawl:history";
@@ -140,6 +140,15 @@ export function register(app: Hono): void {
     const p = kvGet<ZhihuCrawlProgress>(`zhihuCrawl:progress:${c.req.param("id")}`);
     if (!p) return c.json({ ok: false, message: "进度不存在" }, 404);
     return c.json({ ok: true, items: p.items?.length ?? 0, total: p.items?.length ?? 0, updatedAt: p.updatedAt });
+  });
+
+  // 链接目标解析（识别阶段：取链接标题/类型；用户走用户信息）
+  app.post(`${API_PREFIX}/tools/zhihu-crawler/resolve-link`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { input?: unknown } | null;
+    const input = typeof raw?.input === "string" ? raw.input.trim() : "";
+    if (!input) return c.json({ ok: false, message: "请输入目标" }, 400);
+    const r = await resolveLink(input);
+    return c.json(r.ok ? r : { ok: false, message: r.message ?? "解析失败" }, r.ok ? 200 : 400);
   });
 
   // 收藏的爬取目标（历史抓取目标）
