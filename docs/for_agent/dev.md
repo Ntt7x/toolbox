@@ -246,6 +246,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
    前端 `api.ts` 同步加方法（`jsonInit`，DELETE 用 `jsonInit("DELETE", {})`）。
 5. **持久化数据**：新数据源（KV 前缀/表）必须 `registerDataSource`（本地数据管理可见），
    否则落入"未标记"。
+   - **tag 必须在前端 `LocalData.tsx` 的 `TAG_COLOR`/`TAG_ORDER` 注册**（教训：`knowledge:` 源 tag=知识数据
+     未注册 TAG_ORDER，整组被 `groups()` 过滤 → 用户"找不到 knowledge"）；`groups()` 现已改为
+     「已知 tag 排序优先 + 未知 tag 追加末尾」，新 tag 不会漏显但仍建议补颜色。
 6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
 
 ## 8. 历史进度记录（必须遵守）

@@ -62,6 +62,7 @@ const TAG_COLOR: Record<string, [string, string]> = {
   自选数据: ["#f5f3ff", "#6d28d9"],
   分析缓存: ["#fef3c7", "#b45309"],
   分析数据: ["#ecfdf5", "#047857"],
+  知识数据: ["#ede9fe", "#7c3aed"],
   存量数据: ["#fef2f2", "#b91c1c"],
   运行状态: ["#f0f9ff", "#0369a1"],
   改进备忘录: ["#fffbeb", "#a16207"],
@@ -73,7 +74,7 @@ function tagStyle(tag: string): CSSProperties {
   return chip(bg, fg);
 }
 
-const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "存量数据", "运行状态", "改进备忘录", "未标记"];
+const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "知识数据", "存量数据", "运行状态", "改进备忘录", "未标记"];
 
 const PAGE_SIZE = 50;
 
@@ -241,7 +242,7 @@ export default function LocalData() {
     }
   };
 
-  /** 源列表按 tag 分组 */
+  /** 源列表按 tag 分组（已知 tag 按 TAG_ORDER 排序优先；未列出的 tag 按出现顺序追加末尾，避免漏显） */
   const groups = useCallback(() => {
     if (!sources) return [];
     const grouped = new Map<string, LocalDataSource[]>();
@@ -250,7 +251,9 @@ export default function LocalData() {
       list.push(s);
       grouped.set(s.tag, list);
     }
-    return TAG_ORDER.filter((t) => grouped.has(t)).map((t) => ({ tag: t, items: grouped.get(t)! }));
+    const known = TAG_ORDER.filter((t) => grouped.has(t));
+    const extra = [...grouped.keys()].filter((t) => !TAG_ORDER.includes(t));
+    return [...known, ...extra].map((t) => ({ tag: t, items: grouped.get(t)! }));
   }, [sources]);
 
   return (
