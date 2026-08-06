@@ -88,7 +88,13 @@ localDataFeature.register(app);
 zhihuCrawlerFeature.register(app);
 knowledgeHubFeature.register(app);
 
+// 导出 app 供集成测试（app.request 免端口调用）
+export { app };
+
 const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`toolbox server: http://localhost:${info.port}${API_PREFIX}/health`);
-});
+// 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
+if (process.env.TOOLBOX_TEST !== "1") {
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`toolbox server: http://localhost:${info.port}${API_PREFIX}/health`);
+  });
+}

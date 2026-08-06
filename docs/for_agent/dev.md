@@ -289,8 +289,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - [ ] `pnpm typecheck` 全绿
 - [ ] 新 API 用 curl 实测（含错误分支：非法参数/未配置/上游失败）
-- [ ] 页面与模块编译 200（vite dev）
+- [ ] 页面与模块编译 200（vite dev；**vite 只绑 `[::1]`，测试用 `http://localhost:5173` 而非 127.0.0.1**）
 - [ ] 回归：`/api/health`、`/api/tools`、既有端点不受影响
+- [ ] 单测：`tsx --test apps/server/src/**/*.test.ts`（含 `app.integration.test.ts`）
+- [ ] **app 级集成测试约定（2026-08-07 起）**：`apps/server/src/app.integration.test.ts` 免端口测核心路由
+  （`app.request`），import `./index.js` 前须 `process.env.TOOLBOX_TEST="1"`（index.ts 据此跳过端口监听）；
+  只测读/纯计算链路，**禁止触发 LLM/外网**（网格计划计算/总览/用量/数据源/备忘录 CRUD/prompts 列表）。
+  index.ts 已 `export { app }`——新增路由后在此补一条断言即完成「装配级回归」。
 
 ### 7.1 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
 
