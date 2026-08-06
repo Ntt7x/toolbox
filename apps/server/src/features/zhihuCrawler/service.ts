@@ -281,7 +281,10 @@ async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal):
     }
     if (limit > 0 && out.length >= limit) break;
     if (!j.paging || j.paging.is_end !== false || data.length === 0) break;
-    offset += data.length;
+    // 用响应内 offset 续页（比固定步长更稳；next 形如 ...offset=40&limit=20）
+    const next = (j.paging as { next?: string }).next ?? "";
+    const m = next.match(/[?&]offset=(\d+)/);
+    offset = m ? Number(m[1]) : offset + data.length;
     await humanDelay();
   }
   return out;
@@ -369,16 +372,30 @@ async function crawlCommentsBatch(
             if (any) (any as HTMLElement).click();
           })
           .catch(() => {});
-        // 滚动加载评论（知乎评论翻页：滚动到评论列表底部触发 offset 递增）
+        // 滚动加载评论（不限制数量：滚动至评论区到底、连续无新数据即停止；知乎评论翻页靠滚动到底触发）
         let stuck = 0;
-        for (let i = 0; i < 15; i++) {
+        let blocked = false;
+        for (let i = 0; i < 200; i++) {
           if (signal?.aborted) break;
           const before = comments.length;
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
           await sleep(2500 + Math.floor(Math.random() * 2000));
+          // 风控熔断：页面被限流（40362）立即停止，不重试风暴
+          if (!blocked) {
+            blocked = await page
+              .evaluate(() => {
+                const t = document.body?.innerText ?? "";
+                return t.includes("暂时限制本次访问") || t.includes("40362");
+              })
+              .catch(() => false);
+          }
+          if (blocked) {
+            onProgress?.(`评论抓取被风控拦截（40362），已保留已抓取部分，请稍后再试`);
+            break;
+          }
           if (comments.length === before) {
             stuck++;
-            if (stuck >= 3) break;
+            if (stuck >= 3) break; // 连续无新数据 → 评论区已到底
           } else {
             stuck = 0;
           }

@@ -8,6 +8,7 @@ import { api } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import type { ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlRequest, ZhihuComment, ZhihuUserInfo } from "@toolbox/shared";
 import { card, PageHeader } from "../ui";
+import { MarkdownView } from "../MarkdownView";
 
 const KIND_LABEL: Record<ZhihuCrawlKind, string> = { answer: "回答", article: "文章", pin: "想法" };
 
@@ -58,9 +59,9 @@ function ResultItems({
               {it.comments?.length ? ` · ${it.comments.length} 条作者讨论` : ""}
             </span>
           </summary>
-          <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "0.8rem", lineHeight: 1.7, margin: "0.6rem 0 0.2rem", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.7rem 0.9rem" }}>
-            {it.content || "（无文字内容）"}
-          </pre>
+          <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.7rem 0.9rem", margin: "0.6rem 0 0.2rem" }}>
+            <MarkdownView>{it.content || "（无文字内容）"}</MarkdownView>
+          </div>
           {it.comments && it.comments.length > 0 && (
             <div style={{ marginTop: "0.5rem", background: "#f1f5f9", borderRadius: 8, padding: "0.5rem 0.8rem" }}>
               <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#475569", marginBottom: "0.2rem" }}>💬 作者参与的评论（含上下文）</div>
