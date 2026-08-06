@@ -83,8 +83,8 @@ async function recreateSession(instance: string): Promise<{ ok: boolean; regId?:
     kvDelete(key);
     try {
       await closeReasonixSession(old.regId);
-    } catch {
-      // 进程已不在/关闭失败：仅确保注册表清理（不残留孤儿）
+    } finally {
+      // 无论 close 成功与否，都确保 reasonixSession 注册表条目被清理（close 内部删除幂等；失败也兜底）——不残留孤儿
       kvDelete(`reasonixSession:${old.regId}`);
     }
   }
