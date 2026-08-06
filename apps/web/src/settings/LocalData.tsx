@@ -78,6 +78,14 @@ const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据
 
 const PAGE_SIZE = 50;
 
+/** 字节数格式化（B/KB/MB 自适应） */
+function fmtBytes(n: number): string {
+  if (!n || n <= 0) return "0 B";
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
 export default function LocalData() {
   const [sources, setSources] = useState<LocalDataSource[] | null>(null);
   const [active, setActive] = useState<LocalDataSource | null>(null);
@@ -269,38 +277,55 @@ export default function LocalData() {
         </div>
       )}
 
-      {/* 数据源列表（按 tag 分组） */}
+      {/* 概览条 */}
+      {sources && (
+        <div style={{ ...card, display: "flex", gap: "1.4rem", flexWrap: "wrap", padding: "0.6rem 1.1rem", marginBottom: "0.8rem", background: "#f8fafc" }}>
+          <span style={{ fontSize: "0.78rem", color: "#475569" }}>
+            <b style={{ fontSize: "1rem", color: "#1e293b" }}>{sources.length}</b> 个数据源
+          </span>
+          <span style={{ fontSize: "0.78rem", color: "#475569" }}>
+            <b style={{ fontSize: "1rem", color: "#1e293b" }}>{sources.reduce((s, x) => s + (x.count ?? 0), 0)}</b> 条数据
+          </span>
+          <span style={{ fontSize: "0.78rem", color: "#475569" }}>
+            存储 <b style={{ color: "#1e293b" }}>{fmtBytes(sources.reduce((s, x) => s + (x.sizeBytes ?? 0), 0))}</b>
+          </span>
+          <span style={{ flex: 1 }} />
+          <button style={{ ...btn, background: "#64748b", padding: "0.25rem 0.7rem", fontSize: "0.75rem" }} onClick={() => void loadSources()} type="button">⟳ 刷新</button>
+        </div>
+      )}
+
+      {/* 数据源列表（按 tag 分组，可折叠） */}
       {!active && (
         <div>
           {sources === null ? (
             <div style={card}>加载中…</div>
           ) : (
             groups().map((g) => (
-              <div key={g.tag} style={{ marginBottom: "0.9rem" }}>
-                <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#64748b", marginBottom: "0.35rem", letterSpacing: "0.05em" }}>
-                  {g.tag}（{g.items.reduce((s, x) => s + x.count, 0)} 条）
-                </div>
+              <details key={g.tag} open style={{ marginBottom: "0.5rem" }}>
+                <summary style={{ cursor: "pointer", fontSize: "0.82rem", fontWeight: 700, color: "#334155", padding: "0.35rem 0.1rem", userSelect: "none" }}>
+                  🏷 {g.tag}
+                  <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.4rem" }}>
+                    {g.items.length} 源 · {g.items.reduce((s, x) => s + (x.count ?? 0), 0)} 条 · {fmtBytes(g.items.reduce((s, x) => s + (x.sizeBytes ?? 0), 0))}
+                  </span>
+                </summary>
                 {g.items.map((s) => (
-                  <div key={`${s.kind}:${s.name}`} style={{ ...card, cursor: "pointer" }} onClick={() => void openSource(s)}>
+                  <div key={`${s.kind}:${s.name}`} style={{ ...card, padding: "0.7rem 1rem", cursor: "pointer" }} onClick={() => void openSource(s)}>
                     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                       <span style={chip(s.kind === "kv" ? "#eff6ff" : "#f5f3ff", s.kind === "kv" ? "#1d4ed8" : "#6d28d9")}>
                         {s.kind === "kv" ? "KV" : "表"}
                       </span>
-                      <b style={{ fontSize: "0.9rem" }}>{s.name}</b>
+                      <b style={{ fontSize: "0.88rem" }}>{s.name}</b>
                       <span style={chip("#fef3c7", "#b45309")}>📄 {s.page}</span>
-                      <span style={tagStyle(s.tag)}>🏷 {s.tag}</span>
-                      <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>
-                        {s.count} 条
-                        {s.kind === "kv" && s.sizeBytes ? (
-                          <span title={`${s.sizeBytes} 字节`}> · {(s.sizeBytes ?? 0) >= 1024 * 1024 ? ((s.sizeBytes ?? 0) / 1024 / 1024).toFixed(2) + " MB" : (s.sizeBytes ?? 0) >= 1024 ? ((s.sizeBytes ?? 0) / 1024).toFixed(1) + " KB" : (s.sizeBytes ?? 0) + " B"}</span>
-                        ) : null}{" "}
-                        →
+                      <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.78rem" }}>
+                        {s.count} 条{s.sizeBytes ? ` · ${fmtBytes(s.sizeBytes)}` : ""} →
                       </span>
                     </div>
-                    <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.3rem" }}>{s.description}</div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.74rem", marginTop: "0.2rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }} title={s.description}>
+                      {s.description}
+                    </div>
                   </div>
                 ))}
-              </div>
+              </details>
             ))
           )}
         </div>

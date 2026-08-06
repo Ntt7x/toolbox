@@ -380,6 +380,22 @@ export default function AgentSessions() {
             renderList("chat", "自研 Cache 会话（模式 2）", data.chat)
           ) : (
             <>
+              {/* Reasonix 管理说明 */}
+              <details style={{ border: "1px solid #e2e8f0", borderRadius: 10, marginBottom: "0.8rem", background: "#f8fafc", padding: "0.5rem 0.8rem" }}>
+                <summary style={{ cursor: "pointer", fontSize: "0.8rem", color: "#475569", fontWeight: 600 }}>
+                  💡 什么是 Reasonix 管理？（进程 / MCP / 会话）
+                </summary>
+                <div style={{ fontSize: "0.76rem", color: "#64748b", lineHeight: 1.7, marginTop: "0.4rem" }}>
+                  <b>🛠 进程</b>：Reasonix 是一个 Agent（Go 二进制，DeepSeek 驱动），通过 ACP 协议与本服务通信。
+                  进程为惰性单例——首次问答自动启动；此处可手动「停止进程」（会话记录保留，续问自动重启并恢复上下文）。
+                  <br />
+                  <b>🔌 MCP</b>：为 Agent 挂载的工具服务（如内置「kb」知识库：Agent 用 kb_set/kb_get 等直接读写知识库 KV）。
+                  配置存于本地设置数据（settings:mcp.servers），新会话挂载所有启用项；可停用/删除/新增。
+                  <br />
+                  <b>💬 会话</b>：每个会话是 Agent 的一段持久上下文（30 天活跃 / 360 天归档）。对话数据由服务端托管
+                  （reasonixHistory:），可展开查看；续问自动追加并共享前缀缓存降本。
+                </div>
+              </details>
               {/* Reasonix 进程状态（显式进程管理） */}
               <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.6rem 0.8rem", marginBottom: "1rem", background: "#fff", display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
                 <b style={{ fontSize: "0.82rem", color: "#334155" }}>🛠 Reasonix 进程</b>

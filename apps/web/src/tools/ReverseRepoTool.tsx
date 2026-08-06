@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
@@ -51,6 +51,8 @@ export default function ReverseRepoTool() {
   const [chatHint, setChatHint] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
   const [dailyErr, setDailyErr] = useState<string | null>(null);
+  // 月度明细展开（按月份，默认收起）
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
 
   const daily = dailyTask.result;
 
@@ -138,8 +140,10 @@ export default function ReverseRepoTool() {
             </div>
             <BalanceChart series={monthly.series} operations={monthly.operations} />
 
-            {/* 月度汇总表 */}
-            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>📋 月度汇总表（亿元；每日经济新闻口径，推算补充）</div>
+            {/* 月度明细汇总表（逐笔操作并入每月可展开明细） */}
+            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>
+              📋 月度明细汇总表（亿元；每日经济新闻口径，推算补充）— 点击「明细」展开当月逐笔操作
+            </div>
             <table style={table}>
               <thead>
                 <tr>
@@ -151,52 +155,74 @@ export default function ReverseRepoTool() {
                   <th style={th}>净投放</th>
                   <th style={th}>累计净投放=存量</th>
                   <th style={th}>备注</th>
+                  <th style={th}>明细</th>
                 </tr>
               </thead>
               <tbody>
-                {monthly.rows.map((r: ReverseRepoMonthlyRow, i: number) => (
-                  <tr key={i}>
-                    <td style={thTd}><b>{r.month}</b></td>
-                    <td style={thTd}>{r.opDate}</td>
-                    <td style={thTd}>{r.operationTotal}</td>
-                    <td style={thTd}>{r.m3}</td>
-                    <td style={thTd}>{r.m6}</td>
-                    <td style={{ ...thTd, color: (r.netChange ?? 0) >= 0 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
-                      {r.netChange !== null ? (r.netChange >= 0 ? `+${r.netChange}` : `${r.netChange}`) : "—"}
-                    </td>
-                    <td style={{ ...thTd, fontWeight: 700 }}>
-                      {r.cumulativeNet !== null ? r.cumulativeNet : "—"}
-                    </td>
-                    <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{r.note ?? ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {/* 逐笔操作流水 */}
-            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>
-              🧾 逐笔操作流水表（精确到年月日，共 {monthly.operations.length} 笔）
-            </div>
-            <table style={table}>
-              <thead>
-                <tr>
-                  <th style={th}>操作日期</th>
-                  <th style={th}>期限</th>
-                  <th style={th}>金额(亿)</th>
-                  <th style={th}>公告/来源</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthly.operations.map((op: ReverseRepoOperation, i: number) => (
-                  <tr key={i}>
-                    <td style={thTd}>
-                      <b>{op.date.length === 7 ? `${op.date}（月内）` : op.date}</b>
-                    </td>
-                    <td style={thTd}>{op.term}</td>
-                    <td style={thTd}>{op.amount}</td>
-                    <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>
-                  </tr>
-                ))}
+                {monthly.rows.map((r: ReverseRepoMonthlyRow, i: number) => {
+                  const monthKey = r.month.length === 7 ? r.month : r.month.slice(0, 7);
+                  const ops = monthly.operations.filter((op) => (op.date.length === 7 ? op.date : op.date.slice(0, 7)) === monthKey);
+                  const open = expandedMonth === monthKey;
+                  return (
+                    <Fragment key={i}>
+                      <tr style={{ background: open ? "#eff6ff" : undefined }}>
+                        <td style={thTd}><b>{r.month}</b></td>
+                        <td style={thTd}>{r.opDate}</td>
+                        <td style={thTd}>{r.operationTotal}</td>
+                        <td style={thTd}>{r.m3}</td>
+                        <td style={thTd}>{r.m6}</td>
+                        <td style={{ ...thTd, color: (r.netChange ?? 0) >= 0 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
+                          {r.netChange !== null ? (r.netChange >= 0 ? `+${r.netChange}` : `${r.netChange}`) : "—"}
+                        </td>
+                        <td style={{ ...thTd, fontWeight: 700 }}>
+                          {r.cumulativeNet !== null ? r.cumulativeNet : "—"}
+                        </td>
+                        <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{r.note ?? ""}</td>
+                        <td style={thTd}>
+                          <button
+                            type="button"
+                            style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer", color: "#334155" }}
+                            onClick={() => setExpandedMonth(open ? null : monthKey)}
+                          >
+                            {open ? "收起 ▲" : `${ops.length ? `明细 ${ops.length} 笔 ▾` : "—"}`}
+                          </button>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td style={{ ...thTd, padding: 0, background: "#f8fafc" }} colSpan={9}>
+                            {ops.length > 0 ? (
+                              <table style={{ ...table, margin: "0.5rem", width: "calc(100% - 1rem)" }}>
+                                <thead>
+                                  <tr>
+                                    <th style={th}>操作日期</th>
+                                    <th style={th}>期限</th>
+                                    <th style={th}>金额(亿)</th>
+                                    <th style={th}>公告/来源</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {ops.map((op: ReverseRepoOperation, j: number) => (
+                                    <tr key={j}>
+                                      <td style={thTd}>
+                                        <b>{op.date.length === 7 ? `${op.date}（月内）` : op.date}</b>
+                                      </td>
+                                      <td style={thTd}>{op.term}</td>
+                                      <td style={thTd}>{op.amount}</td>
+                                      <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            ) : (
+                              <div style={{ padding: "0.5rem 0.8rem", color: "#94a3b8", fontSize: "0.78rem" }}>本月无逐笔操作记录</div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
