@@ -567,6 +567,8 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   for (const s of seed) kindCount.set(s.kind, (kindCount.get(s.kind) ?? 0) + 1);
   const commentsDone = opts.commentsDone === true;
   const startPhase = Math.min(Math.max(opts.phaseIndex ?? 0, 0), Math.max(types.length - 1, 0));
+  // 诊断信息（各类型失败/0 结果/风控原因）
+  const warnings: string[] = [];
 
   const emitProgress = (kind: string, message: string) => opts.onProgress?.({ kind, fetched: items.length, message });
   const snapshot = (phaseIndex: number): ZhihuCrawlProgress => ({
@@ -598,6 +600,7 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
     const gotCount = kindCount.get(kind) ?? 0;
     if (gotCount >= perKindLimit) continue; // 该类已满 → 下一类
     emitProgress(kind, `开始抓取 ${kindLabel(kind)}（已有 ${gotCount}/${perKindLimit}，目标 ${perKindLimit}）…`);
+    const beforeKind = gotCount;
     try {
       const remaining = perKindLimit - gotCount;
       if (kind === "pin") {
@@ -626,7 +629,13 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
         emitProgress(kind, `${kindLabel(kind)}本轮 +${got.length}，累计 ${kindCount.get(kind) ?? 0}/${perKindLimit}（总数 ${items.length}）`);
       }
     } catch (e) {
-      emitProgress(kind, `${kindLabel(kind)}：异常 ${e instanceof Error ? e.message : String(e)}`);
+      const msg = `${kindLabel(kind)}：${e instanceof Error ? e.message : String(e)}`;
+      emitProgress(kind, msg);
+      warnings.push(msg);
+    }
+    // 0 结果诊断：该类没有抓到任何内容（含续爬 seed 统计），提示可能原因
+    if ((kindCount.get(kind) ?? 0) === 0 && (kindCount.get(kind) ?? 0) === beforeKind && kind === types[ki]) {
+      warnings.push(`${kindLabel(kind)}：未获取到内容（可能该用户无${kindLabel(kind)}、被风控拦截，或所选日期范围内无${kindLabel(kind)}）`);
     }
     if (Date.now() > deadline || items.length >= maxTotal) {
       paused = true;
@@ -639,17 +648,29 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   // 评论阶段（全部类型处理完且未暂停/取消；续爬跳过已完成）
   if (!paused && !opts.signal?.aborted && !commentsDone && items.length > 0) {
     emitProgress("comment", `抓取评论（全部 ${items.length} 条内容，作者参与的讨论；可随时停止）…`);
-    await crawlCommentsBatch(token, items, opts.signal, (msg) => emitProgress("comment", msg));
+    const commentWarnings: string[] = [];
+    await crawlCommentsBatch(token, items, opts.signal, (msg) => {
+      emitProgress("comment", msg);
+      // 评论阶段的风控/异常提示收集为诊断信息
+      if (/风控|异常|失败/.test(msg)) commentWarnings.push(msg);
+    });
+    for (const w of commentWarnings) if (!warnings.includes(w)) warnings.push(w);
     if (Date.now() > deadline || items.length >= maxTotal) paused = true; // 评论阶段触碰限制 → 暂停（已抓保留）
   }
 
   // 结果（时间降序）
   const finalItems = items.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // 全部 0 结果 → 汇总原因（去重后至多 3 条）
+  if (finalItems.length === 0 && warnings.length === 0) {
+    warnings.push("未获取到任何内容：可能用户无创作、被风控拦截，或所选日期范围内无内容（可检查 Cookie 是否有效后重试）");
+  }
+  const warn = warnings.length > 0 ? [...new Set(warnings)].slice(0, 5) : undefined;
   const base = {
     ok: true as const,
     user: { name: info.name ?? token, urlToken: token, ...(info.headline ? { headline: info.headline } : {}) },
     items: finalItems,
     total: finalItems.length,
+    ...(warn ? { warnings: warn } : {}),
   };
 
   // 暂停/取消 → 保存进度供续爬，返回已抓结果

@@ -1539,6 +1539,8 @@ export interface ZhihuCrawlResult {
   cancelled?: boolean;
   /** 断点续爬 id（暂停/取消后可从此继续） */
   progressId?: string;
+  /** 抓取过程中的诊断信息（各类型失败/0 结果/风控原因，供前端告知用户） */
+  warnings?: string[];
   message?: string;
 }
 

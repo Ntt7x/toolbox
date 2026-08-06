@@ -101,7 +101,7 @@ export default function ZhihuCrawlerTool() {
   const [viewResultId, setViewResultId] = useState<string | null>(null);
   const [viewItems, setViewItems] = useState<ZhihuCrawlItem[] | null>(null);
 
-  const task = useAsyncTask<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; message?: string }>(
+  const task = useAsyncTask<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; warnings?: string[]; message?: string }>(
     "zhihuCrawlTaskId",
     (id) => api.taskStatus<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; message?: string }>(id),
     api.cancelTask,
@@ -466,6 +466,15 @@ export default function ZhihuCrawlerTool() {
                 {task.running ? "续爬中…" : "▶ 继续爬取（断点续爬）"}
               </button>
               <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>单次上限 100 条 / 20 分钟，超出自动暂停并保存进度；可多次续爬直至完成。</span>
+            </div>
+          )}
+          {/* 诊断信息：失败/0 结果原因 */}
+          {task.result?.ok && task.result.warnings && task.result.warnings.length > 0 && (
+            <div style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderRadius: 10, background: "#fffbeb", border: "1px solid #fde68a", fontSize: "0.8rem", color: "#92400e", lineHeight: 1.7 }}>
+              {task.result.total === 0 ? <b>⚠ 未获取到内容：</b> : <b>⚠ 部分类型未获取到内容：</b>}
+              {task.result.warnings.map((w, i) => (
+                <div key={i} style={{ marginTop: "0.15rem" }}>· {w}</div>
+              ))}
             </div>
           )}
 
