@@ -47,6 +47,40 @@ export function extractUrlToken(target: string): string {
   return "";
 }
 
+// ---------- 目标解析：支持用户/问题/回答/文章/想法链接，或包含链接的分享文本（自动提取） ----------
+export interface ZhihuTargetInfo {
+  kind: "user" | "question" | "answer" | "article" | "pin" | "unknown";
+  /** urlToken / 问题 id / 回答 id / 文章 id */
+  ref: string;
+  url?: string;
+  label: string;
+}
+
+const ZH_LINK_RE = /https?:\/\/(?:www\.)?zhihu\.com\/[^\s"'“”，。；;]+/g;
+
+export function parseZhihuTarget(input: string): ZhihuTargetInfo {
+  const t = input.trim();
+  // 1) 直接是知乎链接 → 按路径识别类型（answer 路径需在 question 之前匹配：question/{qid}/answer/{aid}）
+  const ans = t.match(/zhihu\.com\/question\/(\d+)\/answer\/(\d+)/);
+  if (ans) return { kind: "answer", ref: ans[2], url: `${BASE}/question/${ans[1]}/answer/${ans[2]}`, label: `回答 ${ans[2]}` };
+  const m = t.match(/zhihu\.com\/([a-z]+)\/([A-Za-z0-9_-]+)/);
+  if (m) {
+    const type = m[1];
+    const id = m[2];
+    if (type === "people") return { kind: "user", ref: id, url: `${BASE}/people/${id}`, label: `用户 ${id}` };
+    if (type === "question") return { kind: "question", ref: id, url: `${BASE}/question/${id}`, label: `问题 ${id}` };
+    if (type === "p") return { kind: "article", ref: id, url: `${BASE}/p/${id}`, label: `文章 ${id}` };
+    if (type === "pin") return { kind: "pin", ref: id, url: `${BASE}/pin/${id}`, label: `想法 ${id}` };
+    return { kind: "unknown", ref: id, url: t, label: t.slice(0, 60) };
+  }
+  // 2) 分享文本：从任意文本中提取知乎链接（取第一个）
+  const links = [...t.matchAll(ZH_LINK_RE)].map((x) => x[0]);
+  if (links.length > 0) return parseZhihuTarget(links[0]);
+  // 3) 裸 token → 用户
+  if (/^[A-Za-z0-9_-]{2,}$/.test(t)) return { kind: "user", ref: t, url: `${BASE}/people/${t}`, label: `用户 ${t}` };
+  return { kind: "unknown", ref: "", label: t.slice(0, 60) };
+}
+
 // ---------- HTML → Markdown（仅文字） ----------
 export function htmlToMarkdown(html: string): string {
   let s = html;
@@ -487,6 +521,114 @@ async function crawlKindWithBrowser(
   });
 }
 
+// ---------- 问题/单条内容抓取（标准链接目标） ----------
+/** 抓取问题下的回答（浏览器拦截 /api/v4/questions/{qid}/answers，滚动加载回答流） */
+async function crawlQuestionAnswers(
+  qid: string,
+  opts: { limit?: number; dateFrom?: string; dateTo?: string; signal?: AbortSignal; onProgress?: (msg: string) => void },
+): Promise<ZhihuCrawlItem[]> {
+  const items: ZhihuCrawlItem[] = [];
+  const seen = new Set<string>();
+  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+  return withBrowserLock(async () => {
+    let context: BrowserContext | null = null;
+    try {
+      context = await launchZhihuContext();
+      const page = context.pages()[0] ?? (await context.newPage());
+      const apiPath = `/api/v4/questions/${qid}/answers`;
+      page.on("response", async (res) => {
+        if (opts.signal?.aborted) return;
+        const u = res.url();
+        if (u.includes(apiPath) && res.status() === 200) {
+          try {
+            const j = (await res.json()) as { data?: unknown[] };
+            const data = Array.isArray(j.data) ? j.data : [];
+            for (const d of data) {
+              const item = parseApiItem(d as Record<string, unknown>, "answer");
+              if (item && !seen.has(item.url)) {
+                seen.add(item.url);
+                items.push(toItem(item));
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+      opts.onProgress?.(`正在打开问题页…`);
+      await page.goto(`${BASE}/question/${qid}`, { timeout: 30000, waitUntil: "domcontentloaded" }).catch(() => {});
+      // 等待首屏回答
+      for (let i = 0; i < 15 && items.length === 0 && !opts.signal?.aborted; i++) await sleep(1000);
+      // 滚动加载回答流（人类频率）
+      let stuck = 0;
+      for (let i = 0; i < 60; i++) {
+        if (opts.signal?.aborted) break;
+        if (items.length >= limit) break;
+        const before = items.length;
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+        await sleep(2500 + Math.floor(Math.random() * 2000));
+        if (items.length === before) {
+          stuck++;
+          if (stuck >= 3) break;
+        } else {
+          stuck = 0;
+          opts.onProgress?.(`已收集 ${items.length} 个回答…`);
+        }
+      }
+    } catch (e) {
+      opts.onProgress?.(`问题抓取异常：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+    return items;
+  });
+}
+
+/** 抓取单条内容（回答/文章/想法：打开详情页，从 DOM 提取正文） */
+async function crawlSingleContent(
+  info: ZhihuTargetInfo,
+  opts: { signal?: AbortSignal; onProgress?: (msg: string) => void },
+): Promise<ZhihuCrawlItem | null> {
+  return withBrowserLock(async () => {
+    let context: BrowserContext | null = null;
+    try {
+      context = await launchZhihuContext();
+      const page = context.pages()[0] ?? (await context.newPage());
+      opts.onProgress?.(`正在打开内容页…`);
+      await page.goto(info.url ?? `${BASE}/question/${info.ref}`, { timeout: 30000, waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.waitForTimeout(3000);
+      const content = await page
+        .evaluate((kind) => {
+          const selectors: Record<string, string[]> = {
+            answer: [".RichContent-inner", ".RichText", ".AnswerCard .RichContent"],
+            article: [".Post-RichTextContainer", ".Post-Content"],
+            pin: [".Pin .RichText", ".PinItem .RichText"],
+          };
+          for (const sel of selectors[kind] ?? []) {
+            const el = document.querySelector(sel);
+            if (el && el.textContent && el.textContent.trim().length > 30) return el.textContent.trim();
+          }
+          return "";
+        }, info.kind)
+        .catch(() => "");
+      const title = (await page.title().catch(() => "")).replace(/\s*-\s*知乎$/, "").slice(0, 120);
+      if (!content) {
+        opts.onProgress?.(`未能从页面提取到正文（可能被风控拦截或页面结构变化）`);
+        return null;
+      }
+      return {
+        kind: info.kind === "article" ? "article" : info.kind === "pin" ? "pin" : "answer",
+        title: title || info.label,
+        content: htmlToMarkdown(content),
+        createdAt: new Date().toISOString(),
+        url: info.url ?? `${BASE}/question/${info.ref}`,
+      };
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+  });
+}
+
 // ---------- 主抓取流程（支持断点续爬：数量上限/超时自动暂停、取消返回已抓结果、续爬 seed） ----------
 export interface CrawlProgress {
   kind: string;
@@ -545,7 +687,44 @@ function dateInRange(created: number, dateFrom?: string, dateTo?: string): boole
 }
 
 export async function crawlUser(target: string, opts: CrawlOptions = {}): Promise<ZhihuCrawlResult> {
-  const token = extractUrlToken(target);
+  // 目标解析：支持用户主页/问题/回答/文章/想法链接，或包含链接的分享文本（自动提取）
+  const ti = parseZhihuTarget(target);
+  if (ti.kind === "unknown") return { ok: false, message: `无法识别的知乎目标：${ti.label || "（请输入用户主页、问题/回答/文章链接，或包含知乎链接的文本）"}` };
+  if (ti.kind === "question") {
+    // 问题 → 抓回答流（单目标，简单暂停/取消语义）
+    const warnings: string[] = [];
+    const deadline = Date.now() + (opts.deadlineMs ?? 20 * 60 * 1000);
+    const items = await crawlQuestionAnswers(ti.ref, {
+      limit: opts.limit,
+      dateFrom: opts.dateFrom,
+      dateTo: opts.dateTo,
+      signal: opts.signal,
+      onProgress: (msg) => opts.onProgress?.({ kind: "question", fetched: 0, message: msg }),
+    });
+    const filtered = items.filter((it) => dateInRange(new Date(it.createdAt).getTime() / 1000, opts.dateFrom, opts.dateTo));
+    if (filtered.length === 0) warnings.push(`问题下未获取到回答（可能无回答、被风控拦截，或所选日期范围内无回答）`);
+    if (Date.now() > deadline) warnings.push("单次任务超过 20 分钟超时，已自动停止");
+    if (opts.signal?.aborted) warnings.push("已取消");
+    const result = {
+      ok: true as const,
+      items: filtered,
+      total: filtered.length,
+      ...(warnings.length ? { warnings } : {}),
+    };
+    return opts.signal?.aborted ? { ...result, partial: true, cancelled: true, progressId: `zhp-${Date.now().toString(36)}` } : result;
+  }
+  if (ti.kind === "answer" || ti.kind === "article" || ti.kind === "pin") {
+    const item = await crawlSingleContent(ti, { signal: opts.signal, onProgress: (msg) => opts.onProgress?.({ kind: ti.kind, fetched: 0, message: msg }) });
+    const items = item ? [item] : [];
+    return {
+      ok: true,
+      items,
+      total: items.length,
+      ...(items.length === 0 ? { warnings: ["未能提取到内容（可能被风控拦截、Cookie 失效或页面结构变化）"] } : {}),
+    };
+  }
+  // 用户：token = ti.ref
+  const token = ti.ref;
   if (!token) return { ok: false, message: "无法识别用户（请输入知乎主页 URL 或 urlToken）" };
   if (!hasCookie()) return { ok: false, message: "未配置知乎登录 cookie（浏览器登录授权或手动粘贴），请先在页面设置" };
 

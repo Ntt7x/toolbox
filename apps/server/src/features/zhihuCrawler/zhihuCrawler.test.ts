@@ -4,7 +4,7 @@
 // ============================================================
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractUrlToken, htmlToMarkdown, parseZhihuComment } from "./service.js";
+import { extractUrlToken, htmlToMarkdown, parseZhihuComment, parseZhihuTarget } from "./service.js";
 
 test("extractUrlToken：从主页 URL / 列表页 URL / 裸 token 解析", () => {
   assert.equal(extractUrlToken("https://www.zhihu.com/people/zhihu"), "zhihu");
@@ -76,4 +76,27 @@ test("parseZhihuComment：子评论含作者 → 保留父子上下文", () => {
   assert.ok(r, "子评论含作者 → 父评论保留为上下文");
   assert.equal(r!.children?.length, 1);
   assert.equal(r!.children![0].author, "目标用户");
+});
+
+test("parseZhihuTarget：识别用户/问题/回答/文章/想法链接", () => {
+  assert.deepEqual(parseZhihuTarget("https://www.zhihu.com/people/zhihu").kind, "user");
+  assert.equal(parseZhihuTarget("https://www.zhihu.com/people/zhihu").ref, "zhihu");
+  assert.deepEqual(parseZhihuTarget("https://www.zhihu.com/question/123456").kind, "question");
+  assert.equal(parseZhihuTarget("https://www.zhihu.com/question/123456").ref, "123456");
+  assert.deepEqual(parseZhihuTarget("https://www.zhihu.com/question/123/answer/456").kind, "answer");
+  assert.equal(parseZhihuTarget("https://www.zhihu.com/question/123/answer/456").ref, "456");
+  assert.deepEqual(parseZhihuTarget("https://www.zhihu.com/p/abcdef").kind, "article");
+  assert.deepEqual(parseZhihuTarget("https://www.zhihu.com/pin/123").kind, "pin");
+});
+
+test("parseZhihuTarget：从分享文本中自动提取链接", () => {
+  const text = "看看这个：https://www.zhihu.com/question/999 很有意思，顺便推荐 https://www.zhihu.com/question/888";
+  const r = parseZhihuTarget(text);
+  assert.equal(r.kind, "question");
+  assert.equal(r.ref, "999");
+});
+
+test("parseZhihuTarget：裸 token 视为用户；无法识别返回 unknown", () => {
+  assert.equal(parseZhihuTarget("zhihu").kind, "user");
+  assert.equal(parseZhihuTarget("随便一段没有链接的文字").kind, "unknown");
 });

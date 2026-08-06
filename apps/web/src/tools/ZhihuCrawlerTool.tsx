@@ -136,8 +136,15 @@ export default function ZhihuCrawlerTool() {
     if (!target.trim()) return;
     setUserErr("");
     setUser(null);
+    const t = target.trim();
+    // 非用户链接：识别类型提示（问题→抓回答、回答/文章/想法→单条）
+    if (/zhihu\.com\/(question|answer|p|pin|zhuanlan|collection)/.test(t)) {
+      const kindLabel = t.includes("/answer/") ? "回答" : t.includes("/question/") ? "问题" : t.includes("/p/") ? "文章" : t.includes("/pin/") ? "想法" : "内容";
+      setUser({ ok: true, name: `将抓取「${kindLabel}」`, urlToken: "link" });
+      return;
+    }
     try {
-      const r = await api.zhihuUser(target.trim());
+      const r = await api.zhihuUser(t);
       if (r.ok) setUser(r);
       else setUserErr(r.message ?? "验证失败");
     } catch (e) {
@@ -310,11 +317,11 @@ export default function ZhihuCrawlerTool() {
           <input
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="知乎主页 URL 或 urlToken，如 https://www.zhihu.com/people/xxx"
+            placeholder="知乎链接或用户主页：支持 用户/问题/回答/文章/想法 链接，或粘贴包含知乎链接的文本（自动提取）"
             style={{ flex: 1, padding: "0.5rem 0.8rem", fontSize: "0.85rem", borderRadius: 8, border: "1px solid #cbd5e1" }}
           />
           <button onClick={handleVerify} style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}>
-            验证用户
+            识别目标
           </button>
           <button
             onClick={async () => {
