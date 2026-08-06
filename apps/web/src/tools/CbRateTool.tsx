@@ -446,11 +446,11 @@ function CbRateHistoryView({ result }: { result: CbRateResponse }) {
         <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, marginTop: "0.6rem", fontSize: "0.88rem" }}>{result.summary}</p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.7rem", marginTop: "0.7rem" }}>
-        {result.banks.map((b) => (
+        {(result.banks ?? []).map((b) => (
           <BankCard key={b.id} bank={b} />
         ))}
       </div>
-      {result.calendar && result.calendar.length > 0 && (
+      {Array.isArray(result.calendar) && result.calendar.length > 0 && (
         <div style={card}>
           <div style={{ fontWeight: 700, marginBottom: "0.5rem", fontSize: "0.9rem" }}>🗓 近期会议日历</div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
