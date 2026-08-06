@@ -9,7 +9,7 @@ import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult } from "@toolbox/share
 import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
-import { crawlUser, saveCookie, hasCookie, getUserInfo, type CrawlProgress } from "./service.js";
+import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, type CrawlProgress } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
 const HISTORY_KEY = "zhihuCrawl:history";
@@ -41,6 +41,17 @@ export function register(app: Hono): void {
     if (!raw || typeof raw.cookie !== "string") return c.json({ ok: false, message: "缺少 cookie" }, 400);
     saveCookie(raw.cookie);
     return c.json({ ok: true, configured: hasCookie() });
+  });
+
+  // 浏览器内登录授权（后台任务：弹窗 → 用户登录 → 自动提取 cookie）
+  app.post(`${API_PREFIX}/tools/zhihu-crawler/auth`, async (c) => {
+    const { taskId } = createTask<{ ok: boolean; name?: string; message?: string }>(
+      async (signal) => {
+        return authViaBrowser({ signal, onProgress: () => {} });
+      },
+      { timeoutMs: 6 * 60 * 1000, module: "zhihu.auth", name: "知乎浏览器登录授权" },
+    );
+    return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 
   // 用户信息（验证目标 + 计数）

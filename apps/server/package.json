@@ -14,6 +14,7 @@
     "@hono/node-server": "^1",
     "@toolbox/shared": "workspace:*",
     "hono": "^4",
+    "playwright-core": "^1.62.1",
     "undici": "^8.10.0"
   },
   "devDependencies": {

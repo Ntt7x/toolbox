@@ -208,6 +208,91 @@ async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal):
   return out;
 }
 
+// ---------- 浏览器内登录授权（playwright-core + 系统 Chrome/Edge） ----------
+// 启动本机浏览器弹窗 → 用户登录知乎 → 自动提取 cookie → 保存 → 关闭
+import { chromium, type BrowserContext } from "playwright-core";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { DATA_DIR } from "../../core/db.js";
+
+const CHROME_CANDIDATES = [
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+];
+
+function findBrowser(): string | undefined {
+  return CHROME_CANDIDATES.find((p) => existsSync(p));
+}
+
+/**
+ * 浏览器内授权：弹窗打开知乎登录页，等待用户登录（检测 z_c0 cookie），
+ * 成功即提取全部 zhihu.com cookie 并保存；用户可随时取消（signal.aborted）。
+ */
+export async function authViaBrowser(opts: { signal?: AbortSignal; onProgress?: (msg: string) => void } = {}): Promise<{ ok: boolean; name?: string; message?: string }> {
+  const exe = findBrowser();
+  if (!exe) return { ok: false, message: "未找到系统 Chrome/Edge，请改用「手动粘贴 Cookie」方式" };
+  opts.onProgress?.("正在启动浏览器…");
+  const profileDir = join(DATA_DIR, "zhihu-auth-profile");
+  mkdirSync(profileDir, { recursive: true });
+  let context: BrowserContext | null = null;
+  try {
+    // 持久上下文（独立 profile，不干扰用户日常浏览器）
+    context = await chromium.launchPersistentContext(profileDir, {
+      executablePath: exe,
+      headless: false,
+      args: ["--no-first-run", "--no-default-browser-check"],
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
+    opts.onProgress?.("已打开登录窗口，请在浏览器中登录知乎（扫码或账号）…");
+    await page.goto("https://www.zhihu.com/signin", { timeout: 30000 }).catch(() => {});
+    // 轮询检测登录态（z_c0）
+    const deadline = Date.now() + 5 * 60 * 1000;
+    for (;;) {
+      if (opts.signal?.aborted) {
+        await context.close().catch(() => {});
+        return { ok: false, message: "已取消授权" };
+      }
+      if (Date.now() > deadline) {
+        await context.close().catch(() => {});
+        return { ok: false, message: "等待登录超时（5 分钟），请重试" };
+      }
+      const cookies = await context.cookies();
+      if (cookies.some((c) => c.name === "z_c0" && c.value.length > 20)) {
+        // 登录成功：提取 zhihu.com 域 cookie
+        const zhihu = cookies.filter((c) => c.domain.includes("zhihu.com") || c.domain === ".zhihu.com");
+        const cookieStr = zhihu.map((c) => `${c.name}=${c.value}`).join("; ");
+        if (!cookieStr) {
+          await context.close().catch(() => {});
+          return { ok: false, message: "已检测到登录，但未获取到 cookie" };
+        }
+        saveCookie(cookieStr);
+        // 提取昵称
+        let name = "";
+        try {
+          const res = await page.evaluate(async () => {
+            const r = await fetch("/api/v4/me", { headers: { Accept: "application/json" } });
+            if (!r.ok) return "";
+            const j = (await r.json()) as { name?: string };
+            return j.name ?? "";
+          });
+          name = typeof res === "string" ? res : "";
+        } catch {
+          /* 昵称获取失败不影响授权 */
+        }
+        await context.close().catch(() => {});
+        opts.onProgress?.("登录成功，cookie 已保存");
+        return { ok: true, ...(name ? { name } : {}) };
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (e) {
+    if (context) await context.close().catch(() => {});
+    return { ok: false, message: `浏览器启动失败：${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 // ---------- 用户信息（免签名 API） ----------
 export async function getUserInfo(target: string): Promise<ZhihuUserInfo> {
   const token = extractUrlToken(target);

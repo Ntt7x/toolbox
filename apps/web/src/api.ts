@@ -277,6 +277,7 @@ export const api = {
   // 知乎爬虫
   zhihuCookie: () => request<{ ok: boolean; configured: boolean }>("/tools/zhihu-crawler/cookie"),
   zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),
+  zhihuAuth: () => request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/auth", jsonInit("POST", {})),
   zhihuUser: (target: string) => request<import("@toolbox/shared").ZhihuUserInfo>(`/tools/zhihu-crawler/user?target=${encodeURIComponent(target)}`),
   zhihuCrawl: (req: import("@toolbox/shared").ZhihuCrawlRequest) =>
     request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/crawl", jsonInit("POST", req)),

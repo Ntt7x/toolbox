@@ -13,6 +13,8 @@ const KIND_LABEL: Record<ZhihuCrawlKind, string> = { answer: "回答", article: 
 export default function ZhihuCrawlerTool() {
   const [cookie, setCookie] = useState("");
   const [cookieOk, setCookieOk] = useState(false);
+  const [authMsg, setAuthMsg] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const [target, setTarget] = useState("");
   const [user, setUser] = useState<ZhihuUserInfo | null>(null);
   const [userErr, setUserErr] = useState("");
@@ -100,7 +102,40 @@ export default function ZhihuCrawlerTool() {
           rows={3}
           style={{ width: "100%", boxSizing: "border-box", padding: "0.6rem 0.8rem", fontSize: "0.8rem", borderRadius: 8, border: "1px solid #cbd5e1" }}
         />
-        <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.6rem", alignItems: "center" }}>
+        <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={async () => {
+              setAuthBusy(true);
+              setAuthMsg("正在启动浏览器…");
+              try {
+                const t = await api.zhihuAuth();
+                // 轮询授权任务结果
+                let final: { ok?: boolean; name?: string; message?: string } | null = null;
+                for (let i = 0; i < 180 && !final; i++) {
+                  await new Promise((r) => setTimeout(r, 2000));
+                  const st = await api.taskStatus<{ ok?: boolean; name?: string; message?: string }>(t.taskId).catch(() => null);
+                  const body = st && "result" in st ? (st as { result?: unknown }).result : null;
+                  if (body && typeof body === "object" && "ok" in (body as object)) {
+                    final = body as { ok?: boolean; name?: string; message?: string };
+                  }
+                }
+                if (final?.ok) {
+                  setAuthMsg(`✓ 授权成功${final.name ? `（${final.name}）` : ""}`);
+                  setCookieOk(true);
+                } else {
+                  setAuthMsg(`✗ ${final?.message ?? "授权失败或超时"}`);
+                }
+              } catch (e) {
+                setAuthMsg(`✗ ${e instanceof Error ? e.message : String(e)}`);
+              } finally {
+                setAuthBusy(false);
+              }
+            }}
+            disabled={authBusy}
+            style={{ padding: "0.4rem 1rem" }}
+          >
+            {authBusy ? "授权中…（请在弹窗内登录）" : "🖥 浏览器登录授权"}
+          </button>
           <button
             onClick={async () => {
               if (!cookie.trim()) return;
@@ -115,7 +150,11 @@ export default function ZhihuCrawlerTool() {
           <span style={{ fontSize: "0.8rem", color: cookieOk ? "#16a34a" : "#b91c1c" }}>
             {cookieOk ? "✓ 已配置登录态" : "未配置（回答/文章抓取需登录态）"}
           </span>
+          {authMsg && <span style={{ fontSize: "0.8rem", color: "#475569" }}>{authMsg}</span>}
         </div>
+        <p style={{ fontSize: "0.75rem", color: "#94a3b8", margin: "0.4rem 0 0" }}>
+          推荐使用「🖥 浏览器登录授权」：会弹出本机浏览器窗口，扫码/账号登录一次后自动保存授权；也可手动粘贴 Cookie 备用。
+        </p>
       </div>
 
       {/* 目标与参数 */}
