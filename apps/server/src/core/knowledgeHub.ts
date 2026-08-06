@@ -29,6 +29,13 @@ registerDataSource({
   tag: "知识数据",
   description: "领域知识库元数据（kbDomain:<name>，描述+关键词，用于自动匹配导入）",
 });
+registerDataSource({
+  kind: "kv",
+  name: "kbImport:",
+  page: "知识库中心",
+  tag: "运行记录",
+  description: "知识库导入历史（kbImport:history，批量导入的逐条结果与分发统计）",
+});
 
 const VIRT_PREFIX = "kbVirt:";
 const DOMAIN_PREFIX = "kbDomain:";

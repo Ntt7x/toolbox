@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchDomain } from "../core/knowledge.js";
-import { createVirtKb, getVirtKb, listVirtKbs, deleteVirtKb, setDomainMeta, getDomainMeta, listDomains } from "../core/knowledgeHub.js";
+import { matchDomain, kbSet, kbGet, kbDelete, instanceNameOf } from "../core/knowledge.js";
+import { createVirtKb, getVirtKb, listVirtKbs, deleteVirtKb, setDomainMeta, getDomainMeta, listDomains, migrateInstance, updateVirtKb } from "../core/knowledgeHub.js";
 
 test("matchDomain：内容含领域关键词 → 匹配该领域；无关键词 → null", () => {
   const domains = [
@@ -49,5 +49,49 @@ test("领域元数据 CRUD：set/get/list", () => {
     assert.ok(listDomains().some((x) => x.name === name));
   } finally {
     deleteVirtKb(name);
+  }
+});
+
+test("updateVirtKb：动态调整引用领域", () => {
+  const name = `testvirt2_${Date.now()}`;
+  try {
+    createVirtKb(name, ["medical"], "初始");
+    const r = updateVirtKb(name, { domains: ["medical", "trading"], desc: "已编辑" });
+    assert.ok(r.ok);
+    assert.deepEqual(r.virt!.domains, ["medical", "trading"]);
+    assert.equal(r.virt!.desc, "已编辑");
+    // 空领域拒绝
+    const r2 = updateVirtKb(name, { domains: [] });
+    assert.equal(r2.ok, false);
+    // 不存在拒绝
+    const r3 = updateVirtKb("__nope__", { domains: ["medical"] });
+    assert.equal(r3.ok, false);
+  } finally {
+    deleteVirtKb(name);
+  }
+});
+
+test("migrateInstance：源实例条目迁移到目标（冲突跳过）+ 清空源", () => {
+  const src = `src_${Date.now()}`;
+  const tgt = `tgt_${Date.now()}`;
+  try {
+    kbSet(`${src}.a`, "内容A");
+    kbSet(`${src}.b`, "内容B");
+    kbSet(`${tgt}.a`, "已存在A"); // 目标同 key 冲突
+    const r = migrateInstance(src, tgt);
+    assert.ok(r.ok);
+    assert.equal(r.migrated, 1); // 只有 b 迁移
+    assert.equal(r.skipped, 1); // a 冲突跳过
+    assert.equal(kbGet(`${tgt}.b`)?.value, "内容B");
+    assert.equal(kbGet(`${src}.a`), null); // 源已清空
+    assert.equal(kbGet(`${src}.b`), null);
+    // 源/目标相同拒绝
+    const r2 = migrateInstance(src, src);
+    assert.equal(r2.ok, false);
+  } finally {
+    kbDelete(`${src}.a`);
+    kbDelete(`${src}.b`);
+    kbDelete(`${tgt}.a`);
+    kbDelete(`${tgt}.b`);
   }
 });
