@@ -45,6 +45,8 @@ interface KnowledgeSessionReg {
   lastAt: number;
   /** 引导词指纹：首轮发送后记录；后续轮次指纹相同则不再重复发送（省 token，历史已含引导） */
   guideFp?: string;
+  /** 任务指令模板指纹：首轮发完整 task；后续轮次模板未变则只发最小续问行 */
+  taskFp?: string;
 }
 
 /** 轻量稳定指纹（渲染后引导词内容 hash；模板升级 → 指纹变化 → 重新发送引导） */
@@ -52,6 +54,44 @@ function fingerprint(s: string): string {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return String(h);
+}
+
+/**
+ * 构造 Reasonix user turn（引导词/任务指令去重）：
+ *  - 首轮（新会话或指纹变化）：完整引导词 + 完整任务指令
+ *  - 后续轮次（模板未变）：只发最小续问行（一行核心行为提示 + 动态内容）——历史已含完整指令，省每轮 ~200-400 token
+ * 模板（引导/任务）任一部分升级 → 指纹变化 → 对应部分自动重发。
+ */
+/** 导出供单测（composePrompt 纯函数，无副作用） */
+export function composePrompt(
+  instance: string,
+  guide: string,
+  taskTemplate: string,
+  renderTask: (tpl: string) => string,
+  minTurn: (instance: string) => string,
+  reg: KnowledgeSessionReg | null | undefined,
+): { prompt: string; gFp: string; tFp: string } {
+  const gFp = fingerprint(guide);
+  const tFp = fingerprint(taskTemplate);
+  const needGuide = reg?.guideFp !== gFp;
+  const needTask = reg?.taskFp !== tFp;
+  const parts: string[] = [];
+  if (needGuide) parts.push(guide);
+  if (needTask) parts.push(renderTask(taskTemplate));
+  else parts.push(minTurn(instance));
+  return { prompt: parts.join("\n"), gFp, tFp };
+}
+
+/** 记录本轮指纹（guide/task 已发送的内容标记，供下轮去重） */
+/** 记录本轮指纹（guide/task 已发送的内容标记，供下轮去重） */
+function rememberFingerprints(instance: string, gFp: string, tFp: string): void {
+  const reg = kvGet<KnowledgeSessionReg>(sessionKey(instance)) ?? {
+    regId: "",
+    instance,
+    createdAt: Date.now(),
+    lastAt: Date.now(),
+  };
+  kvSet(sessionKey(instance), { ...reg, lastAt: Date.now(), guideFp: gFp, taskFp: tFp } satisfies KnowledgeSessionReg);
 }
 
 /** 获取（或创建）某实例的 Reasonix 会话；失败返回 ok:false（调用方降级直调） */
@@ -138,20 +178,25 @@ async function doAsk(
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
   const module = usageModule(opts, instance);
   const guide = guideFor(instance, "回答用户问题");
-  const task = getPromptTemplate(taskTemplateId(instance, "ask")).replace("{instance}", instance).replace("{question}", question);
-  // 引导词去重：首轮（新会话/引导词指纹变化）才发送；后续轮次历史已含引导，只发任务指令（省 token、前缀更干净）
+  const taskTemplate = getPromptTemplate(taskTemplateId(instance, "ask"));
+  // 引导/任务指令去重：首轮发完整；后续轮次只发最小续问行（历史已含完整指令，省每轮 ~200-400 token）
   const reg = kvGet<KnowledgeSessionReg>(sessionKey(instance));
-  const fp = fingerprint(guide);
-  const needGuide = !reg?.guideFp || reg.guideFp !== fp;
-  const prompt = needGuide ? `${guide}\n${task}` : task;
-  if (needGuide) kvSet(sessionKey(instance), { ...reg!, instance, lastAt: Date.now(), guideFp: fp });
+  const { prompt, gFp, tFp } = composePrompt(
+    instance,
+    guide,
+    taskTemplate,
+    (tpl) => tpl.replace("{instance}", instance).replace("{question}", question),
+    () => `回答前先用 kb_search 检索知识库（instance=${instance}），基于检索结果回答。\n\n【用户问题】\n${question}`,
+    reg,
+  );
+  rememberFingerprints(instance, gFp, tFp);
   let r = await reasonixAsk(s.regId, prompt, { ...opts, module });
   // 会话失效（reasonix 进程重启/会话丢失，unknown session 等）：重建会话后重试一次（不再 drop，避免孤儿堆积）
   if (!r.ok && r.sessionGone) {
     const s2 = await recreateSession(instance);
     if (s2.ok && s2.regId) {
-      // 重建后是新会话（无历史），必须带引导词
-      const prompt2 = `${guide}\n${task}`;
+      // 重建后是新会话（无历史），必须带完整引导+任务指令
+      const prompt2 = `${guide}\n${taskTemplate.replace("{instance}", instance).replace("{question}", question)}`;
       r = await reasonixAsk(s2.regId, prompt2, { ...opts, module });
     }
   }
@@ -190,20 +235,25 @@ async function doImport(
     .join("\n");
   const module = usageModule(opts, instance);
   const guide = guideFor(instance, "把对话内容整理为知识条目并写入知识库");
-  const task = getPromptTemplate(taskTemplateId(instance, "import")).replaceAll("{instance}", instance).replace("{dialog}", dialog);
-  // 引导词去重：首轮（新会话/引导词指纹变化）才发送
+  const taskTemplate = getPromptTemplate(taskTemplateId(instance, "import"));
+  // 引导/任务指令去重：首轮发完整；后续轮次只发最小续问行
   const reg = kvGet<KnowledgeSessionReg>(sessionKey(instance));
-  const fp = fingerprint(guide);
-  const needGuide = !reg?.guideFp || reg.guideFp !== fp;
-  const prompt = needGuide ? `${guide}\n${task}` : task;
-  if (needGuide) kvSet(sessionKey(instance), { ...reg!, instance, lastAt: Date.now(), guideFp: fp });
+  const { prompt, gFp, tFp } = composePrompt(
+    instance,
+    guide,
+    taskTemplate,
+    (tpl) => tpl.replaceAll("{instance}", instance).replace("{dialog}", dialog),
+    () => `整理以下对话为知识条目并写入知识库（instance=${instance}），先 kb_count/kb_list 查重。\n\n【对话原文】\n${dialog}`,
+    reg,
+  );
+  rememberFingerprints(instance, gFp, tFp);
   let r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module });
   if (!r.ok) {
     if (r.sessionGone) {
-      // 会话失效：重建会话后重试一次（不再 drop，避免孤儿堆积）；重建后是新会话，必须带引导词
+      // 会话失效：重建会话后重试一次（不再 drop，避免孤儿堆积）；重建后是新会话，必须带完整引导+任务指令
       const s2 = await recreateSession(instance);
       if (s2.ok && s2.regId) {
-        const prompt2 = `${guide}\n${task}`;
+        const prompt2 = `${guide}\n${taskTemplate.replaceAll("{instance}", instance).replace("{dialog}", dialog)}`;
         r = await reasonixAsk(s2.regId, prompt2, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module });
       }
     }
