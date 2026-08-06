@@ -19,11 +19,28 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
+import { DATA_DIR } from "./db.js";
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+registerDataSource({
+  kind: "kv",
+  name: "reasonixSession:",
+  page: "LLM 会话（Reasonix）",
+  tag: "运行状态",
+  description: "Reasonix Agent 会话注册表（模式 3，ACP 长会话）",
+});
+registerDataSource({
+  kind: "kv",
+  name: "reasonixHistory:",
+  page: "LLM 会话（Reasonix）",
+  tag: "对话数据",
+  description: "Reasonix 会话对话数据（服务端托管，随会话删除）",
+});
 
 const require_ = createRequire(import.meta.url);
 
@@ -89,6 +106,11 @@ interface ReasonixUsageShape {
 }
 
 let acp: AcpClient | null = null;
+/** 当前 ACP 进程元数据（显式进程管理用） */
+let acpStartedAt = 0;
+let acpBinary = "";
+
+// ---------- ACP 启动与消息处理 ----------
 
 function startAcp(): AcpClient {
   const bin = resolveBinary();
@@ -96,6 +118,8 @@ function startAcp(): AcpClient {
   if (!existsSync(bin)) throw new Error(`reasonix 二进制不存在：${bin}`);
   const apiKey = loadApiKey();
   if (!apiKey) throw new Error("未配置 DeepSeek API key（模式 3 需 DEEPSEEK_API_KEY）");
+  acpStartedAt = Date.now();
+  acpBinary = bin;
   const child = spawn(bin, ["acp"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, DEEPSEEK_API_KEY: apiKey },
@@ -134,12 +158,41 @@ function startAcp(): AcpClient {
       if (msg.method === "session/update" || msg.method === "_reasonix.io/session/status_update") {
         const params = msg.params as AcpSessionUpdate & AcpStatusUpdate;
         const listener = params.sessionId ? client.promptListeners.get(params.sessionId) : undefined;
+        if (process.env.REASONIX_ACP_DEBUG) {
+          console.log(`[reasonix-acp] ${msg.method}`, JSON.stringify(params).slice(0, 2000));
+        }
         if (listener) {
           try {
             listener(params);
           } catch {
             // 监听器异常不影响主流程
           }
+        }
+        // ACP 精细控制：host 拦截 Agent 的内置 fs 工具调用（read/write/edit/delete），
+        // 文件类放行、非文件类拒绝；批准后 reasonix 自行执行（yolo 下通常不触发）。
+        if (params.update?.sessionUpdate === "tool_call" && params.sessionId) {
+          void handleToolCall(params);
+        }
+      }
+      // Reasonix 权限请求兜底：默认拒绝（防止 Agent 卡在 bash 等权限等待；知识库访问走 read_file 无需权限）
+      if (msg.method === "session/request_permission") {
+        const p = msg.params as {
+          sessionId?: string;
+          toolCall?: {
+            name?: string;
+            rawInput?: Record<string, unknown>;
+            locations?: { path?: string }[];
+            _meta?: { "reasonix.io"?: { approvalId?: string; tool?: string } };
+          };
+        };
+        const approvalId = p.toolCall?._meta?.["reasonix.io"]?.approvalId;
+        const sessionId = p.sessionId;
+        // 权限决策（本地个人站点：文件类工具全放行；bash/网络等非文件类拒绝）
+        const tool = p.toolCall?._meta?.["reasonix.io"]?.tool ?? p.toolCall?.name ?? "";
+        const isFileOp = ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool);
+        if (approvalId && sessionId) {
+          // fire-and-forget：决策后 Agent 继续（不阻塞主流程）
+          void rpc("session/grant_permission", { sessionId, permissionID: approvalId, allow: isFileOp }, 8000).catch(() => {});
         }
       }
     }
@@ -160,9 +213,83 @@ function startAcp(): AcpClient {
   return client;
 }
 
+/** ACP 进程状态（显式进程管理：页面展示/启停） */
+export function getAcpStatus(): {
+  running: boolean;
+  pid?: number;
+  startedAt?: number;
+  binary?: string;
+  pendingRequests: number;
+} {
+  if (acp && acp.child.exitCode === null && acp.child.pid) {
+    return { running: true, pid: acp.child.pid, startedAt: acpStartedAt || undefined, binary: acpBinary || undefined, pendingRequests: acp.pending.size };
+  }
+  return { running: false, pendingRequests: 0 };
+}
+
+/** 显式启动 ACP 进程（已运行则幂等）；返回状态 */
+export function ensureAcpRunning(): { ok: boolean; running: boolean; pid?: number; message?: string } {
+  try {
+    const client = getAcp();
+    return { ok: true, running: true, pid: client.child.pid };
+  } catch (e) {
+    return { ok: false, running: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 显式停止 ACP 进程（进程树，连带 MCP 子进程；会话注册表保留，续问时自动重启+resume） */
+export function stopAcp(): { ok: boolean; message?: string } {
+  const client = acp;
+  if (!client || client.child.exitCode !== null) {
+    acp = null;
+    return { ok: true, message: "进程未在运行" };
+  }
+  try {
+    // Windows：kill 进程树（reasonix 可能派生 MCP 子进程，一并终止以释放 stdio 管道）
+    spawnSync("taskkill", ["/pid", String(client.child.pid), "/T", "/F"], { windowsHide: true });
+  } catch {
+    // 兜底：直接 kill
+    try {
+      client.child.kill();
+    } catch {
+      // 忽略
+    }
+  }
+  acp = null;
+  return { ok: true, message: "已停止" };
+}
+
 function getAcp(): AcpClient {
   if (acp && acp.child.exitCode === null) return acp;
   return startAcp();
+}
+
+/** ACP 工具调用拦截（兜底；tool_approval=yolo 下通常不触发）：
+ * Agent 的 fs 工具若仍以 tool_call(pending) 发来（waiting_permission），
+ * host 用 session/grant_permission 决策：文件类工具全放行，非文件类拒绝。
+ * 批准后由 reasonix 在 cwd 内自行执行（无需 host 执行/回 tool_result）。 */
+async function handleToolCall(params: AcpSessionUpdate & AcpStatusUpdate): Promise<void> {
+  const sessionId = params.sessionId ?? "";
+  const tc = params.update as {
+    toolCallId?: string;
+    title?: string;
+    kind?: string;
+    rawInput?: { path?: string; content?: string };
+    locations?: { path?: string }[];
+    _meta?: { "reasonix.io"?: { tool?: string } };
+  };
+  const toolCallId = tc.toolCallId ?? "";
+  if (!sessionId || !toolCallId) return;
+  // 工具名：优先 _meta 内嵌，其次 title（如 write_file），再次 kind（read/edit）
+  const tool = tc._meta?.["reasonix.io"]?.tool ?? tc.title ?? tc.kind ?? "";
+  const targetPath = tc.locations?.[0]?.path ?? tc.rawInput?.path ?? "";
+  // 放行：文件类工具 + 会话挂载的 MCP 工具（mcp__<name>__*：连接/调用我们自己的知识库 MCP，直接读写 KV）
+  const allowed =
+    ["read_file", "write_file", "edit_file", "delete_file", "fs.readTextFile", "fs.writeTextFile", "fs.deleteFile"].includes(tool) || tool.startsWith("mcp__");
+  if (!allowed) {
+    console.warn(`[reasonix-acp] 拒绝非文件工具 ${tool}（路径 ${targetPath}）`);
+  }
+  await rpc("session/grant_permission", { sessionId, permissionID: toolCallId, allow: allowed }, 8000).catch(() => {});
 }
 
 function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000): Promise<{ result?: unknown; error?: { message?: string } }> {
@@ -232,20 +359,41 @@ function saveReg(r: ReasonixSessionReg): void {
   kvSet(regKey(r.id), r);
 }
 
-/** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复） */
-export async function createReasonixSession(opts: { cwd?: string; module?: string } = {}): Promise<{ ok: boolean; id?: string; message?: string }> {
+/** 初始化 ACP 并打开一个会话；注册表 KV 持久化（服务端重启/进程崩溃后可恢复）
+ * 默认 cwd = 数据目录 /.file（git 隔离）：Agent 文件资源集中在 .file 内，
+ * 与本地数据（SQLite KV）同区，便于资源统一管理。
+ * mcpServers：挂载 MCP 工具（如知识库 kb_get/kb_set/kb_list/kb_delete），Agent 直接调用（无需文件视图）。 */
+/** ACP session/new 的 mcpServers 项：HTTP 用 url；stdio 用 command/args/env */
+export interface AcpMcpServer {
+  name: string;
+  url?: string;
+  transport?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export async function createReasonixSession(
+  opts: { cwd?: string; module?: string; mcpServers?: AcpMcpServer[] } = {},
+): Promise<{ ok: boolean; id?: string; message?: string }> {
   try {
     const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: {} }, 15000);
     if (init.error) return { ok: false, message: `reasonix initialize 失败：${init.error.message}` };
-    const res = await rpc("session/new", { cwd: opts.cwd ?? process.cwd() }, 15000);
+    const cwd = opts.cwd ?? DATA_DIR;
+    const newParams: Record<string, unknown> = { cwd };
+    if (opts.mcpServers && opts.mcpServers.length > 0) newParams.mcpServers = opts.mcpServers;
+    const res = await rpc("session/new", newParams, 15000);
     if (res.error) return { ok: false, message: `reasonix session/new 失败：${res.error.message}` };
     const reasonixSessionId = (res.result as { sessionId?: string } | undefined)?.sessionId;
     if (!reasonixSessionId) return { ok: false, message: "reasonix 未返回 sessionId" };
+    // 本地个人站点：工具批准全自动（yolo）——Agent 可自由读写文件；
+    // 非文件类（bash/网络）仍由 request_permission 兜底拒绝。
+    await rpc("session/set_config_option", { sessionId: reasonixSessionId, configId: "tool_approval", value: "yolo" }, 10000).catch(() => {});
     const now = Date.now();
     const reg: ReasonixSessionReg = {
       id: genRegId(),
       reasonixSessionId,
-      cwd: opts.cwd ?? process.cwd(),
+      cwd,
       module: opts.module ?? "reasonix",
       createdAt: now,
       lastAt: now,
@@ -266,8 +414,8 @@ export async function createReasonixSession(opts: { cwd?: string; module?: strin
 export async function reasonixAsk(
   regId: string,
   text: string,
-  opts: { timeoutMs?: number } = {},
-): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string }> {
+  opts: { timeoutMs?: number; module?: string } = {},
+): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
 
@@ -323,24 +471,107 @@ export async function reasonixAsk(
   if (r.ok) {
     reg.lastAt = Date.now();
     saveReg(reg);
-    if (r.usage) recordLlmUsage(reg.module, "reasonix", r.usage, "reasonix");
+    if (r.usage) recordLlmUsage(opts.module ?? reg.module, "reasonix", r.usage, "reasonix"); // 业务 module 透传优先
+    if (r.content) appendReasonixHistory(regId, text, r.content, r.usage); // 服务端托管对话数据（与 chatSession 一致）
   }
   return r;
 }
 
-/** 关闭会话（释放资源；reasonix 持久化历史保留）；删除注册表 */
+// ---------- 会话对话数据（服务端托管，可查看/随会话删除） ----------
+
+const HISTORY_PREFIX = "reasonixHistory:";
+/** 单会话历史条数上限（防无限膨胀；超出丢弃最早） */
+const HISTORY_MAX = 300;
+
+export interface ReasonixHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  /** 本轮 usage（assistant 消息带） */
+  usage?: ReasonixUsageShape;
+  time: number;
+}
+
+function historyKey(regId: string): string {
+  return `${HISTORY_PREFIX}${regId}`;
+}
+
+/** 追加一条历史（user+assistant 成对，由 reasonixAsk 成功时调用） */
+function appendReasonixHistory(regId: string, userText: string, answer: string, usage?: ReasonixUsageShape): void {
+  const list = kvGet<ReasonixHistoryMessage[]>(historyKey(regId)) ?? [];
+  const now = Date.now();
+  list.push({ role: "user", content: userText, time: now }, { role: "assistant", content: answer, usage, time: now });
+  if (list.length > HISTORY_MAX) list.splice(0, list.length - HISTORY_MAX);
+  kvSet(historyKey(regId), list);
+}
+
+/** 读取会话对话数据（服务端托管） */
+export function getReasonixHistory(regId: string): ReasonixHistoryMessage[] {
+  return kvGet<ReasonixHistoryMessage[]>(historyKey(regId)) ?? [];
+}
+
+/**
+ * 历史回填：托管功能上线前的存量会话，其对话数据在 Reasonix 侧持久化
+ * （%APPDATA%/reasonix/sessions/<reasonixSessionId>.jsonl，ACP transcript）。
+ * 解析 user/assistant 消息写回托管 KV（幂等：已有托管数据则跳过）。
+ * 返回回填条数；文件缺失/解析失败返回 0。
+ */
+export function backfillReasonixHistory(regId: string): number {
+  if (getReasonixHistory(regId).length > 0) return 0; // 已有托管数据
+  const reg = loadReg(regId);
+  if (!reg) return 0;
+  const jsonlPath = join(reasonixSessionsDir(), `${reg.reasonixSessionId}.jsonl`);
+  if (!existsSync(jsonlPath)) return 0;
+  let lines: string[];
+  try {
+    lines = readFileSync(jsonlPath, "utf8").split("\n");
+  } catch {
+    return 0;
+  }
+  const msgs: ReasonixHistoryMessage[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const j = JSON.parse(line) as { role?: string; content?: unknown; time?: string };
+      if ((j.role === "user" || j.role === "assistant") && typeof j.content === "string" && j.content.trim()) {
+        let content = j.content;
+        if (j.role === "user") {
+          // 剥离注入的引导词（<reasoning-language> 块 + 任务说明），提取真实用户问题
+          content = content.replace(/<reasoning-language>[\s\S]*?<\/reasoning-language>\s*/g, "").trim();
+          const marker = "【用户问题】";
+          const qi = content.indexOf(marker);
+          if (qi >= 0) content = content.slice(qi + marker.length).trim();
+        }
+        if (!content) continue;
+        msgs.push({ role: j.role, content, time: j.time ? Date.parse(j.time) || Date.now() : Date.now() });
+      }
+    } catch {
+      // 单行损坏跳过
+    }
+  }
+  if (msgs.length === 0) return 0;
+  kvSet(historyKey(regId), msgs.slice(-HISTORY_MAX));
+  return msgs.length;
+}
+
+/** 删除会话对话数据（随会话删除） */
+export function deleteReasonixHistory(regId: string): void {
+  kvDelete(historyKey(regId));
+}
+
+/** 关闭会话（释放资源；reasonix 持久化历史保留）；删除注册表与托管对话数据 */
 export async function closeReasonixSession(regId: string): Promise<void> {
   const reg = loadReg(regId);
   if (reg) {
     await rpc("session/close", { sessionId: reg.reasonixSessionId }, 10000).catch(() => {});
     kvDelete(regKey(regId));
+    deleteReasonixHistory(regId);
   }
 }
 
 /** 会话注册表列表（两级生命周期：活跃 30 天 / 归档 360 天 / 过期清理）
  * 归档态（>30 天未用）自动 close reasonix 侧会话释放资源（注册表保留，续用时 resume） */
-export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] {
-  const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number }[] = [];
+export function listReasonixSessions(): { id: string; module: string; cwd: string; createdAt: number; lastAt: number; status: "active" | "archived" }[] {
+  const out: { id: string; module: string; cwd: string; createdAt: number; lastAt: number; status: "active" | "archived" }[] = [];
   for (const r of kvListRaw(REG_PREFIX, 200)) {
     let reg: ReasonixSessionReg | null = null;
     try {
@@ -358,29 +589,14 @@ export function listReasonixSessions(): { id: string; module: string; cwd: strin
       // 归档态：释放 reasonix 侧会话资源（fire-and-forget；失败静默，注册表保留）
       void rpc("session/close", { sessionId: reg.reasonixSessionId }, 8000).catch(() => {});
     }
-    out.push({ id: reg.id, module: reg.module, cwd: reg.cwd, createdAt: reg.createdAt, lastAt: reg.lastAt });
+    out.push({ id: reg.id, module: reg.module, cwd: reg.cwd, createdAt: reg.createdAt, lastAt: reg.lastAt, status: age > ACTIVE_MS ? "archived" : "active" });
   }
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }
 
-/** 关闭 ACP 进程（注册表保留，重启后可恢复） */
+/** 关闭 ACP 进程（注册表保留，重启后可恢复）；复用 stopAcp 的进程树清理 */
 export function shutdownReasonix(): void {
-  if (acp && acp.child.exitCode === null) {
-    try {
-      acp.child.kill();
-      // Windows：kill 进程树（reasonix 可能派生子进程，需一并终止以释放 stdio 管道）
-      if (process.platform === "win32" && acp.child.pid) {
-        try {
-          spawnSync("taskkill", ["/pid", String(acp.child.pid), "/T", "/F"], { stdio: "ignore" });
-        } catch {
-          // taskkill 不可用时忽略
-        }
-      }
-    } catch {
-      // 忽略
-    }
-  }
-  acp = null;
+  stopAcp();
 }
 
 /** Reasonix 会话存储根目录（其持久化 transcript） */

@@ -28,6 +28,7 @@ import * as rehabFeature from "./features/rehab/index.js";
 import * as memoFeature from "./features/memo/index.js";
 import * as booksFeature from "./features/books/index.js";
 import * as deepseekShareFeature from "./features/deepseekShareTool/index.js";
+import * as agentSessionsFeature from "./features/agentSessions/index.js";
 import * as localDataFeature from "./features/localData/index.js";
 
 const app = new Hono();
@@ -53,7 +54,6 @@ const tools: ToolMeta[] = [
   watchlistFeature.meta,
   kellyFeature.meta,
   rehabFeature.meta,
-  rehabFeature.muscleMeta,
   booksFeature.meta,
   deepseekShareFeature.meta,
 ];
@@ -78,9 +78,11 @@ reverseRepoFeature.register(app);
 watchlistFeature.register(app);
 kellyFeature.register(app);
 rehabFeature.register(app);
+rehabFeature.registerMedicalKb(app);
 memoFeature.register(app);
 booksFeature.register(app);
 deepseekShareFeature.register(app);
+agentSessionsFeature.register(app);
 // 设置页模块（本地数据管理，非工具）
 localDataFeature.register(app);
 

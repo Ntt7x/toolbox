@@ -11,14 +11,18 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 ├── apps/server/       Hono 后端（Node 24 + tsx watch）
 │   └── src/
 │       ├── index.ts           装配层：cors + health + tools 收集 + 挂载路由 + 启动
-│       ├── core/              下层公共模块（能力，不依赖业务）：llm / quote / deepseekShare / routes
-│       │                       / tasks / sse / db / tableStore / kvStore / settingsStore / dataRegistry
-│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / deepseekShareTool / localData
+│       ├── core/              下层公共模块（能力，不依赖业务）：llm / chatSession / reasonix / knowledge /
+│       │                       knowledgeSession / knowledgeMcp / mcpConfig / quote / deepseekShare /
+│       │                       prompts / jsonParse / routes / tasks / sse / db / tableStore / kvStore /
+│       │                       settingsStore / dataRegistry
+│       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / treasuryFx / reverseRepo /
+│                               watchlist / kelly / rehab(医学知识库) / memo / books / deepseekShareTool /
+│                               agentSessions / localData
 ├── apps/web/          Vite + React 19 + react-router-dom
 │   └── src/
 │       ├── App.tsx            侧边栏分组菜单 MENU_GROUPS + toolPages 映射 + 路由
-│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / DeepSeekShareTool）
-│       └── settings/          设置页（LlmSettings）
+│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / ReverseRepoTool / MedicalKbTool…）
+│       └── settings/          设置页（LlmSettings / AgentSessions / LocalData / MemoTool）
 └── docs/for_agent/    本目录：agent 规范沉淀
 ```
 
@@ -42,6 +46,27 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 
+### 4.0 LLM 用量切面（三层标注，2026-08-06 重构后规范）
+
+每次 LLM 调用被切面记录到 `llmUsage:log`，**三层标注**各自职责：
+
+| 维度 | 值 | 职责 | 由谁决定 |
+|---|---|---|---|
+| `module` | 业务场景，如 `medical-kb.ask`、`cb-rate`、`watchlist.fundamental` | **面向业务**：统计"哪个业务花了多少钱" | **调用方透传**（业务入口） |
+| `mode` | `direct` / `chat-session` / `reasonix` | **面向服务端逻辑**：统计"哪种调用方式" | 底层实现固定（chat/chatSessionAsk/reasonixAsk） |
+| `scene` | `business` / `system` / `test` | 归属分类 | 从 module 推断（`it.`/`test.`→test；`llm.*`→system；其余 business） |
+
+**核心规则（教训：曾混乱——medical-kb 问答用量记成会话 module `knowledge.medical`，与业务对不上）**：
+1. **业务 module 由调用方透传，会话 module 只是兜底**：`chatSessionAsk(sid, msg, { module })`、
+   `reasonixAsk(regId, text, { module })`、`kbAsk/kbImportFromChat(..., { module })` 均支持
+   `module` 覆盖（缺省回落会话/默认 module）。
+2. **module 命名规范**：`<页面/业务>.<动作>` 点分（`medical-kb.ask`、`medical-kb.import`、
+   `agent-session.chat`）；**禁止**把底层会话标识（`knowledge.medical`、`watchlist.fundamental.session`）当用量 module。
+3. **链路**：业务 feature（如 rehab 的 medical-kb 路由）→ 调 knowledgeSession/kbAsk 时**显式传业务 module**；
+   会话类封装（knowledgeSession）再透传给 reasonixAsk/chat。
+4. **前端展示**：按场景（业务/系统/测试）→ 按模式 → 按模块 三栏；旧数据无 mode/scene 兼容按 direct/module 推断。
+
+
 ### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
 - search=联网搜索（Responses API + web_search，服务端执行，仅 deepseek-v4-flash）；json=response_format json_object
 - **前缀稳定化约定**：system 保持逐字稳定（动态日期/标的/月份移到 user 消息），以命中 DeepSeek 前缀缓存（价 ~1/50）
@@ -59,6 +84,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   回答文本必须从 **`session/update` 通知的 `agent_message_chunk`** 收集（transcript .jsonl 不实时更新，勿读）
 - 同会话多轮实测会话保持正常（第 2 轮引用第 1 轮上下文）；reasonix 自带 system 开销大（~20k tokens）
 - 会话生命周期：创建→多轮 ask→close（释放资源）；进程惰性单例，shutdownReasonix() 回收
+- **显式进程管理（2026-08-06）**：`getAcpStatus`（PID/启动时间/未决请求）、`ensureAcpRunning`、`stopAcp`
+  （taskkill /T /F 进程树，连带 MCP 子进程；注册表保留，续问自动重启+resume）；shutdownReasonix = stopAcp
+- **MCP 配置（2026-08-06）**：`core/mcpConfig` 存 `settings:mcp.servers`（本地设置数据）；
+  默认 seed 内置知识库 kb（node+tsx+knowledgeMcp.ts，正斜杠路径——Windows 反斜杠会被 ESM loader
+  误判为 d: 协议、file:// URL 被 tsx 拼接错乱）；`enabledMcpServers` 供会话挂载；
+  **空数组=用户清空**（getMcpServers 只在从未配置/损坏时回退 seed）
+- **对话数据服务端托管（2026-08-06）**：reasonixAsk 成功即写 `reasonixHistory:<regId>`（user/assistant 成对，上限 300 条）；
+  `getReasonixHistory` / `deleteReasonixHistory`（随 closeReasonixSession 清理）；
+  `backfillReasonixHistory` 从 `%APPDATA%/reasonix/sessions/<sid>.jsonl` 回填存量会话历史
+  （幂等：已有托管数据跳过；user 消息剥离注入引导词提取真实问题）；详情路由惰性触发
 
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
@@ -126,6 +161,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   llm.test）归属；`GET /api/llm/usage` 聚合（总数+按模块+按天）、`GET /api/llm/balance`
   查询 DeepSeek 平台余额（/user/balance，API key 即授权）；LLM 设置页展示；
   platform.deepseek.com/usage 网页明细需登录无法程序化抓取，用本地记录为主
+- **数据删除红线（2026-08-06 教训）**：**删除/清空任何用户可见数据必须先征得用户同意**——
+  即便为"整理/迁移"目的也不得擅自 DELETE KV（历史违规：重构用量切面时直接清空
+  `llmUsage:log`，页面"用量管理"变空；旧数据本可兼容展示（mode/scene 有推断兜底））。
+  需清理时：先说明影响与兼容方案，用户确认后再删；或保留数据仅改展示。
 
 - **业务数据一律进「本地数据管理」**（SQLite KV/表，`core/kvStore`/`tableStore`），
   运行时从库里读取；**禁止在代码中硬编码运行时数据**（表格、流水、配置、分析/探查结果等）
@@ -215,6 +254,31 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - [ ] 新 API 用 curl 实测（含错误分支：非法参数/未配置/上游失败）
 - [ ] 页面与模块编译 200（vite dev）
 - [ ] 回归：`/api/health`、`/api/tools`、既有端点不受影响
+
+### 7.1 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
+
+新增任何页面/路由/菜单项后，必须逐项核对：
+
+1. **前端菜单注册三件套**（`apps/web/src/App.tsx`）：`MENU_GROUPS` 加分组项
+   （staticItems 用 `{name, path, icon}`，工具页用 `toolIds`）＋ `<Route>` 映射 ＋ 组件 import。
+2. **菜单编辑模式兼容**（教训：`/settings/agent-sessions` 曾因旧 `settings:menu.order`
+   未含新项而"显示在组末尾但拖不动、保存不进顺序"）：
+   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`sqlite3` 或本地数据管理页）；
+     若该组已有保存顺序且不含新 key，新项会靠 `resolveGroupItems` 的 rest 补显示，
+     但编辑模式草稿不包含它 → 不可拖、保存丢失（startEdit 已修复：进入编辑模式时
+     将未列出的默认项合并进草稿）。
+   - 规则：**新菜单项 key 必须能被 `defaultOrder` 覆盖**（staticItems 的 key=path，
+     toolIds 的 key=tool id），且改动后建议清一次该组顺序或验证编辑模式可拖动。
+3. **服务端注册**：新 feature 必须在 `apps/server/src/index.ts` 加 import + `register(app)`；
+   feature 的 `meta.path` 必须与前端路由一致（`/tools/x` 或 `/settings/x`）。
+4. **shared 契约**：请求/响应类型放 `packages/shared/src/index.ts`，服务端与前端共用；
+   前端 `api.ts` 同步加方法（`jsonInit`，DELETE 用 `jsonInit("DELETE", {})`）。
+5. **持久化数据**：新数据源（KV 前缀/表）必须 `registerDataSource`（本地数据管理可见），
+   否则落入"未标记"。
+   - **tag 必须在前端 `LocalData.tsx` 的 `TAG_COLOR`/`TAG_ORDER` 注册**（教训：`knowledge:` 源 tag=知识数据
+     未注册 TAG_ORDER，整组被 `groups()` 过滤 → 用户"找不到 knowledge"）；`groups()` 现已改为
+     「已知 tag 排序优先 + 未知 tag 追加末尾」，新 tag 不会漏显但仍建议补颜色。
+6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
 
 ## 8. 历史进度记录（必须遵守）
 

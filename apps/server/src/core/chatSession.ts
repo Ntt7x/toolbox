@@ -14,6 +14,15 @@
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { chat, type ChatOptions } from "./llm.js";
 import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
+import { registerDataSource } from "./dataRegistry.js";
+
+registerDataSource({
+  kind: "kv",
+  name: "chatSession:",
+  page: "LLM 缓存会话",
+  tag: "运行状态",
+  description: "LLM Cache 会话（模式 2 自研会话，前缀缓存降本）",
+});
 
 /** chat 实现（可注入，测试用 mock；生产保持 chat） */
 let chatImpl: (messages: LlmChatMessage[], opts?: ChatOptions) => Promise<LlmChatResult> = chat;
@@ -218,7 +227,7 @@ export function compactSession(id: string, loaded?: ChatSession): ChatSession | 
 export async function chatSessionAsk(
   sessionId: string,
   userMessage: string,
-  askOpts: { signal?: AbortSignal } = {},
+  askOpts: { signal?: AbortSignal; module?: string } = {},
 ): Promise<LlmChatResult> {
   // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）；restore 内部已 loadSession
   const s = restoreArchivedSession(sessionId);
@@ -230,8 +239,9 @@ export async function chatSessionAsk(
     ...s.history,
     { role: "user", content: userMessage },
   ];
+  // 用量归属：调用方透传的业务 module 优先（面向业务维度）；缺省回落会话 module
   const opts: ChatOptions = {
-    module: s.module,
+    module: askOpts.module ?? s.module,
     mode: "chat-session",
     ...(s.model ? { model: s.model } : {}),
     ...(s.search ? { search: true } : {}),
@@ -283,6 +293,13 @@ export function deleteChatSession(id: string): boolean {
   if (!kvGet<ChatSession>(keyOf(id))) return false;
   kvDelete(keyOf(id));
   return true;
+}
+
+/** 会话详情（含 system/history；归档态返回折叠摘要） */
+export function getChatSessionDetail(id: string): (ChatSession & { turns: number }) | null {
+  const s = loadSession(id);
+  if (!s) return null;
+  return { ...s, turns: Math.round(s.history.length / 2) };
 }
 
 // 复用 kvListRaw（前缀列举）

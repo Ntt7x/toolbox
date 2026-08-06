@@ -14,10 +14,10 @@ import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
 import RehabMedicalTool from "./tools/RehabMedicalTool";
-import RehabMuscleTool from "./tools/RehabMuscleTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
+import AgentSessions from "./settings/AgentSessions";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
@@ -30,7 +30,6 @@ const toolPages: Record<string, ComponentType> = {
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
   "rehab-medical": RehabMedicalTool,
-  "rehab-muscle": RehabMuscleTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页（ErrorBoundary 捕获运行时崩溃，显示错误而非白屏） */
@@ -49,6 +48,7 @@ const MENU_GROUPS: MenuGroup[] = [
     label: "设置",
     staticItems: [
       { name: "LLM 管理", path: "/settings/llm", icon: "🤖" },
+      { name: "Agent 会话管理", path: "/settings/agent-sessions", icon: "💬" },
       { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
@@ -183,10 +183,26 @@ export default function App() {
     });
   };
 
-  /** 进入编辑模式（以当前生效顺序为草稿） */
+  /** 进入编辑模式（以当前生效顺序为草稿；未列出的默认项补末尾，确保可拖动/可保存） */
   const startEdit = () => {
-    const base = menuOrder ?? defaultOrder(MENU_GROUPS, tools);
-    setDraftOrder(JSON.parse(JSON.stringify(base)) as Record<string, string[]>);
+    const base = menuOrder ?? {};
+    const defaults = defaultOrder(MENU_GROUPS, tools);
+    const merged: Record<string, string[]> = {};
+    for (const [label, def] of Object.entries(defaults)) {
+      const saved = base[label];
+      if (saved && saved.length > 0) {
+        // 已保存顺序优先 + 未列出的默认项（如新页面）补末尾 → 全部进入可拖拽草稿
+        const rest = def.filter((k) => !saved.includes(k));
+        merged[label] = [...saved, ...rest];
+      } else {
+        merged[label] = def;
+      }
+    }
+    // 兜底：menuOrder 里可能有的额外组（如"其他"）
+    for (const [label, arr] of Object.entries(base)) {
+      if (!merged[label]) merged[label] = arr;
+    }
+    setDraftOrder(merged);
     setEditing(true);
   };
 
@@ -344,6 +360,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview health={health} tools={tools} error={error} />} />
             <Route path="/settings/llm" element={<LlmSettings />} />
+            <Route path="/settings/agent-sessions" element={<AgentSessions />} />
             <Route path="/settings/local-data" element={<LocalData />} />
             <Route path="/settings/memo" element={<MemoTool />} />
             {tools.map((t) => (
