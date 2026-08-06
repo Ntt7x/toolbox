@@ -291,6 +291,19 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
      「已知 tag 排序优先 + 未知 tag 追加末尾」，新 tag 不会漏显但仍建议补颜色。
 6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
 
+### 7.2 项目架构依赖图（2026-08-07 起）
+
+- **自动生成**：`core/dependencyGraph.ts` 扫描 server 源码
+  （`features/*/index.ts` + 同目录业务文件、`core/*.ts`）的相对 import，生成 `{nodes, edges}`；
+  `GET /api/dependency-graph` 提供。**新增/修改模块的 import 依赖即自动反映，无需手工维护图结构**。
+- **展示**：后台管理 →「架构图」（`/settings/arch-graph`，ECharts 力导向：拖拽/缩放/点击节点详情与关联）。
+- **手工补充的映射表**（新增模块时同步更新，否则节点显示英文 id / 无描述 / 缺外部边）：
+  - `NODE_NAMES`（id → 中文名）、`NODE_DESC`（关键模块说明）、`EXTERNAL_EDGES`（外部系统/数据层连接）、
+    `LLM_MODE_EDGES`（业务 → LLM 三模式边）。
+- **架构约束**（图应始终体现）：features（业务层）→ core（公共层）→ 外部系统，**单向依赖**；
+  业务不得反向依赖；LLM 三模式（direct/chatSession/reasonix）与 SQLite 数据层为显式带标签边。
+- **验证**：改完跑 `/api/dependency-graph` 看节点/边数量与新增模块是否出现。
+
 ## 8. 历史进度记录（必须遵守）
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。

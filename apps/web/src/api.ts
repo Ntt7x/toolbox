@@ -272,4 +272,6 @@ export const api = {
       `/prompts/${encodeURIComponent(id)}/reset`,
       jsonInit("POST", {}),
     ),
+  // 项目架构依赖图（扫描源码自动生成）
+  dependencyGraph: () => request<{ ok: boolean; generatedAt: string; nodes: unknown[]; edges: unknown[] }>("/dependency-graph"),
 };
