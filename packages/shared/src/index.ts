@@ -1480,6 +1480,20 @@ export interface ZhihuCrawlItem {
   createdAt: string;
   url: string;
   voteupCount?: number;
+  /** 作者参与讨论的评论（含上下文），抓取评论时填充 */
+  comments?: ZhihuComment[];
+}
+
+/** 作者参与的评论（含回复上下文） */
+export interface ZhihuComment {
+  id: string;
+  author: string;
+  content: string;
+  createdAt: string;
+  /** 被回复的评论作者（上下文链） */
+  replyTo?: string;
+  /** 子评论（作者参与的回复讨论） */
+  children?: ZhihuComment[];
 }
 
 export interface ZhihuUserInfo {
@@ -1498,6 +1512,8 @@ export interface ZhihuCrawlResult {
   user?: { name: string; urlToken: string; headline?: string };
   items?: ZhihuCrawlItem[];
   total?: number;
+  /** 结果持久化 id（历史查看/导入知识库用） */
+  resultId?: string;
   message?: string;
 }
 
@@ -1507,4 +1523,22 @@ export interface ZhihuCrawlHistoryEntry {
   name: string;
   ts: string;
   total: number;
+  /** 关联的持久化结果 id（可查看完整结果/导入知识库） */
+  resultId?: string;
+}
+
+/** 导入知识库请求：从已保存结果中选条目写入指定知识库实例 */
+export interface ZhihuImportRequest {
+  resultId: string;
+  /** 目标知识库实例（knowledge.<instance>，如 medical / trading / mine） */
+  instance: string;
+  /** 选中条目下标（缺省=全部） */
+  indexes?: number[];
+}
+
+export interface ZhihuImportResult {
+  ok: boolean;
+  imported: number;
+  instance?: string;
+  message?: string;
 }

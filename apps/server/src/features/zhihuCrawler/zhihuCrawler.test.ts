@@ -4,7 +4,7 @@
 // ============================================================
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractUrlToken, htmlToMarkdown } from "./service.js";
+import { extractUrlToken, htmlToMarkdown, parseZhihuComment } from "./service.js";
 
 test("extractUrlToken：从主页 URL / 列表页 URL / 裸 token 解析", () => {
   assert.equal(extractUrlToken("https://www.zhihu.com/people/zhihu"), "zhihu");
@@ -32,4 +32,48 @@ test("htmlToMarkdown：剥离标签、保留结构（标题/列表/链接/代码
 test("htmlToMarkdown：空输入与无标签输入", () => {
   assert.equal(htmlToMarkdown(""), "");
   assert.equal(htmlToMarkdown("纯文本内容"), "纯文本内容");
+});
+
+test("parseZhihuComment：作者自己的评论保留", () => {
+  const c = { id: 1, content: "<p>作者评论</p>", created_time: 1700000000, author: { url_token: "target", name: "目标用户" } };
+  const r = parseZhihuComment(c, "target");
+  assert.ok(r);
+  assert.equal(r!.author, "目标用户");
+  assert.equal(r!.content, "作者评论");
+});
+
+test("parseZhihuComment：作者回复的评论保留（reply_author_tag 标注上下文）", () => {
+  const c = {
+    id: 2,
+    content: "<p>路人回复</p>",
+    author: { url_token: "someone", name: "路人" },
+    reply_author_tag: "target",
+  };
+  const r = parseZhihuComment(c, "target");
+  assert.ok(r, "作者被回复 → 该评论是作者参与讨论的上下文");
+  assert.equal(r!.replyTo, "target");
+});
+
+test("parseZhihuComment：内容作者标记（is_author）保留", () => {
+  const c = { id: 6, content: "作者补充评论", author: { url_token: "someone", name: "路人" }, is_author: true };
+  const r = parseZhihuComment(c, "target");
+  assert.ok(r, "is_author 标记的内容作者评论应保留（即使 url_token 不匹配）");
+});
+
+test("parseZhihuComment：与作者无关的评论返回 null", () => {
+  const c = { id: 3, content: "路人闲聊", author: { url_token: "a", name: "A" }, reply_to_author: { url_token: "b", name: "B" } };
+  assert.equal(parseZhihuComment(c, "target"), null);
+});
+
+test("parseZhihuComment：子评论含作者 → 保留父子上下文", () => {
+  const c = {
+    id: 4,
+    content: "路人评论",
+    author: { url_token: "a", name: "A" },
+    child_comments: [{ id: 5, content: "作者回复", author: { url_token: "target", name: "目标用户" } }],
+  };
+  const r = parseZhihuComment(c, "target");
+  assert.ok(r, "子评论含作者 → 父评论保留为上下文");
+  assert.equal(r!.children?.length, 1);
+  assert.equal(r!.children![0].author, "目标用户");
 });

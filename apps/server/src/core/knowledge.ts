@@ -207,6 +207,29 @@ export function kbCountInstance(instance: string): number {
   return kvCount(`${KB_PREFIX}${instance}.`);
 }
 
+/** 知识库实例信息（供「导入知识库」等选择目标实例） */
+export interface KnowledgeInstanceInfo {
+  instance: string;
+  count: number;
+  updatedAt?: string;
+}
+
+/** 列举全部知识库实例（key 首段去重 + 计数 + 最近更新时间） */
+export function kbListInstances(): KnowledgeInstanceInfo[] {
+  const map = new Map<string, { count: number; updatedAt?: string }>();
+  for (const e of readAllEntries()) {
+    const seg = e.key.split(".")[0];
+    if (!seg) continue;
+    const cur = map.get(seg) ?? { count: 0 };
+    cur.count += 1;
+    if (!cur.updatedAt || (e.updatedAt ?? "") > cur.updatedAt) cur.updatedAt = e.updatedAt;
+    map.set(seg, cur);
+  }
+  return [...map.entries()]
+    .map(([instance, v]) => ({ instance, count: v.count, ...(v.updatedAt ? { updatedAt: v.updatedAt } : {}) }))
+    .sort((a, b) => b.count - a.count);
+}
+
 /**
  * 知识问答：检索与问题相关条目 → 知识注入提示词 → LLM 回答。
  * 检索策略：问题按分隔符拆词，取命中的条目（key 匹配优先，其次 value 包含）；

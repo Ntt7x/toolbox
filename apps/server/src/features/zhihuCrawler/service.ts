@@ -8,7 +8,7 @@
 // 合规：个人备份用途；仅抓取用户主动指定的目标；频率模拟人类
 // ============================================================
 import { getSetting, setSetting, deleteSetting } from "../../core/settingsStore.js";
-import type { ZhihuCrawlKind, ZhihuCrawlResult, ZhihuUserInfo } from "@toolbox/shared";
+import type { ZhihuComment, ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlResult, ZhihuUserInfo } from "@toolbox/shared";
 import { chromium, type BrowserContext } from "playwright-core";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -276,6 +276,113 @@ async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal):
 }
 
 // ---------- 浏览器渲染 + 拦截签名 API（answers/articles） ----------
+/** 从 comment_v5 评论条目解析「作者参与的评论」（含回复上下文）；与作者无关的评论返回 null（导出供单测） */
+export function parseZhihuComment(c: Record<string, unknown>, token: string): ZhihuComment | null {
+  const id = c.id !== undefined && c.id !== null ? String(c.id) : "";
+  if (!id) return null;
+  const authorRaw = (c.author ?? {}) as Record<string, unknown>;
+  const authorToken = typeof authorRaw.url_token === "string" ? authorRaw.url_token : "";
+  const author = typeof authorRaw.name === "string" ? authorRaw.name : authorToken;
+  const content = typeof c.content === "string" ? htmlToMarkdown(c.content) : "";
+  const createdAt = typeof c.created_time === "number" ? new Date(c.created_time * 1000).toISOString() : "";
+  // 回复目标（comment_v5：reply_author_tag 标记被回复者；顶层评论无）
+  const replyTag = typeof c.reply_author_tag === "string" ? c.reply_author_tag : "";
+  const replyTo = replyTag && replyTag !== author ? replyTag : undefined;
+  // 子评论（递归：子级含作者参与则保留父为上下文）
+  const children: ZhihuComment[] = [];
+  if (Array.isArray(c.child_comments)) {
+    for (const cc of c.child_comments) {
+      const p = parseZhihuComment(cc as Record<string, unknown>, token);
+      if (p) children.push(p);
+    }
+  }
+  const self = authorToken === token || c.is_author === true; // 作者自己发表的评论（is_author 为内容作者标记）
+  const repliedTo = replyTag ? replyTag === authorToken || replyTag === token : false; // 作者回复了这条
+  if (!self && !repliedTo && children.length === 0) return null;
+  return { id, author, content, createdAt, ...(replyTo ? { replyTo } : {}), ...(children.length ? { children } : {}) };
+}
+
+/**
+ * 抓取一组内容的评论（作者参与讨论的部分 + 上下文）：
+ * 同一浏览器 context 内逐个打开详情页 → 拦截 /api/v4/comments 响应 → 滚动加载 → 筛选附加。
+ */
+async function crawlCommentsBatch(
+  token: string,
+  items: ZhihuCrawlItem[],
+  signal?: AbortSignal,
+  onProgress?: (msg: string) => void,
+): Promise<void> {
+  const targets = items; // 抓取全部内容的评论（用户要求）
+  if (targets.length === 0) return;
+  return withBrowserLock(async () => {
+    let context: BrowserContext | null = null;
+    try {
+      context = await launchZhihuContext();
+      const page = context.pages()[0] ?? (await context.newPage());
+      for (let idx = 0; idx < targets.length; idx++) {
+        const item = targets[idx];
+        if (signal?.aborted) break;
+        const comments: ZhihuComment[] = [];
+        const seen = new Set<string>();
+        const listener = async (res: { url: () => string; status: () => number; json: () => Promise<unknown> }) => {
+          if (signal?.aborted) return;
+          const u = res.url();
+          if (u.includes("/api/v4/comment_v5") && u.includes("root_comment") && res.status() === 200) {
+            try {
+              const j = (await res.json()) as { data?: unknown[] };
+              const data = Array.isArray(j.data) ? j.data : [];
+              for (const d of data) {
+                const p = parseZhihuComment(d as Record<string, unknown>, token);
+                if (p && !seen.has(p.id)) {
+                  seen.add(p.id);
+                  comments.push(p);
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        };
+        page.on("response", listener);
+        onProgress?.(`抓取评论 ${idx + 1}/${targets.length}：${item.title?.slice(0, 20)}…`);
+        await page.goto(item.url, { timeout: 30000, waitUntil: "domcontentloaded" }).catch(() => {});
+        // 知乎评论默认折叠：优先点「N 条评论」（数字评论列表入口）→「查看全部评论」→「添加评论」
+        await page.waitForTimeout(1200);
+        await page
+          .evaluate(() => {
+            const btns = [...document.querySelectorAll("button")];
+            const num = btns.find((b) => /(\d+) 条评论/.test(b.textContent ?? ""));
+            const all = num || btns.find((b) => /查看全部评论/.test(b.textContent ?? ""));
+            const any = all || btns.find((b) => /添加评论/.test(b.textContent ?? ""));
+            if (any) (any as HTMLElement).click();
+          })
+          .catch(() => {});
+        // 滚动加载评论（知乎评论翻页：滚动到评论列表底部触发 offset 递增）
+        let stuck = 0;
+        for (let i = 0; i < 15; i++) {
+          if (signal?.aborted) break;
+          const before = comments.length;
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+          await sleep(1500 + Math.floor(Math.random() * 1000));
+          if (comments.length === before) {
+            stuck++;
+            if (stuck >= 3) break;
+          } else {
+            stuck = 0;
+          }
+        }
+        page.off("response", listener);
+        if (comments.length > 0) item.comments = comments;
+        await sleep(1000);
+      }
+    } catch (e) {
+      onProgress?.(`评论抓取异常：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+  });
+}
+
 async function crawlKindWithBrowser(
   token: string,
   kind: ZhihuCrawlKind,
@@ -411,6 +518,14 @@ export async function crawlUser(
       url: i.url,
       ...(i.voteup !== undefined ? { voteupCount: i.voteup } : {}),
     }));
+
+  // 抓取作者参与讨论的评论（含上下文；全部内容，人类频率）
+  if (!opts.signal?.aborted && items.length > 0) {
+    opts.onProgress?.({ kind: "comment", fetched: items.length, message: `抓取评论（全部 ${items.length} 条内容，作者参与的讨论；内容多时耗时较长，可随时停止）…` });
+    await crawlCommentsBatch(token, items, opts.signal, (msg) => opts.onProgress?.({ kind: "comment", fetched: items.length, message: msg }));
+  }
+
+  if (opts.signal?.aborted) return { ok: false, message: "已取消" };
 
   return {
     ok: true,

@@ -283,4 +283,8 @@ export const api = {
     request<{ ok: boolean; taskId: string; status: string }>("/tools/zhihu-crawler/crawl", jsonInit("POST", req)),
   zhihuHistory: () => request<{ ok: boolean; items: import("@toolbox/shared").ZhihuCrawlHistoryEntry[] }>("/tools/zhihu-crawler/history"),
   zhihuHistoryDelete: (id: string) => request<{ ok: boolean }>(`/tools/zhihu-crawler/history/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  zhihuResult: (id: string) => request<import("@toolbox/shared").ZhihuCrawlResult>(`/tools/zhihu-crawler/result/${encodeURIComponent(id)}`),
+  zhihuInstances: () => request<{ ok: boolean; instances: { instance: string; count: number; updatedAt?: string }[] }>("/tools/zhihu-crawler/instances"),
+  zhihuImport: (req: import("@toolbox/shared").ZhihuImportRequest) =>
+    request<import("@toolbox/shared").ZhihuImportResult>("/tools/zhihu-crawler/import", jsonInit("POST", req)),
 };

@@ -5,10 +5,11 @@
 // 依赖下层公共模块：core/tasks（后台任务）、core/settingsStore（cookie）
 // ============================================================
 import { Hono } from "hono";
-import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult } from "@toolbox/shared";
+import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, type ZhihuImportResult, type ZhihuImportRequest } from "@toolbox/shared";
 import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
+import { kbListInstances, kbSet } from "../../core/knowledge.js";
 import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, type CrawlProgress } from "./service.js";
 
 // 抓取历史（KV：zhihuCrawl:history，上限 50 条）
@@ -87,12 +88,65 @@ export function register(app: Hono): void {
           },
         });
         if (!r.ok) return { ok: false, message: r.message };
-        recordHistory(target, r.user?.name ?? "", r.total ?? 0);
-        return r;
+        // 结果持久化（历史查看 + 导入知识库）
+        const resultId = `zh-${Date.now()}`;
+        kvSet(`zhihuCrawl:result:${resultId}`, { ...r, savedAt: new Date().toISOString() });
+        recordHistory(target, r.user?.name ?? "", r.total ?? 0, resultId);
+        return { ...r, resultId };
       },
-      { timeoutMs: 60 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
+      { timeoutMs: 90 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
     );
     return c.json({ ok: true, taskId, status: "running" }, 202);
+  });
+
+  // 查看已保存的抓取结果
+  app.get(`${API_PREFIX}/tools/zhihu-crawler/result/:id`, (c) => {
+    const r = kvGet<ZhihuCrawlResult>(`zhihuCrawl:result:${c.req.param("id")}`);
+    if (!r) return c.json({ ok: false, message: "结果不存在" }, 404);
+    return c.json({ ...r, resultId: c.req.param("id") });
+  });
+
+  // 知识库实例列表（导入知识库选择目标）
+  app.get(`${API_PREFIX}/tools/zhihu-crawler/instances`, (c) => {
+    return c.json({ ok: true, instances: kbListInstances() });
+  });
+
+  // 导入知识库：把已保存结果的选中条目写入指定实例
+  app.post(`${API_PREFIX}/tools/zhihu-crawler/import`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as ZhihuImportRequest | null;
+    if (!raw || typeof raw.resultId !== "string" || typeof raw.instance !== "string") {
+      const body: ZhihuImportResult = { ok: false, imported: 0, message: "缺少 resultId 或 instance" };
+      return c.json(body, 400);
+    }
+    const instance = raw.instance.trim();
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(instance)) {
+      const body: ZhihuImportResult = { ok: false, imported: 0, message: "知识库实例名仅允许字母数字._-" };
+      return c.json(body, 400);
+    }
+    const saved = kvGet<ZhihuCrawlResult>(`zhihuCrawl:result:${raw.resultId}`);
+    if (!saved?.ok || !Array.isArray(saved.items)) {
+      const body: ZhihuImportResult = { ok: false, imported: 0, message: "结果不存在或为空" };
+      return c.json(body, 404);
+    }
+    const pickIdx = Array.isArray(raw.indexes) && raw.indexes.length > 0 ? new Set(raw.indexes) : null;
+    const targets = pickIdx ? saved.items.filter((_, i) => pickIdx.has(i)) : saved.items;
+    if (targets.length === 0) {
+      const body: ZhihuImportResult = { ok: false, imported: 0, message: "未选中任何条目" };
+      return c.json(body, 400);
+    }
+    let imported = 0;
+    for (const item of targets) {
+      const key = `${instance}.zhihu.${item.kind}.${slugify(item.title)}-${Date.now().toString(36)}`;
+      const md = buildImportMarkdown(item);
+      try {
+        kbSet(key, md, item.url);
+        imported += 1;
+      } catch {
+        /* 单条失败跳过 */
+      }
+    }
+    const body: ZhihuImportResult = { ok: true, imported, instance };
+    return c.json(body);
   });
 
   // 抓取历史
@@ -116,6 +170,7 @@ interface HistoryEntry {
   name: string;
   ts: string;
   total: number;
+  resultId?: string;
 }
 
 function readHistory(): HistoryEntry[] {
@@ -126,14 +181,53 @@ function readHistory(): HistoryEntry[] {
     .slice(0, HISTORY_MAX);
 }
 
-function recordHistory(target: string, name: string, total: number): void {
+function recordHistory(target: string, name: string, total: number, resultId?: string): void {
   const items = readHistory();
-  items.unshift({ id: `zh-${Date.now()}`, target, name, ts: new Date().toISOString(), total });
+  items.unshift({ id: `zh-${Date.now()}`, target, name, ts: new Date().toISOString(), total, ...(resultId ? { resultId } : {}) });
   kvSet(HISTORY_KEY, { items: items.slice(0, HISTORY_MAX) });
 }
 
 function listHistory(): HistoryEntry[] {
   return readHistory();
+}
+
+/** 条目标题 → 安全 slug（knowledge key 段） */
+function slugify(s: string): string {
+  const slug = s
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return slug || "item";
+}
+
+/** 条目 → 知识库 markdown（含创作信息） */
+function buildImportMarkdown(item: ZhihuCrawlItem): string {
+  const kindLabel: Record<string, string> = { answer: "回答", article: "文章", pin: "想法" };
+  const lines = [
+    `# ${item.title}`,
+    "",
+    `- 类型：${kindLabel[item.kind] ?? item.kind}`,
+    `- 创作时间：${item.createdAt.slice(0, 10)}`,
+    ...(item.voteupCount !== undefined ? [`- 赞同：${item.voteupCount}`] : []),
+    `- 原文：${item.url}`,
+    "",
+    "## 正文",
+    "",
+    item.content,
+  ];
+  if (item.comments && item.comments.length > 0) {
+    lines.push("", "## 作者参与的评论（含上下文）", "");
+    for (const cm of item.comments) {
+      lines.push(`- **${cm.author}**${cm.replyTo ? ` 回复 ${cm.replyTo}` : ""}：${cm.content}`);
+      if (cm.children && cm.children.length > 0) {
+        for (const ch of cm.children) {
+          lines.push(`  - ↳ **${ch.author}**${ch.replyTo ? ` 回复 ${ch.replyTo}` : ""}：${ch.content}`);
+        }
+      }
+    }
+  }
+  return lines.join("\n");
 }
 
 // 供其他模块读取结果（预留）
