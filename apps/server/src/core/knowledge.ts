@@ -214,7 +214,7 @@ export function kbCountInstance(instance: string): number {
  */
 export async function kbAsk(
   question: string,
-  opts: { signal?: AbortSignal; topN?: number; instance?: string } = {},
+  opts: { signal?: AbortSignal; topN?: number; instance?: string; module?: string } = {},
 ): Promise<KnowledgeAskResult | KnowledgeErrorResult> {
   const q = question.trim();
   if (!q) return { ok: false, message: "请输入问题" };
@@ -260,7 +260,7 @@ export async function kbAsk(
       { role: "system", content: system },
       { role: "user", content: userMsg },
     ],
-    { temperature: 0.3, module: "knowledge.ask" },
+    { temperature: 0.3, module: opts.module ?? "knowledge.ask" },
   );
   if (!result.ok) return { ok: false, message: result.message };
   return { ok: true, answer: result.content.trim(), used };
@@ -273,7 +273,7 @@ export async function kbAsk(
  */
 export async function kbImportFromChat(
   url: string,
-  opts: { signal?: AbortSignal; instance?: string } = {},
+  opts: { signal?: AbortSignal; instance?: string; module?: string } = {},
 ): Promise<KnowledgeImportResult> {
   const extracted = await extractShare(url);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
@@ -293,7 +293,7 @@ export async function kbImportFromChat(
       { role: "system", content: template },
       { role: "user", content: text },
     ],
-    { temperature: 0.2, json: true, module: "knowledge.import" },
+    { temperature: 0.2, json: true, module: opts.module ?? "knowledge.import" },
   );
   if (!result.ok) throw new Error(result.message);
 

@@ -227,7 +227,7 @@ export function compactSession(id: string, loaded?: ChatSession): ChatSession | 
 export async function chatSessionAsk(
   sessionId: string,
   userMessage: string,
-  askOpts: { signal?: AbortSignal } = {},
+  askOpts: { signal?: AbortSignal; module?: string } = {},
 ): Promise<LlmChatResult> {
   // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）；restore 内部已 loadSession
   const s = restoreArchivedSession(sessionId);
@@ -239,8 +239,9 @@ export async function chatSessionAsk(
     ...s.history,
     { role: "user", content: userMessage },
   ];
+  // 用量归属：调用方透传的业务 module 优先（面向业务维度）；缺省回落会话 module
   const opts: ChatOptions = {
-    module: s.module,
+    module: askOpts.module ?? s.module,
     mode: "chat-session",
     ...(s.model ? { model: s.model } : {}),
     ...(s.search ? { search: true } : {}),

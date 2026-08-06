@@ -414,7 +414,7 @@ export async function createReasonixSession(
 export async function reasonixAsk(
   regId: string,
   text: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; module?: string } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
@@ -471,7 +471,7 @@ export async function reasonixAsk(
   if (r.ok) {
     reg.lastAt = Date.now();
     saveReg(reg);
-    if (r.usage) recordLlmUsage(reg.module, "reasonix", r.usage, "reasonix");
+    if (r.usage) recordLlmUsage(opts.module ?? reg.module, "reasonix", r.usage, "reasonix"); // 业务 module 透传优先
     if (r.content) appendReasonixHistory(regId, text, r.content, r.usage); // 服务端托管对话数据（与 chatSession 一致）
   }
   return r;

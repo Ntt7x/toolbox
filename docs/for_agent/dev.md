@@ -42,6 +42,27 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 
+### 4.0 LLM 用量切面（三层标注，2026-08-06 重构后规范）
+
+每次 LLM 调用被切面记录到 `llmUsage:log`，**三层标注**各自职责：
+
+| 维度 | 值 | 职责 | 由谁决定 |
+|---|---|---|---|
+| `module` | 业务场景，如 `medical-kb.ask`、`cb-rate`、`watchlist.fundamental` | **面向业务**：统计"哪个业务花了多少钱" | **调用方透传**（业务入口） |
+| `mode` | `direct` / `chat-session` / `reasonix` | **面向服务端逻辑**：统计"哪种调用方式" | 底层实现固定（chat/chatSessionAsk/reasonixAsk） |
+| `scene` | `business` / `system` / `test` | 归属分类 | 从 module 推断（`it.`/`test.`→test；`llm.*`→system；其余 business） |
+
+**核心规则（教训：曾混乱——medical-kb 问答用量记成会话 module `knowledge.medical`，与业务对不上）**：
+1. **业务 module 由调用方透传，会话 module 只是兜底**：`chatSessionAsk(sid, msg, { module })`、
+   `reasonixAsk(regId, text, { module })`、`kbAsk/kbImportFromChat(..., { module })` 均支持
+   `module` 覆盖（缺省回落会话/默认 module）。
+2. **module 命名规范**：`<页面/业务>.<动作>` 点分（`medical-kb.ask`、`medical-kb.import`、
+   `agent-session.chat`）；**禁止**把底层会话标识（`knowledge.medical`、`watchlist.fundamental.session`）当用量 module。
+3. **链路**：业务 feature（如 rehab 的 medical-kb 路由）→ 调 knowledgeSession/kbAsk 时**显式传业务 module**；
+   会话类封装（knowledgeSession）再透传给 reasonixAsk/chat。
+4. **前端展示**：按场景（业务/系统/测试）→ 按模式 → 按模块 三栏；旧数据无 mode/scene 兼容按 direct/module 推断。
+
+
 ### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
 - search=联网搜索（Responses API + web_search，服务端执行，仅 deepseek-v4-flash）；json=response_format json_object
 - **前缀稳定化约定**：system 保持逐字稳定（动态日期/标的/月份移到 user 消息），以命中 DeepSeek 前缀缓存（价 ~1/50）

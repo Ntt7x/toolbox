@@ -86,9 +86,9 @@ export function registerMedicalKb(app: Hono): void {
     if (!url) return c.json({ ok: false, message: "缺少分享链接 url" }, 400);
     const { taskId } = createTask(async () => {
       // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
-      const r = await knowledgeAgentImport(MEDICAL_INSTANCE, url);
+      const r = await knowledgeAgentImport(MEDICAL_INSTANCE, url, { module: "medical-kb.import" });
       if (!r.ok) {
-        if (r.fallback) return kbImportFromChat(url, { instance: MEDICAL_INSTANCE });
+        if (r.fallback) return kbImportFromChat(url, { instance: MEDICAL_INSTANCE, module: "medical-kb.import" });
         throw new Error(r.message ?? "知识导入失败");
       }
       return { ok: true, note: r.message, imported: r.imported };
@@ -122,9 +122,9 @@ export function registerMedicalKb(app: Hono): void {
     if (!question) return c.json({ ok: false, message: "缺少问题 question" }, 400);
     const { taskId } = createTask(async () => {
       // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
-      const r = await knowledgeAgentAsk(MEDICAL_INSTANCE, question);
+      const r = await knowledgeAgentAsk(MEDICAL_INSTANCE, question, { module: "medical-kb.ask" });
       if (!r.ok) {
-        if (r.fallback) return kbAsk(question, { instance: MEDICAL_INSTANCE });
+        if (r.fallback) return kbAsk(question, { instance: MEDICAL_INSTANCE, module: "medical-kb.ask" });
         throw new Error(r.message ?? "知识问答失败");
       }
       return { ok: true, answer: r.content };

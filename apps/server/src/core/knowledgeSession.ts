@@ -79,7 +79,7 @@ function guideFor(instance: string, action: string): string {
 export async function knowledgeAgentAsk(
   instance: string,
   question: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; module?: string } = {},
 ): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
   return enqueue(instance, () => doAsk(instance, question, opts));
 }
@@ -87,12 +87,13 @@ export async function knowledgeAgentAsk(
 async function doAsk(
   instance: string,
   question: string,
-  opts: { timeoutMs?: number },
+  opts: { timeoutMs?: number; module?: string },
 ): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
   const s = await ensureKnowledgeSession(instance);
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
   const prompt = `${guideFor(instance, "回答用户问题")}\n回答前必须先用 kb_search（question 取用户问题，instance 为 ${instance}）检索知识库；基于检索到的条目回答，并标注引用条目 key；检索无结果时如实说明。\n\n【用户问题】\n${question}`;
-  const r = await reasonixAsk(s.regId, prompt, opts);
+  // 用量归属：业务 module 透传（如 medical-kb.ask）优先，缺省回落会话 module（knowledge.<instance>）
+  const r = await reasonixAsk(s.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
   if (!r.ok) {
     // 仅会话真失效（reasonix 侧进程崩溃/重启）才重建；临时错误（超时等）保留会话复用
     if (r.sessionGone) dropSession(instance);
@@ -108,7 +109,7 @@ async function doAsk(
 export async function knowledgeAgentImport(
   instance: string,
   shareUrl: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; module?: string } = {},
 ): Promise<{ ok: boolean; imported?: number; message?: string; fallback?: boolean }> {
   return enqueue(instance, () => doImport(instance, shareUrl, opts));
 }
@@ -116,7 +117,7 @@ export async function knowledgeAgentImport(
 async function doImport(
   instance: string,
   shareUrl: string,
-  opts: { timeoutMs?: number },
+  opts: { timeoutMs?: number; module?: string },
 ): Promise<{ ok: boolean; imported?: number; message?: string; fallback?: boolean }> {
   const conv = await extractShare(shareUrl);
   if (!conv.ok || !Array.isArray(conv.messages) || conv.messages.length === 0) {
@@ -133,7 +134,7 @@ async function doImport(
     `步骤：1) 先用 kb_count（instance=${instance}）和 kb_list（instance=${instance}）查看已有条目，避免重复；` +
     `2) 对每个独立知识点用 kb_set 写入：key 分层（${instance}.主题.子主题），value 为简洁完整、可独立理解的事实文本；` +
     `3) 所有 kb_set 的 source 参数统一用分享链接。\n\n【对话原文】\n${dialog}`;
-  const r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000 });
+  const r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
   if (!r.ok) {
     if (r.sessionGone) dropSession(instance);
     return { ok: false, message: r.message, fallback: true };

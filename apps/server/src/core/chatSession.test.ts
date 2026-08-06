@@ -115,6 +115,14 @@ test("参数透传：json/model/search 传给 chat", async () => {
   assert.equal(seenOpts!.module, "test.chat");
 });
 
+test("用量归属：askOpts.module 覆盖会话 module（业务透传优先）", async () => {
+  const s = make("test.chat.session", "sys"); // 会话 module = test.chat.session
+  await chatSessionAsk(s.id, "问", { module: "medical-kb.ask" }); // 业务调用方透传
+  assert.equal(seenOpts!.module, "medical-kb.ask");
+  await chatSessionAsk(s.id, "问2"); // 未透传 → 回落会话 module
+  assert.equal(seenOpts!.module, "test.chat.session");
+});
+
 test("压缩：超预算后保留 verbatim tail + 折叠标记 + droppedTurns 累计", async () => {
   replyLen = 6000; // 每轮 user+assistant ≈ 6001 字符 ≈ 1501 tokens；3 轮不触发，4 轮超 6000
   const s = make();
