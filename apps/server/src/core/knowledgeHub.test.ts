@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { matchDomain, kbSet, kbGet, kbDelete, instanceNameOf } from "../core/knowledge.js";
-import { createVirtKb, getVirtKb, listVirtKbs, deleteVirtKb, setDomainMeta, getDomainMeta, listDomains, migrateInstance, updateVirtKb } from "../core/knowledgeHub.js";
+import { createVirtKb, getVirtKb, listVirtKbs, deleteVirtKb, setDomainMeta, getDomainMeta, listDomains, migrateInstance, updateVirtKb, deleteDomain } from "../core/knowledgeHub.js";
 
 test("matchDomain：内容含领域关键词 → 匹配该领域；无关键词 → null", () => {
   const domains = [
@@ -48,7 +48,8 @@ test("领域元数据 CRUD：set/get/list", () => {
     assert.deepEqual(d!.keywords, ["血压", "手术"]);
     assert.ok(listDomains().some((x) => x.name === name));
   } finally {
-    deleteVirtKb(name);
+    // 注意：领域元数据用 deleteDomain 清理（清实例+元数据），勿用 deleteVirtKb（那是删 kbVirt: 前缀）
+    deleteDomain(name);
   }
 });
 

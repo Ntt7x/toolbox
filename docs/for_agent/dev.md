@@ -366,6 +366,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 8.1 维护性文件同步规则（每次提交/归档必做）
 
+- **测试数据必须清理（硬性）**：任何测试/冒烟产生的临时数据，交付前必须删除并验证无残留——包括：临时领域库/虚拟库/知识条目（`it_*`/`test*`/`zh_*` 等前缀）、导入历史（`kbImport:history`）、LLM 用量记录（`llmUsage:` 测试 module 记录）。**单测必须在 `finally` 中彻底清理其创建的 KV**（注意前缀：领域元数据是 `kbDomain:`，删它用 `deleteDomain`；虚拟库是 `kbVirt:`，删它用 `deleteVirtKb`——勿混用，否则残留）。提交前跑一次 overview/本地数据管理 确认无 `testdomain_`/`it_` 等残留。
+
+- **维护性文件**：docs/for_agent 下所有文件（dev.md、history/*）必须在每次阶段性提交/归档时同步更新（新路由/新页面/新公共模块/经验教训/规则变更都要记）。
+
 `docs/for_agent/` 下所有文件均为**维护性文件**，每次**阶段性提交**与**归档**后必须整体同步，不允许只更新其中一部分：
 
 1. **维护性文件清单**：
