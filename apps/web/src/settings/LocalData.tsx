@@ -286,7 +286,13 @@ export default function LocalData() {
                       <b style={{ fontSize: "0.9rem" }}>{s.name}</b>
                       <span style={chip("#fef3c7", "#b45309")}>📄 {s.page}</span>
                       <span style={tagStyle(s.tag)}>🏷 {s.tag}</span>
-                      <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>{s.count} 条 →</span>
+                      <span style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.8rem" }}>
+                        {s.count} 条
+                        {s.kind === "kv" && s.sizeBytes ? (
+                          <span title={`${s.sizeBytes} 字节`}> · {(s.sizeBytes ?? 0) >= 1024 * 1024 ? ((s.sizeBytes ?? 0) / 1024 / 1024).toFixed(2) + " MB" : (s.sizeBytes ?? 0) >= 1024 ? ((s.sizeBytes ?? 0) / 1024).toFixed(1) + " KB" : (s.sizeBytes ?? 0) + " B"}</span>
+                        ) : null}{" "}
+                        →
+                      </span>
                     </div>
                     <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.3rem" }}>{s.description}</div>
                   </div>
@@ -339,6 +345,7 @@ export default function LocalData() {
                   <tr>
                     <th style={th}>key</th>
                     <th style={th}>更新时间</th>
+                    <th style={{ ...th, width: 70 }}>大小</th>
                     <th style={th}>预览</th>
                     <th style={{ ...th, width: 130 }}>操作</th>
                   </tr>
@@ -348,6 +355,9 @@ export default function LocalData() {
                     <tr key={e.key}>
                       <td style={thTd}><b>{e.key}</b></td>
                       <td style={thTd}>{e.updatedAt ? new Date(e.updatedAt).toLocaleString() : "—"}</td>
+                      <td style={{ ...thTd, fontSize: "0.72rem", color: "#64748b" }} title={`${e.size ?? 0} 字节`}>
+                        {(e.size ?? 0) >= 1024 ? ((e.size ?? 0) / 1024).toFixed(1) + " KB" : (e.size ?? 0) + " B"}
+                      </td>
                       <td style={thTd}>
                         <code style={{ fontSize: "0.75rem", color: "#475569" }}>{e.preview}</code>
                       </td>

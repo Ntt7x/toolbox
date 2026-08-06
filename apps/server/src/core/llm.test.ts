@@ -62,6 +62,23 @@ test("多模块聚合 + 中文 label + 按天分组", () => {
   assert.equal(day!.byModule.length, 2);
 });
 
+test("调用模式聚合：direct/chat-session/reasonix 分别统计 + 中文 label", () => {
+  recordLlmUsage("cb-rate", "deepseek-chat", { promptTokens: 100, completionTokens: 10, cacheHitTokens: 50, cacheMissTokens: 50 }); // 默认 direct
+  recordLlmUsage("reverse-repo.daily", "deepseek-chat", { promptTokens: 200, completionTokens: 20, cacheHitTokens: 180, cacheMissTokens: 20 }, "chat-session");
+  recordLlmUsage("it.reasonix", "deepseek-chat", { promptTokens: 300, completionTokens: 30, cacheHitTokens: 270, cacheMissTokens: 30 }, "reasonix");
+  const s = getLlmUsageSummary();
+  const modes = s.total.byMode;
+  assert.equal(modes.length, 3);
+  const direct = modes.find((m) => m.mode === "direct")!;
+  const cs = modes.find((m) => m.mode === "chat-session")!;
+  const rx = modes.find((m) => m.mode === "reasonix")!;
+  assert.equal(direct.label, "直接调用");
+  assert.equal(cs.label, "会话缓存（自研）");
+  assert.equal(rx.label, "会话缓存（Reasonix）");
+  assert.equal(direct.calls + cs.calls + rx.calls, 3);
+  assert.ok(Math.abs(rx.cacheRate - 0.9) < 1e-9);
+});
+
 test("坏数据防御：非数组 entries 视为空", () => {
   kvSet(USAGE_KEY, { entries: "oops" });
   const s = getLlmUsageSummary();

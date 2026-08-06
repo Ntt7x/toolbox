@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LlmChatMessage, LlmChatResult, LlmTestResult } from "@toolbox/shared";
+import type { LlmCallMode, LlmChatMessage, LlmChatResult, LlmTestResult } from "@toolbox/shared";
 import { deleteSetting, getSetting, setSetting } from "./settingsStore.js";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
@@ -97,6 +97,8 @@ interface ChatOptions {
   signal?: AbortSignal;
   /** 用量归属模块（如 cb-rate / watchlist.fundamental），用于用量监控 */
   module?: string;
+  /** 调用模式（用量按模式统计；默认 direct 直调） */
+  mode?: LlmCallMode;
 }
 
 export type { ChatOptions };
@@ -127,9 +129,9 @@ export async function chat(
   opts: ChatOptions = {},
 ): Promise<LlmChatResult> {
   const result = opts.search ? await chatSearch(messages, opts) : await chatCompletion(messages, opts);
-  // 用量监控：成功且有 usage 时记录（模块归属）
+  // 用量监控：成功且有 usage 时记录（模块归属 + 调用模式）
   if (result.ok && result.usage) {
-    recordLlmUsage(opts.module ?? "unknown", result.model, result.usage);
+    recordLlmUsage(opts.module ?? "unknown", result.model, result.usage, opts.mode ?? "direct");
   }
   return result;
 }
@@ -325,6 +327,8 @@ interface UsageEntry {
   ts: string;
   module: string;
   model: string;
+  /** 调用模式（direct / chat-session / reasonix）；旧数据缺省按 direct */
+  mode?: LlmCallMode;
   promptTokens: number;
   completionTokens: number;
   /** 命中缓存输入 token（DeepSeek 前缀缓存） */
@@ -332,6 +336,13 @@ interface UsageEntry {
   /** 未命中缓存输入 token */
   cacheMissTokens: number;
 }
+
+/** 调用模式中文标签 */
+export const MODE_LABELS: Record<LlmCallMode, string> = {
+  direct: "直接调用",
+  "chat-session": "会话缓存（自研）",
+  reasonix: "会话缓存（Reasonix）",
+};
 
 function readUsageEntries(): UsageEntry[] {
   const saved = kvGet<{ entries?: unknown[] }>(LLM_USAGE_KEY);
@@ -346,6 +357,7 @@ export function recordLlmUsage(
   module: string,
   model: string,
   usage: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number },
+  mode: LlmCallMode = "direct",
 ): void {
   try {
     const mod = module || "unknown";
@@ -358,6 +370,7 @@ export function recordLlmUsage(
       ts: new Date().toISOString(),
       module: mod,
       model: model || "unknown",
+      mode,
       promptTokens: usage.promptTokens ?? 0,
       completionTokens: usage.completionTokens ?? 0,
       cacheHitTokens: usage.cacheHitTokens ?? 0,
@@ -381,6 +394,7 @@ function localDay(iso: string): string {
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
   const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+  const byMode = new Map<LlmCallMode, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const byModule = new Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const byDay = new Map<
     string,
@@ -394,11 +408,18 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     }
   >();
   for (const e of entries) {
+    const mode = e.mode ?? "direct"; // 旧数据（无 mode）按 direct 计
     total.promptTokens += e.promptTokens;
     total.completionTokens += e.completionTokens;
     total.totalTokens += e.promptTokens + e.completionTokens;
     total.cacheHitTokens += e.cacheHitTokens ?? 0;
     total.cacheMissTokens += e.cacheMissTokens ?? 0;
+    const mo = byMode.get(mode) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+    mo.calls++;
+    mo.totalTokens += e.promptTokens + e.completionTokens;
+    mo.cacheHitTokens += e.cacheHitTokens ?? 0;
+    mo.cacheMissTokens += e.cacheMissTokens ?? 0;
+    byMode.set(mode, mo);
     const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
     m.calls++;
     m.totalTokens += e.promptTokens + e.completionTokens;
@@ -421,9 +442,20 @@ export function getLlmUsageSummary(): LlmUsageSummary {
   }
   const rate = (hit: number, miss: number): number => (hit + miss > 0 ? hit / (hit + miss) : 0);
   const sortDesc = (a: { totalTokens: number }, b: { totalTokens: number }) => b.totalTokens - a.totalTokens;
+  const modes: LlmCallMode[] = ["direct", "chat-session", "reasonix"];
   return {
     ok: true,
-    total: { ...total, cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens) },
+    total: {
+      ...total,
+      cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens),
+      byMode: modes
+        .filter((mo) => byMode.has(mo))
+        .map((mo) => {
+          const v = byMode.get(mo)!;
+          return { mode: mo, label: MODE_LABELS[mo], ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) };
+        })
+        .sort((a, b) => b.calls - a.calls),
+    },
     byModule: [...byModule.entries()]
       .map(([module, v]) => ({ module, label: moduleLabel(module), ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) }))
       .sort(sortDesc),

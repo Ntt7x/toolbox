@@ -323,7 +323,7 @@ export async function reasonixAsk(
   if (r.ok) {
     reg.lastAt = Date.now();
     saveReg(reg);
-    if (r.usage) recordLlmUsage(reg.module, "reasonix", r.usage);
+    if (r.usage) recordLlmUsage(reg.module, "reasonix", r.usage, "reasonix");
   }
   return r;
 }

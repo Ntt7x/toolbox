@@ -19,6 +19,20 @@ import type {
   WatchlistUpdateRequest,
 } from "@toolbox/shared";
 
+/** 个股/基金详情页跳转：股票/ETF → 雪球；场外基金 → 天天基金；无法识别 → 雪球搜索 */
+function stockDetailUrl(code: string, kind?: string): string {
+  if (kind === "fund") return `https://fund.eastmoney.com/${code}.html`;
+  const c = code.trim().toUpperCase();
+  if (/^HK\d{5}$/.test(c)) return `https://xueqiu.com/S/${c}`;
+  if (/^(SH|SZ)\d{6}$/.test(c)) return `https://xueqiu.com/S/${c}`;
+  if (/^\d{6}$/.test(c)) {
+    // 裸 6 位：6xx→沪，0/3xx→深；北交所(4/8/92x) 雪球无个股页 → 搜索
+    if (/^[0-3]/.test(c) || /^6/.test(c)) return `https://xueqiu.com/S/${c.startsWith("6") ? "SH" : "SZ"}${c}`;
+    return `https://xueqiu.com/k?q=${c}`;
+  }
+  return `https://xueqiu.com/k?q=${encodeURIComponent(code)}`;
+}
+
 const card: CSSProperties = {
   background: "#fff",
   border: "1px solid #e2e8f0",
@@ -98,7 +112,7 @@ export default function WatchlistTool() {
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
-  // 个股行情快照（code → QuoteSnapshot / FundSnapshot 混合）
+  /** 个股行情快照（code → QuoteSnapshot / FundSnapshot 混合） */
   const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot & Partial<FundSnapshot>>>({});
   // Chat 补充（追加到当前专题）
   const [appendUrl, setAppendUrl] = useState("");
@@ -720,6 +734,32 @@ export default function WatchlistTool() {
                 </button>
               )}
 
+              {/* 今日行情速览（对专题内股票/ETF 结构化统计；基金净值不计入） */}
+              {(() => {
+                const stockQs = topic.stocks
+                  .filter((s) => s.kind !== "fund")
+                  .map((s) => quotes[s.code])
+                  .filter((q): q is QuoteSnapshot => !!q && q.ok === true && typeof q.pct === "number");
+                if (stockQs.length === 0) return null;
+                const up = stockQs.filter((q) => q.pct! > 0).length;
+                const down = stockQs.filter((q) => q.pct! < 0).length;
+                const flat = stockQs.length - up - down;
+                const avg = stockQs.reduce((a, q) => a + (q.pct ?? 0), 0) / stockQs.length;
+                const latest = stockQs.reduce((a, q) => (q.ts && q.ts > a ? q.ts : a), "");
+                return (
+                  <div style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem", padding: "0.45rem 0.7rem", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, fontSize: "0.82rem", color: "#0c4a6e" }}>
+                    <span style={{ fontWeight: 600 }}>📊 今日行情速览</span>
+                    <span>🟢 上涨 <b>{up}</b></span>
+                    <span>⚪ 平盘 <b>{flat}</b></span>
+                    <span>🔴 下跌 <b>{down}</b></span>
+                    <span>
+                      平均 <b style={{ color: avg > 0 ? "#dc2626" : avg < 0 ? "#16a34a" : "#334155" }}>{avg > 0 ? "+" : ""}{avg.toFixed(2)}%</b>
+                    </span>
+                    {latest && <span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>更新 {new Date(latest).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
+                  </div>
+                );
+              })()}
+
               {/* 添加个股 */}
               <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem" }}>
                 <select
@@ -781,8 +821,17 @@ export default function WatchlistTool() {
                     >
                       <td style={{ ...thTd, color: "#94a3b8", fontSize: "1rem" }} title="拖动调整优先级">⠿</td>
                       <td style={{ ...thTd, textAlign: "left", whiteSpace: "nowrap" }}>
-                        <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.3 }}>{s.name ?? "—"}</div>
-                        <div style={{ color: "#94a3b8", fontSize: "0.72rem", lineHeight: 1.2 }}>{s.code}</div>
+                        <a
+                          href={stockDetailUrl(s.code, s.kind)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={s.kind === "fund" ? "跳转天天基金" : "跳转雪球个股页"}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: "inherit", textDecoration: "none" }}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.3 }}>{s.name ?? "—"}</div>
+                          <div style={{ color: "#1d4ed8", fontSize: "0.72rem", lineHeight: 1.2, textDecoration: "underline" }}>{s.code} ↗</div>
+                        </a>
                       </td>
                       <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}</td>
                       <td style={{ ...thTd, fontSize: "0.75rem", textAlign: "left", whiteSpace: "nowrap" }}>

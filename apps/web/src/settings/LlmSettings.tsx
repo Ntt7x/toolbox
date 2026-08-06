@@ -284,7 +284,22 @@ export default function LlmSettings() {
               </span>
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.8rem" }}>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按调用模式</div>
+              {usage?.total.byMode.length ? (
+                usage.total.byMode.map((m) => (
+                  <div key={m.mode} style={{ display: "flex", justifyContent: "space-between", padding: "0.18rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                    <span>{m.label}</span>
+                    <span style={{ color: "#64748b" }}>
+                      {m.calls} 次 · {((m.totalTokens / 1000).toFixed(1))}k · 缓存 {(m.cacheRate * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>暂无记录</span>
+              )}
+            </div>
             <div>
               <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按模块</div>
               {usage?.byModule.length ? (
