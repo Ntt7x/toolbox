@@ -34,6 +34,13 @@ registerDataSource({
   tag: "运行状态",
   description: "Reasonix Agent 会话注册表（模式 3，ACP 长会话）",
 });
+registerDataSource({
+  kind: "kv",
+  name: "reasonixHistory:",
+  page: "LLM 会话（Reasonix）",
+  tag: "对话数据",
+  description: "Reasonix 会话对话数据（服务端托管，随会话删除）",
+});
 
 const require_ = createRequire(import.meta.url);
 
@@ -414,16 +421,55 @@ export async function reasonixAsk(
     reg.lastAt = Date.now();
     saveReg(reg);
     if (r.usage) recordLlmUsage(reg.module, "reasonix", r.usage, "reasonix");
+    if (r.content) appendReasonixHistory(regId, text, r.content, r.usage); // 服务端托管对话数据（与 chatSession 一致）
   }
   return r;
 }
 
-/** 关闭会话（释放资源；reasonix 持久化历史保留）；删除注册表 */
+// ---------- 会话对话数据（服务端托管，可查看/随会话删除） ----------
+
+const HISTORY_PREFIX = "reasonixHistory:";
+/** 单会话历史条数上限（防无限膨胀；超出丢弃最早） */
+const HISTORY_MAX = 300;
+
+export interface ReasonixHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  /** 本轮 usage（assistant 消息带） */
+  usage?: ReasonixUsageShape;
+  time: number;
+}
+
+function historyKey(regId: string): string {
+  return `${HISTORY_PREFIX}${regId}`;
+}
+
+/** 追加一条历史（user+assistant 成对，由 reasonixAsk 成功时调用） */
+function appendReasonixHistory(regId: string, userText: string, answer: string, usage?: ReasonixUsageShape): void {
+  const list = kvGet<ReasonixHistoryMessage[]>(historyKey(regId)) ?? [];
+  const now = Date.now();
+  list.push({ role: "user", content: userText, time: now }, { role: "assistant", content: answer, usage, time: now });
+  if (list.length > HISTORY_MAX) list.splice(0, list.length - HISTORY_MAX);
+  kvSet(historyKey(regId), list);
+}
+
+/** 读取会话对话数据（服务端托管） */
+export function getReasonixHistory(regId: string): ReasonixHistoryMessage[] {
+  return kvGet<ReasonixHistoryMessage[]>(historyKey(regId)) ?? [];
+}
+
+/** 删除会话对话数据（随会话删除） */
+export function deleteReasonixHistory(regId: string): void {
+  kvDelete(historyKey(regId));
+}
+
+/** 关闭会话（释放资源；reasonix 持久化历史保留）；删除注册表与托管对话数据 */
 export async function closeReasonixSession(regId: string): Promise<void> {
   const reg = loadReg(regId);
   if (reg) {
     await rpc("session/close", { sessionId: reg.reasonixSessionId }, 10000).catch(() => {});
     kvDelete(regKey(regId));
+    deleteReasonixHistory(regId);
   }
 }
 

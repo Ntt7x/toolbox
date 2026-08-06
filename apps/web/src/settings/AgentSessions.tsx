@@ -6,7 +6,7 @@
 // ============================================================
 import { useEffect, useState, type ReactNode, type CSSProperties } from "react";
 import { api } from "../api";
-import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail } from "@toolbox/shared";
+import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail, ReasonixSessionDetail } from "@toolbox/shared";
 
 const STATUS_BADGE: Record<string, { text: string; bg: string; color: string }> = {
   active: { text: "活跃", bg: "#dcfce7", color: "#15803d" },
@@ -32,16 +32,15 @@ function SessionCard(props: {
 }) {
   const { kind, s, onChanged } = props;
   const [open, setOpen] = useState(false);
-  const [detail, setDetail] = useState<ChatSessionDetail | null>(null);
+  const [detail, setDetail] = useState<ChatSessionDetail | ReasonixSessionDetail | null>(null);
   const [askText, setAskText] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastResult, setLastResult] = useState<AgentSessionAskResult | null>(null);
   const [error, setError] = useState("");
 
   const loadDetail = async () => {
-    if (kind !== "chat") return;
     try {
-      const d = await api.agentSessionDetail(s.id);
+      const d = kind === "chat" ? await api.agentSessionDetail(s.id) : await api.agentSessionReasonixDetail(s.id);
       if (d.ok) setDetail(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -112,7 +111,7 @@ function SessionCard(props: {
       {open && (
         <div style={{ padding: "0.6rem 0.8rem 0.8rem", borderTop: "1px solid #e2e8f0", fontSize: "0.8rem" }}>
           {kind === "chat" ? (
-            detail ? (
+            detail && "system" in detail ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                 <details style={{ background: "#f8fafc", borderRadius: 8, padding: "0.4rem" }}>
                   <summary style={{ cursor: "pointer", color: "#475569" }}>🧠 System 提示词（{detail.system?.length ?? 0} 字）</summary>
@@ -141,7 +140,26 @@ function SessionCard(props: {
               <div style={{ color: "#94a3b8" }}>加载中…</div>
             )
           ) : (
-            <div style={{ color: "#64748b" }}>Reasonix 会话历史保存在 Agent 侧（ACP 持久化），此处可续问/关闭；最后活动 {fmtTime(s.lastAt)}</div>
+            // Reasonix：展示服务端托管对话数据
+            detail ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>对话数据由服务端托管（reasonixHistory:）· 最后活动 {fmtTime(s.lastAt)}</div>
+                {detail.history && detail.history.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.5rem" }}>
+                    {detail.history.map((m, i) => (
+                      <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.role === "user" ? "#dbeafe" : "#f1f5f9", borderRadius: 10, padding: "0.35rem 0.6rem", fontSize: "0.75rem", whiteSpace: "pre-wrap", color: "#1e293b" }}>
+                        <span style={{ fontSize: "0.65rem", color: "#64748b" }}>{m.role === "user" ? "👤 我" : "🤖 Reasonix"}</span>
+                        <div>{String(m.content).slice(0, 600)}{String(m.content).length > 600 ? "…" : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "#94a3b8" }}>暂无对话记录（每次续问成功后自动归档到服务端）</div>
+                )}
+              </div>
+            ) : (
+              <div style={{ color: "#94a3b8" }}>加载中…</div>
+            )
           )}
           {error && <div style={{ color: "#b91c1c", marginTop: "0.4rem" }}>❌ {error}</div>}
           {lastResult && lastResult.ok && (

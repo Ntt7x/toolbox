@@ -696,6 +696,20 @@ export interface AgentSessionAskResult {
   message?: string;
 }
 
+/** Reasonix 会话详情（含服务端托管对话数据） */
+export interface ReasonixSessionDetail {
+  ok: boolean;
+  id?: string;
+  module?: string;
+  status?: "active" | "archived";
+  createdAt?: number;
+  lastAt?: number;
+  cwd?: string;
+  /** 对话数据（user/assistant 成对，服务端托管） */
+  history?: { role: "user" | "assistant"; content: string; time: number; usage?: AgentSessionAskResult["usage"] }[];
+  message?: string;
+}
+
 // ============================================================
 // DeepSeek 分享链接对话提取（deepseek-share）
 // ============================================================

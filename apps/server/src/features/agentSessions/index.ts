@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { API_PREFIX, type AgentSessionAskResult, type AgentSessionCreateResult, type AgentSessionCreateRequest, type AgentSessionsResult, type ChatSessionDetail, type ToolMeta } from "@toolbox/shared";
 import { createChatSession, chatSessionAsk, listChatSessions, deleteChatSession, getChatSessionDetail, restoreArchivedSession } from "../../core/chatSession.js";
-import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions } from "../../core/reasonix.js";
+import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory } from "../../core/reasonix.js";
 import { createTask } from "../../core/tasks.js";
 
 export const meta: ToolMeta = {
@@ -126,6 +126,20 @@ export function register(app: Hono): void {
   app.delete(`${API_PREFIX}/llm/agent-sessions/chat/:id`, (c) => {
     const ok = deleteChatSession(c.req.param("id"));
     return c.json({ ok, message: ok ? "已删除" : "会话不存在" }, ok ? 200 : 404);
+  });
+
+  // Reasonix 详情：GET /api/llm/agent-sessions/reasonix/:id（含服务端托管对话数据）
+  app.get(`${API_PREFIX}/llm/agent-sessions/reasonix/:id`, (c) => {
+    const id = c.req.param("id");
+    const reg = listReasonixSessions().find((s) => s.id === id);
+    const history = getReasonixHistory(id).map((m) => ({ role: m.role, content: m.content, time: m.time, ...(m.usage ? { usage: m.usage } : {}) }));
+    const body = {
+      ok: true,
+      id,
+      ...(reg ? { module: reg.module, status: reg.status, createdAt: reg.createdAt, lastAt: reg.lastAt, cwd: reg.cwd } : {}),
+      history,
+    };
+    return c.json(body);
   });
 
   // Reasonix 续问：POST /api/llm/agent-sessions/reasonix/:id/ask { text } —— 后台任务

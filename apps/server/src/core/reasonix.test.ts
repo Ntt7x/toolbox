@@ -5,7 +5,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { kvSet, kvGet, kvListRaw, kvDelete } from "./kvStore.js";
-import { listReasonixSessions, createReasonixSession, reasonixAsk, shutdownReasonix, ACTIVE_MS, ARCHIVE_MS, type ReasonixSessionReg } from "./reasonix.js";
+import { listReasonixSessions, createReasonixSession, reasonixAsk, shutdownReasonix, getReasonixHistory, deleteReasonixHistory, ACTIVE_MS, ARCHIVE_MS, type ReasonixSessionReg } from "./reasonix.js";
 import { setSetting, deleteSetting } from "./settingsStore.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -81,6 +81,11 @@ test("reasonixAsk：不存在的会话返回 ok:false（归档期文案）", asy
   const r = await reasonixAsk("rx-no-such-session", "你好");
   assert.equal(r.ok, false);
   assert.match(r.message!, /不存在或已过期/);
+});
+
+test("对话数据托管：getReasonixHistory 空 / deleteReasonixHistory 不崩", () => {
+  assert.deepEqual(getReasonixHistory("rx-no-history"), []);
+  deleteReasonixHistory("rx-no-history"); // 不存在的 key 静默
 });
 
 test("生命周期常量：活跃 30 天 / 归档 360 天", () => {

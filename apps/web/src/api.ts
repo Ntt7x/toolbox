@@ -28,6 +28,7 @@
   type AgentSessionCreateResult,
   type AgentSessionAskResult,
   type ChatSessionDetail,
+  type ReasonixSessionDetail,
   type LocalDataResult,
   type LocalDataUpdateRequest,
   type PromptDetailResult,
@@ -240,6 +241,7 @@ export const api = {
   agentSessionCreate: (kind: "chat" | "reasonix", req: AgentSessionCreateRequest) =>
     request<AgentSessionCreateResult>(`/llm/agent-sessions/${kind}`, jsonInit("POST", req)),
   agentSessionDetail: (id: string) => request<ChatSessionDetail>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}`),
+  agentSessionReasonixDetail: (id: string) => request<ReasonixSessionDetail>(`/llm/agent-sessions/reasonix/${encodeURIComponent(id)}`),
   agentSessionRestore: (id: string) =>
     request<{ ok: boolean; message: string }>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
   agentSessionAsk: (kind: "chat" | "reasonix", id: string, text: string) =>
