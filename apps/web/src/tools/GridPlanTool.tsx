@@ -39,23 +39,39 @@ const card: CSSProperties = {
 };
 
 const btn: CSSProperties = {
-  padding: "0.6rem 1.4rem",
-  borderRadius: 8,
+  padding: "0.55rem 1.3rem",
+  borderRadius: 10,
   border: "none",
-  background: "#3b82f6",
+  background: "var(--primary)",
   color: "#fff",
-  fontSize: "0.95rem",
+  fontSize: "0.9rem",
   fontWeight: 600,
   cursor: "pointer",
+  transition: "background 150ms ease, transform 150ms ease",
+  boxShadow: "0 2px 8px rgba(37,99,235,0.25)",
 };
 
 const input: CSSProperties = {
   width: 110,
-  padding: "0.5rem 0.6rem",
-  borderRadius: 8,
+  padding: "0.5rem 0.7rem",
+  borderRadius: 10,
   border: "1px solid #cbd5e1",
   fontSize: "0.95rem",
   textAlign: "center",
+  transition: "border-color 150ms ease, box-shadow 150ms ease",
+};
+
+/** 步骤序号徽章（① ② ③ ④ 统一视觉） */
+const stepLabel: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "0.45rem",
+  fontWeight: 700,
+  fontSize: "0.85rem",
+  color: "#1e293b",
+  margin: "1.1rem 0 0.6rem",
+  paddingTop: "0.2rem",
+  borderTop: "1px dashed #e2e8f0",
 };
 
 const table: CSSProperties = {
@@ -248,7 +264,7 @@ export default function GridPlanTool() {
 
       {/* 表单 */}
       <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: "0.6rem" }}>① 行情趋势类型</div>
+        <div style={stepLabel}>① 行情趋势类型</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "0.5rem" }}>
           {TREND_OPTIONS.map((o) => (
             <label
@@ -258,11 +274,14 @@ export default function GridPlanTool() {
                 alignItems: "flex-start",
                 gap: "0.5rem",
                 padding: "0.55rem 0.7rem",
-                borderRadius: 8,
-                border: `1.5px solid ${type === o.type ? "#3b82f6" : "#e2e8f0"}`,
-                background: type === o.type ? "#eff6ff" : "#fff",
+                borderRadius: 10,
+                border: `1.5px solid ${type === o.type ? "var(--primary)" : "#e2e8f0"}`,
+                background: type === o.type ? "var(--primary-soft)" : "#fff",
                 cursor: "pointer",
+                transition: "border-color 150ms ease, background 150ms ease, transform 150ms ease",
               }}
+              onMouseEnter={(e) => { if (type !== o.type) e.currentTarget.style.borderColor = "#bfdbfe"; }}
+              onMouseLeave={(e) => { if (type !== o.type) e.currentTarget.style.borderColor = "#e2e8f0"; }}
             >
               <input
                 type="radio"
@@ -280,7 +299,7 @@ export default function GridPlanTool() {
           ))}
         </div>
 
-        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>② 股票代码自动补全（可选）</div>
+        <div style={stepLabel}>② 股票代码自动补全（可选）</div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
           <input
             style={{ ...input, width: 180 }}
@@ -320,7 +339,7 @@ export default function GridPlanTool() {
           )}
         </div>
 
-        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>③ 月线布林带数值（可手动填写/修改，顺序任意，可附带文字备注）</div>
+        <div style={stepLabel}>③ 月线布林带数值（可手动填写/修改，顺序任意，可附带文字备注）</div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
           {inputs.map((v, i) => (
             <input
@@ -346,7 +365,7 @@ export default function GridPlanTool() {
           示例数值：1.073（上轨）1.290（中轨）0.856（下轨）——请直接填写三个数字，顺序任意。
         </div>
 
-        <div style={{ fontWeight: 600, margin: "1rem 0 0.6rem" }}>④ 最大仓位金额（可选，控制仓位数量）</div>
+        <div style={stepLabel}>④ 最大仓位金额（可选，控制仓位数量）</div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <input
             style={input}

@@ -193,6 +193,84 @@ textarea.input:focus {
   font-size: 0.82rem;
 }
 
+/* 标题层级（页面内 section 标题统一） */
+h2 {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #334155;
+  margin: 1.3rem 0 0.6rem;
+}
+h3 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #475569;
+  margin: 1rem 0 0.5rem;
+}
+
+/* 表格（统一边框/表头/斑马纹/行 hover） */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.table th {
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #e2e8f0;
+  text-align: center;
+  white-space: nowrap;
+}
+.table td {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #eef2f7;
+  text-align: center;
+  color: #334155;
+}
+.table tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+.table tbody tr:hover {
+  background: #f1f5f9;
+}
+
+/* 表单区块 */
+.form-grid {
+  display: grid;
+  gap: 0.7rem 1.2rem;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.field-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #475569;
+}
+.field-hint {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+/* 可点击卡片 hover 浮起 */
+.clickable-card {
+  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+}
+.clickable-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+
 /* 页面进入动画 */
 @keyframes fadeUp {
   from {
