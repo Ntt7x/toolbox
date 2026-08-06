@@ -6,7 +6,7 @@
 // ============================================================
 
 import type { LocalDataSource } from "@toolbox/shared";
-import { kvCount } from "./kvStore.js";
+import { kvCount, kvListRaw } from "./kvStore.js";
 import { countRows, listTables } from "./tableStore.js";
 
 interface DataSourceMeta {
@@ -43,17 +43,22 @@ export function listDataSources(): LocalDataSource[] {
       count: kvCount(m.name),
     });
   }
-  // 未标记 KV：存在的 key 前缀不在注册表
-  const allKvCount = kvCount();
-  const registeredCover = [...kvPrefixes].reduce((s, p) => s + kvCount(p), 0);
-  if (allKvCount > registeredCover) {
+  // 未标记 KV：存在的 key 前缀不在注册表（逐 key 判定，子前缀源不重复计数）
+  const registeredKvPrefixes = [...kvPrefixes];
+  let unmarkedCount = 0;
+  if (registeredKvPrefixes.length > 0) {
+    for (const r of kvListRaw("", 200000)) {
+      if (!registeredKvPrefixes.some((p) => r.key.startsWith(p))) unmarkedCount++;
+    }
+  }
+  if (unmarkedCount > 0) {
     out.push({
       kind: "kv",
       name: "(未标记)",
       page: "—",
       tag: "未标记",
       description: "key 前缀未被任何模块注册的 KV 数据",
-      count: allKvCount - registeredCover,
+      count: unmarkedCount,
     });
   }
 

@@ -14,6 +14,15 @@
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { chat, type ChatOptions } from "./llm.js";
 import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
+import { registerDataSource } from "./dataRegistry.js";
+
+registerDataSource({
+  kind: "kv",
+  name: "chatSession:",
+  page: "LLM 缓存会话",
+  tag: "运行状态",
+  description: "LLM Cache 会话（模式 2 自研会话，前缀缓存降本）",
+});
 
 /** chat 实现（可注入，测试用 mock；生产保持 chat） */
 let chatImpl: (messages: LlmChatMessage[], opts?: ChatOptions) => Promise<LlmChatResult> = chat;

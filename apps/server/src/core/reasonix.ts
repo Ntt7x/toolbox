@@ -25,6 +25,15 @@ import { loadApiKey, recordLlmUsage } from "./llm.js";
 import { getSetting } from "./settingsStore.js";
 import { DATA_DIR } from "./db.js";
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+registerDataSource({
+  kind: "kv",
+  name: "reasonixSession:",
+  page: "LLM 会话（Reasonix）",
+  tag: "运行状态",
+  description: "Reasonix Agent 会话注册表（模式 3，ACP 长会话）",
+});
 
 const require_ = createRequire(import.meta.url);
 
