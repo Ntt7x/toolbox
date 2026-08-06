@@ -312,6 +312,11 @@ const MODULE_LABELS: Record<string, string> = {
   "watchlist.import": "专题自选股·Chat导入",
   "reverse-repo.daily": "逆回购·每日探查",
   "reverse-repo.monthly-update": "逆回购·月度更新",
+  "medical-kb.ask": "医学知识库·问答",
+  "medical-kb.import": "医学知识库·导入",
+  "agent-session.chat": "Agent 会话·自研续问",
+  "agent-session.reasonix": "Agent 会话·Reasonix 续问",
+  "knowledge.unknown": "知识库·未标注（调用方未传业务 module）",
   "llm.test": "连接测试",
   "llm.chat": "对话验证",
 };

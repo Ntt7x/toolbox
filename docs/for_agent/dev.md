@@ -63,7 +63,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 2. **module 命名规范**：`<页面/业务>.<动作>` 点分（`medical-kb.ask`、`medical-kb.import`、
    `agent-session.chat`）；**禁止**把底层会话标识（`knowledge.medical`、`watchlist.fundamental.session`）当用量 module。
 3. **链路**：业务 feature（如 rehab 的 medical-kb 路由）→ 调 knowledgeSession/kbAsk 时**显式传业务 module**；
-   会话类封装（knowledgeSession）再透传给 reasonixAsk/chat。
+   会话类封装（knowledgeSession）再透传给 reasonixAsk/chat；**未传时归 `knowledge.unknown` 并 console.warn**
+   （不回落成 `knowledge.<instance>` 技术 module，让漏传问题在用量上暴露）。
 4. **前端展示**：按场景（业务/系统/测试）→ 按模式 → 按模块 三栏；旧数据无 mode/scene 兼容按 direct/module 推断。
 
 
@@ -94,6 +95,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   `getReasonixHistory` / `deleteReasonixHistory`（随 closeReasonixSession 清理）；
   `backfillReasonixHistory` 从 `%APPDATA%/reasonix/sessions/<sid>.jsonl` 回填存量会话历史
   （幂等：已有托管数据跳过；user 消息剥离注入引导词提取真实问题）；详情路由惰性触发
+- **引导词去重（2026-08-07）**：knowledgeSession 的 Agent 引导词（knowledge.agent.guide / medical-kb.agent.guide）
+  **只在新会话首轮发送**——注册表记录渲染后引导词指纹 `guideFp`，后续轮次指纹相同则只发任务指令
+  （历史已含引导，省每轮 ~200-400 token 且前缀更干净）；模板升级 → 指纹变 → 自动重发；
+  会话重建（recreateSession）后新会话无历史，自动带引导词。
+- **知识库会话复用（2026-08-07）**：reasonix 进程重启后旧会话 `unknown session` 时**重建而非 drop**——
+  `recreateSession` 关闭旧会话并更新注册表（关闭失败也兜底删 `reasonixSession:` 注册表），
+  同一实例注册表始终指向唯一活跃会话，不产生孤儿堆积。
 
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），

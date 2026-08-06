@@ -43,15 +43,24 @@ interface KnowledgeSessionReg {
   instance: string;
   createdAt: number;
   lastAt: number;
+  /** 引导词指纹：首轮发送后记录；后续轮次指纹相同则不再重复发送（省 token，历史已含引导） */
+  guideFp?: string;
+}
+
+/** 轻量稳定指纹（渲染后引导词内容 hash；模板升级 → 指纹变化 → 重新发送引导） */
+function fingerprint(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return String(h);
 }
 
 /** 获取（或创建）某实例的 Reasonix 会话；失败返回 ok:false（调用方降级直调） */
-export async function ensureKnowledgeSession(instance: string): Promise<{ ok: boolean; regId?: string; message?: string }> {
+export async function ensureKnowledgeSession(instance: string): Promise<{ ok: boolean; regId?: string; message?: string; created?: boolean }> {
   const key = sessionKey(instance);
   const existing = kvGet<KnowledgeSessionReg>(key);
   if (existing && typeof existing.regId === "string") {
     kvSet(key, { ...existing, lastAt: Date.now() }); // 访问即刷新（元数据）
-    return { ok: true, regId: existing.regId };
+    return { ok: true, regId: existing.regId, created: false };
   }
   return createNew();
 
@@ -59,7 +68,7 @@ export async function ensureKnowledgeSession(instance: string): Promise<{ ok: bo
     const s = await createReasonixSession({ module: `knowledge.${instance}`, mcpServers: enabledMcpServers() });
     if (!s.ok || !s.id) return { ok: false, message: s.message ?? "reasonix 会话创建失败" };
     kvSet(key, { regId: s.id, instance, createdAt: Date.now(), lastAt: Date.now() } satisfies KnowledgeSessionReg);
-    return { ok: true, regId: s.id };
+    return { ok: true, regId: s.id, created: true };
   }
 }
 
@@ -113,6 +122,13 @@ export async function knowledgeAgentAsk(
   return enqueue(instance, () => doAsk(instance, question, opts));
 }
 
+/** 用量归属 module：业务调用方必须传业务场景 module（如 medical-kb.ask）；未传时归「未标注」并告警，避免技术 module 混入用量 */
+function usageModule(opts: { module?: string }, instance: string): string {
+  if (opts.module) return opts.module;
+  console.warn(`[knowledgeSession] 实例 ${instance} 的 LLM 调用未传业务 module（用量将归入 knowledge.unknown）——调用方应透传业务场景 module`);
+  return "knowledge.unknown";
+}
+
 async function doAsk(
   instance: string,
   question: string,
@@ -120,15 +136,24 @@ async function doAsk(
 ): Promise<{ ok: boolean; content?: string; usage?: unknown; message?: string; fallback?: boolean }> {
   const s = await ensureKnowledgeSession(instance);
   if (!s.ok || !s.regId) return { ok: false, message: s.message, fallback: true };
-  const prompt =
-    `${guideFor(instance, "回答用户问题")}\n` +
-    getPromptTemplate(taskTemplateId(instance, "ask")).replace("{instance}", instance).replace("{question}", question);
-  // 用量归属：业务 module 透传（如 medical-kb.ask）优先，缺省回落会话 module（knowledge.<instance>）
-  let r = await reasonixAsk(s.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
+  const module = usageModule(opts, instance);
+  const guide = guideFor(instance, "回答用户问题");
+  const task = getPromptTemplate(taskTemplateId(instance, "ask")).replace("{instance}", instance).replace("{question}", question);
+  // 引导词去重：首轮（新会话/引导词指纹变化）才发送；后续轮次历史已含引导，只发任务指令（省 token、前缀更干净）
+  const reg = kvGet<KnowledgeSessionReg>(sessionKey(instance));
+  const fp = fingerprint(guide);
+  const needGuide = !reg?.guideFp || reg.guideFp !== fp;
+  const prompt = needGuide ? `${guide}\n${task}` : task;
+  if (needGuide) kvSet(sessionKey(instance), { ...reg!, instance, lastAt: Date.now(), guideFp: fp });
+  let r = await reasonixAsk(s.regId, prompt, { ...opts, module });
   // 会话失效（reasonix 进程重启/会话丢失，unknown session 等）：重建会话后重试一次（不再 drop，避免孤儿堆积）
   if (!r.ok && r.sessionGone) {
     const s2 = await recreateSession(instance);
-    if (s2.ok && s2.regId) r = await reasonixAsk(s2.regId, prompt, { ...opts, module: opts.module ?? `knowledge.${instance}` });
+    if (s2.ok && s2.regId) {
+      // 重建后是新会话（无历史），必须带引导词
+      const prompt2 = `${guide}\n${task}`;
+      r = await reasonixAsk(s2.regId, prompt2, { ...opts, module });
+    }
   }
   if (!r.ok) {
     return { ok: false, message: r.message, fallback: true }; // 临时错误（超时等）保留会话复用
@@ -163,15 +188,24 @@ async function doImport(
   const dialog = conv.messages
     .map((m, i) => `${i + 1}. [${m.role}] ${typeof m.content === "string" ? m.content.slice(0, 2000) : JSON.stringify(m.content).slice(0, 2000)}`)
     .join("\n");
-  const prompt =
-    `${guideFor(instance, "把对话内容整理为知识条目并写入知识库")}\n` +
-    getPromptTemplate(taskTemplateId(instance, "import")).replaceAll("{instance}", instance).replace("{dialog}", dialog);
-  let r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
+  const module = usageModule(opts, instance);
+  const guide = guideFor(instance, "把对话内容整理为知识条目并写入知识库");
+  const task = getPromptTemplate(taskTemplateId(instance, "import")).replaceAll("{instance}", instance).replace("{dialog}", dialog);
+  // 引导词去重：首轮（新会话/引导词指纹变化）才发送
+  const reg = kvGet<KnowledgeSessionReg>(sessionKey(instance));
+  const fp = fingerprint(guide);
+  const needGuide = !reg?.guideFp || reg.guideFp !== fp;
+  const prompt = needGuide ? `${guide}\n${task}` : task;
+  if (needGuide) kvSet(sessionKey(instance), { ...reg!, instance, lastAt: Date.now(), guideFp: fp });
+  let r = await reasonixAsk(s.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module });
   if (!r.ok) {
     if (r.sessionGone) {
-      // 会话失效：重建会话后重试一次（不再 drop，避免孤儿堆积）
+      // 会话失效：重建会话后重试一次（不再 drop，避免孤儿堆积）；重建后是新会话，必须带引导词
       const s2 = await recreateSession(instance);
-      if (s2.ok && s2.regId) r = await reasonixAsk(s2.regId, prompt, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module: opts.module ?? `knowledge.${instance}` });
+      if (s2.ok && s2.regId) {
+        const prompt2 = `${guide}\n${task}`;
+        r = await reasonixAsk(s2.regId, prompt2, { timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000, module });
+      }
     }
     if (!r.ok) return { ok: false, message: r.message, fallback: true };
   }
