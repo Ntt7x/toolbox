@@ -140,13 +140,22 @@ export default function MemoTool() {
       {err && <ErrorCard>{err}</ErrorCard>}
 
       <div style={card}>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.8rem" }}>
-          <input
-            style={input}
-            placeholder="记录一个改进点 / 问题，例如：某某页面按钮文案不清晰…"
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", marginBottom: "0.8rem" }}>
+          <textarea
+            style={{ ...input, flex: 1, minWidth: 0, resize: "vertical", minHeight: kindSel === "feature" ? 110 : 46, fontFamily: "inherit", lineHeight: 1.6 }}
+            placeholder={
+              kindSel === "feature"
+                ? "详细描述需求：目标、涉及页面/模块、期望交互、边界情况…（需求型记录输入框已加大，便于完整描述）"
+                : "记录一个改进点 / 问题，例如：某某页面按钮文案不清晰…"
+            }
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void add();
+              }
+            }}
           />
           <button style={btn} onClick={() => void add()} disabled={loading} type="button">
             ➕ 记录

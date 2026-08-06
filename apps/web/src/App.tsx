@@ -48,7 +48,7 @@ interface MenuGroup {
 
 const MENU_GROUPS: MenuGroup[] = [
   {
-    label: "后台管理",
+    label: "后台",
     staticItems: [
       { name: "LLM 用量", path: "/settings/llm", icon: "🤖" },
       { name: "LLM 会话", path: "/settings/agent-sessions", icon: "💬" },
@@ -58,7 +58,7 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
-  { label: "小工具", toolIds: ["deepseek-share", "zhihu-crawler", "books"] },
+  { label: "工具", toolIds: ["deepseek-share", "zhihu-crawler", "books"] },
   { label: "知识库", toolIds: ["rehab-medical"] },
 ];
 
