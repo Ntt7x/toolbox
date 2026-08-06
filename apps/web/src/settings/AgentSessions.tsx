@@ -6,7 +6,7 @@
 // ============================================================
 import { useEffect, useState, type ReactNode, type CSSProperties } from "react";
 import { api } from "../api";
-import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail, ReasonixSessionDetail, ReasonixProcessStatus, McpServerConfigItem } from "@toolbox/shared";
+import type { AgentSessionsResult, AgentSessionAskResult, AgentSessionListItem, ChatSessionDetail, ReasonixSessionDetail, ReasonixProcessStatus, McpServerConfigItem, PromptMeta } from "@toolbox/shared";
 
 const STATUS_BADGE: Record<string, { text: string; bg: string; color: string }> = {
   active: { text: "活跃", bg: "#dcfce7", color: "#15803d" },
@@ -211,7 +211,8 @@ export default function AgentSessions() {
   const [proc, setProc] = useState<ReasonixProcessStatus | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServerConfigItem[]>([]);
   const [procBusy, setProcBusy] = useState(false);
-  const [tab, setTab] = useState<"self" | "reasonix">("self");
+  const [tab, setTab] = useState<"self" | "reasonix" | "prompts">("self");
+  const [prompts, setPrompts] = useState<PromptMeta[]>([]);
   const [showCreate, setShowCreate] = useState<"chat" | "reasonix" | null>(null);
   const [module, setModule] = useState("");
   const [system, setSystem] = useState("");
@@ -222,10 +223,11 @@ export default function AgentSessions() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, p, m] = await Promise.all([api.agentSessions(), api.reasonixProcess(), api.mcpServers()]);
+      const [s, p, m, pr] = await Promise.all([api.agentSessions(), api.reasonixProcess(), api.mcpServers(), api.prompts()]);
       setData(s);
       setProc(p);
       setMcpServers(m.servers);
+      if (pr.ok && "prompts" in pr) setPrompts(pr.prompts);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -348,6 +350,7 @@ export default function AgentSessions() {
           [
             { key: "self", label: "💾 自研会话管理", desc: "Cache 会话（模式 2）" },
             { key: "reasonix", label: "🤖 Reasonix 管理", desc: "进程 / MCP / 会话（模式 3）" },
+            { key: "prompts", label: "📝 提示词管理", desc: "统一数据化 · 场景化" },
           ] as const
         ).map((t) => (
           <button
@@ -376,6 +379,8 @@ export default function AgentSessions() {
         data && (
           tab === "self" ? (
             renderList("chat", "自研 Cache 会话（模式 2）", data.chat)
+          ) : tab === "prompts" ? (
+            <PromptsTab prompts={prompts} onChanged={() => void load()} />
           ) : (
             <>
               {/* Reasonix 管理说明 */}
@@ -476,6 +481,136 @@ export default function AgentSessions() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 提示词管理 Tab：按场景分组展示所有提示词模板，支持编辑/重置/预览 */
+function PromptsTab(props: { prompts: PromptMeta[]; onChanged: () => void }) {
+  const { prompts, onChanged } = props;
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // 按场景分组（保持注册表顺序）
+  const groups: { group: string; items: PromptMeta[] }[] = [];
+  const seen = new Set<string>();
+  for (const p of prompts) {
+    const g = p.group ?? "通用";
+    if (!seen.has(g)) {
+      seen.add(g);
+      groups.push({ group: g, items: [] });
+    }
+    groups.find((x) => x.group === g)!.items.push(p);
+  }
+
+  const openEdit = async (p: PromptMeta) => {
+    setEditId(p.id);
+    setDraft(p.template);
+    setPreview(null);
+    setMsg(null);
+  };
+
+  const showPreview = async (p: PromptMeta) => {
+    try {
+      const d = await api.promptDetail(p.id);
+      if (d.ok && "rendered" in d) setPreview(d.rendered);
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const save = async () => {
+    if (!editId) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.promptUpdate(editId, draft);
+      if (!r.ok) setMsg({ kind: "err", text: "保存失败" });
+      else setMsg({ kind: "ok", text: "已保存（存于本地设置数据 settings:prompt.*）" });
+      setEditId(null);
+      onChanged();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async (id: string) => {
+    if (!confirm(`恢复提示词 ${id} 为默认值？`)) return;
+    try {
+      const r = await api.promptReset(id);
+      if (!r.ok) setMsg({ kind: "err", text: "重置失败" });
+      else {
+        setMsg({ kind: "ok", text: `已恢复默认 ${id}` });
+        setEditId(null);
+        onChanged();
+      }
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: "0.76rem", color: "#64748b", marginBottom: "0.8rem", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.5rem 0.8rem" }}>
+        所有 LLM / 程序性提示词统一存储在「本地设置数据」（settings:prompt.*），服务端实际使用与页面展示走同一条链路。
+        可编辑模板（保存即时生效于后续调用）或一键恢复默认；「预览」为默认参数渲染后的完整文本。
+      </div>
+      {msg && (
+        <div style={{ fontSize: "0.78rem", marginBottom: "0.6rem", color: msg.kind === "ok" ? "#15803d" : "#b91c1c" }}>
+          {msg.kind === "ok" ? "✓" : "❌"} {msg.text}
+        </div>
+      )}
+      {groups.map((g) => (
+        <details key={g.group} open style={{ marginBottom: "0.8rem", border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff", padding: "0.4rem 0.8rem" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.85rem", color: "#334155" }}>
+            🏷 {g.group}
+            <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.4rem" }}>{g.items.length} 个提示词</span>
+          </summary>
+          <div style={{ marginTop: "0.4rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {g.items.map((p) => (
+              <div key={p.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.4rem 0.6rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <b style={{ fontSize: "0.78rem", fontFamily: "monospace", color: "#1d4ed8" }}>{p.id}</b>
+                  <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>{p.page}</span>
+                  <span style={{ flex: 1 }} />
+                  {editId === p.id ? (
+                    <button style={{ ...btn, background: "#16a34a", color: "#fff", borderColor: "#16a34a" }} disabled={busy} onClick={() => void save()} type="button">保存</button>
+                  ) : (
+                    <button style={btn} onClick={() => void openEdit(p)} type="button">✏️ 编辑</button>
+                  )}
+                  <button style={btn} onClick={() => void showPreview(p)} type="button">👁 预览</button>
+                  <button style={{ ...btn, color: "#b91c1c" }} onClick={() => void reset(p.id)} type="button">↺ 重置</button>
+                </div>
+                <div style={{ color: "#64748b", fontSize: "0.74rem", marginTop: "0.2rem" }}>{p.description}</div>
+                {editId === p.id ? (
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    rows={Math.min(16, Math.max(4, draft.split("\n").length))}
+                    style={{ width: "100%", marginTop: "0.4rem", padding: "0.4rem", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: "0.75rem", fontFamily: "monospace", boxSizing: "border-box" }}
+                  />
+                ) : (
+                  <details style={{ marginTop: "0.3rem" }}>
+                    <summary style={{ cursor: "pointer", fontSize: "0.72rem", color: "#94a3b8" }}>查看模板（{p.template.length} 字）</summary>
+                    <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.72rem", color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "0.5rem", maxHeight: 240, overflowY: "auto" }}>{p.template}</pre>
+                  </details>
+                )}
+                {preview && (
+                  <details open style={{ marginTop: "0.3rem" }}>
+                    <summary style={{ cursor: "pointer", fontSize: "0.72rem", color: "#94a3b8" }}>渲染预览（默认参数）</summary>
+                    <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.72rem", color: "#475569", background: "#f0fdf4", borderRadius: 8, padding: "0.5rem", maxHeight: 240, overflowY: "auto" }}>{preview}</pre>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      ))}
     </div>
   );
 }

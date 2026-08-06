@@ -152,6 +152,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4.4 本地数据治理原则（禁止硬编码）
 
+- **提示词管理（core/prompts.ts，2026-08-06 强化）**：所有 LLM / 程序性提示词
+  **必须**进 `prompts.ts` 注册表（seed 到 `settings:prompt.*`，服务端使用与页面展示
+  同一条链路）；**禁止在业务代码里硬编码长 system/提示词**（审计例外可临时，随后迁移）。
+  - `PromptDef` 配场景元数据 `PROMPT_META`（id → [场景分组, 归属页面]）；新提示词必须登记，
+    否则管理页落「通用」分组（prompts 单测会拦）。
+  - 占位符模板用 `{xxx}`（如 `{instance} {question}`）；渲染处 `.replace()` 填充。
+  - 管理入口：Agent 会话管理页「📝 提示词管理」Tab（编辑/预览/重置）；API
+    `GET /api/prompts`、`GET/PUT /api/prompts/:id`、`POST /api/prompts/:id/reset`。
+  - 已知示例：knowledgeSession 的 Agent 引导词/任务指令（knowledge.agent.*）曾硬编码，
+    已迁移为模板。
+
 - **LLM 调用触发原则（2026-08-06 起，强制）**：**程序不得主动/自动隐式触发 LLM 调用**——
   所有 LLM 调用必须由**用户主动操作**（点击按钮/明确指令）或**用户明确规划的流程**触发，
   否则账单失控。GET 类接口只读，不得为补数据而隐式调 LLM（历史违规：reverse-repo

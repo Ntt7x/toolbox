@@ -795,6 +795,10 @@ export interface PromptMeta {
   /** settingsStore 存储键（不含 settings: 前缀） */
   key: string;
   description: string;
+  /** 场景分组（交易 / 知识库 / 系统…） */
+  group: string;
+  /** 归属页面 */
+  page: string;
   /** 当前模板文本 */
   template: string;
 }
