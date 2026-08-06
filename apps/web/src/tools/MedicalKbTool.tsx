@@ -24,7 +24,7 @@ function isShareInput(text: string): boolean {
 
 export default function MedicalKbTool() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(""); // 多行：每行一个分享链接
   const [question, setQuestion] = useState("");
   const [listErr, setListErr] = useState<string | null>(null);
   const [clipHint, setClipHint] = useState(false);
@@ -53,11 +53,12 @@ export default function MedicalKbTool() {
   }, []);
 
   const doImport = async () => {
-    const u = url.trim();
-    if (!u) return;
+    // 从多行文本提取全部分享链接（兼容每行一个/夹杂说明文字）
+    const links = (url.match(/https?:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]{8,64}/g) ?? []).map((u) => u.trim()).filter(Boolean);
+    if (links.length === 0) return;
     setUrl("");
     try {
-      const t = await api.medicalKbImport(u);
+      const t = await api.medicalKbImport(links);
       if (t.ok) importTask.watch(t.taskId, t);
       else setListErr(t.message);
     } catch (e) {
@@ -65,12 +66,13 @@ export default function MedicalKbTool() {
     }
   };
 
-  /** 从剪贴板读取分享链接并自动填入（仅当符合链接格式且输入框为空） */
+  /** 从剪贴板读取分享链接并自动填入（支持多个链接；仅当输入框为空） */
   const readClipboard = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (isShareInput(text) && !url.trim()) {
-        setUrl(text.trim());
+      const links = (text.match(/https?:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]{8,64}/g) ?? []).map((u) => u.trim());
+      if (links.length > 0 && !url.trim()) {
+        setUrl(links.join("\n"));
         setClipHint(true);
         setTimeout(() => setClipHint(false), 6000);
       }
@@ -111,21 +113,43 @@ export default function MedicalKbTool() {
 
       {/* 知识导入 */}
       <div style={card}>
-        <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>📥 导入知识（Chat 分享链接）</div>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <input style={input} placeholder="粘贴 DeepSeek 分享链接，如 https://chat.deepseek.com/share/xxx" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void doImport(); }} />
+        <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>📥 导入知识（Chat 分享链接，支持批量）</div>
+        <textarea
+          style={{ ...input, height: 64, resize: "vertical", fontFamily: "inherit", lineHeight: 1.7 }}
+          placeholder={"粘贴 DeepSeek 分享链接，每行一个（支持多条批量导入）：\nhttps://chat.deepseek.com/share/xxx\nhttps://chat.deepseek.com/share/yyy"}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void doImport(); }}
+        />
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center" }}>
           <button style={{ ...btn, background: "#0ea5e9" }} onClick={() => void readClipboard()} title="读取剪贴板中的分享链接" type="button">
-            📋
+            📋 从剪贴板读取
           </button>
-          <button style={btn} onClick={() => void doImport()} disabled={importTask.running} type="button">
-            {importTask.running ? "⏳ 提取中…" : "导入"}
+          <button style={btn} onClick={() => void doImport()} disabled={importTask.running || !url.trim()} type="button">
+            {importTask.running ? "⏳ 提取中…" : "🚀 批量导入"}
           </button>
+          <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{url.trim() ? (url.match(/share\//g) ?? []).length + " 条链接" : "支持粘贴多条链接"}</span>
         </div>
         {clipHint && <div style={{ color: "#0284c7", fontSize: "0.8rem", marginTop: "0.4rem" }}>📋 已从剪贴板自动填入分享链接</div>}
-        {importTask.running && <div style={{ color: "#b45309", fontSize: "0.8rem", marginTop: "0.4rem" }}>后台提取事实中（LLM 解析对话 → 入库 medical 实例）…</div>}
+        {importTask.running && <div style={{ color: "#b45309", fontSize: "0.8rem", marginTop: "0.4rem" }}>后台逐条提取事实中（LLM 解析对话 → 入库 medical 实例）…</div>}
         {importTask.result?.ok && (
-          <div style={{ color: "#15803d", fontSize: "0.82rem", marginTop: "0.4rem" }}>
-            ✅ 已导入 {importTask.result.imported} 条知识（来源：{importTask.result.title}）
+          <div style={{ marginTop: "0.5rem" }}>
+            {"items" in importTask.result && Array.isArray(importTask.result.items) ? (
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.7rem 0.9rem" }}>
+                <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem" }}>
+                  ✅ 批量导入完成：{importTask.result.summary ?? `成功 ${importTask.result.items.filter((x: { ok: boolean }) => x.ok).length}/${importTask.result.items.length}`} · 共 {importTask.result.imported} 条知识
+                </div>
+                {importTask.result.items.map((it: { url: string; ok: boolean; imported: number; message?: string }, i: number) => (
+                  <div key={i} style={{ fontSize: "0.78rem", padding: "0.2rem 0", borderBottom: "1px solid #eef2f7", color: it.ok ? "#15803d" : "#b91c1c" }}>
+                    {it.ok ? `✅ ${it.url.slice(0, 60)}… → +${it.imported} 条` : `❌ ${it.url.slice(0, 60)}… → ${it.message ?? "失败"}`}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#15803d", fontSize: "0.82rem" }}>
+                ✅ 已导入 {importTask.result.imported} 条知识（来源：{importTask.result.title ?? ""}）
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -117,7 +117,7 @@ export const api = {
     request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   rehabReset: (id: string) => request<RehabNoteResult>(`/tools/rehab/${encodeURIComponent(id)}/reset`, jsonInit("POST", {})),
   // 医学知识库（medical 实例，core/knowledge 业务落地）
-  medicalKbImport: (url: string) => request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { url })),
+  medicalKbImport: (urls: string[]) => request<AsyncTaskResult<KnowledgeImportResult>>("/tools/medical-kb/import", jsonInit("POST", { urls })),
   medicalKbList: () => request<{ ok: true; entries: KnowledgeEntry[]; total: number }>("/tools/medical-kb"),
   medicalKbDelete: (key: string) => request<{ ok: true; deleted: number } | { ok: false; message: string }>(`/tools/medical-kb/${encodeURIComponent(key)}`, jsonInit("DELETE", {})),
   medicalKbAsk: (question: string) => request<AsyncTaskResult<KnowledgeAskResult>>("/tools/medical-kb/ask", jsonInit("POST", { question })),

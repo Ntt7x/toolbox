@@ -79,23 +79,51 @@ export function register(app: Hono): void {
 export const MEDICAL_INSTANCE = "medical";
 
 export function registerMedicalKb(app: Hono): void {
-  // 导入：POST /api/tools/medical-kb/import { url } —— 后台任务（Reasonix Agent 执行，失败降级直调）
+  // 导入：POST /api/tools/medical-kb/import { urls: string[] | url: string } —— 后台任务（支持批量，Reasonix 执行，失败降级直调）
   app.post(`${API_PREFIX}/tools/medical-kb/import`, async (c) => {
-    const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
-    const url = typeof raw?.url === "string" ? raw.url.trim() : "";
-    if (!url) return c.json({ ok: false, message: "缺少分享链接 url" }, 400);
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown; urls?: unknown } | null;
+    // 单条 url 兼容 + 批量 urls 数组
+    const urls = (
+      Array.isArray(raw?.urls)
+        ? raw.urls.filter((u): u is string => typeof u === "string")
+        : typeof raw?.url === "string"
+          ? [raw.url]
+          : []
+    )
+      .map((u) => u.trim())
+      .filter(Boolean);
+    if (urls.length === 0) return c.json({ ok: false, message: "缺少分享链接 url/urls" }, 400);
+    const single = urls.length === 1;
     const { taskId } = createTask(async () => {
-      // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
-      const r = await knowledgeAgentImport(MEDICAL_INSTANCE, url, { module: "medical-kb.import" });
-      if (!r.ok) {
-        if (r.fallback) return kbImportFromChat(url, { instance: MEDICAL_INSTANCE, module: "medical-kb.import" });
-        throw new Error(r.message ?? "知识导入失败");
+      // 串行逐条导入（同一实例 Reasonix 会话天然串行）；单条返回原结构，批量返回 items 数组
+      const items: { url: string; ok: boolean; imported: number; title?: string; message?: string }[] = [];
+      for (let i = 0; i < urls.length; i++) {
+        const u = urls[i];
+        try {
+          // 优先 Reasonix Agent（会话持久 + 前缀缓存，成本低）；不可用时降级服务端直调
+          const r = await knowledgeAgentImport(MEDICAL_INSTANCE, u, { module: "medical-kb.import" });
+          if (!r.ok) {
+            if (r.fallback) {
+              // 直调兜底：失败会 throw，由外层 catch 收集为单条失败
+              const direct = await kbImportFromChat(u, { instance: MEDICAL_INSTANCE, module: "medical-kb.import" });
+              items.push({ url: u, ok: true, imported: direct.imported ?? 0, title: direct.title });
+            } else {
+              items.push({ url: u, ok: false, imported: 0, message: r.message ?? "导入失败" });
+            }
+          } else {
+            items.push({ url: u, ok: true, imported: r.imported ?? 0, message: r.message });
+          }
+        } catch (e) {
+          items.push({ url: u, ok: false, imported: 0, message: e instanceof Error ? e.message : String(e) });
+        }
       }
-      return { ok: true, note: r.message, imported: r.imported };
+      if (single) return { ok: items[0].ok, imported: items[0].imported, title: items[0].title, message: items[0].message, note: items[0].message };
+      const okCount = items.filter((x) => x.ok).length;
+      return { ok: okCount > 0, imported: items.reduce((s, x) => s + x.imported, 0), items, summary: `成功 ${okCount}/${items.length}` };
     }, {
-      timeoutMs: 8 * 60 * 1000,
+      timeoutMs: 8 * 60 * 1000 * Math.max(urls.length, 1),
       module: "medical-kb.import",
-      name: `医学知识导入 · ${new Date().toISOString().slice(0, 10)}`,
+      name: `医学知识导入 · ${urls.length} 条`,
     });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });

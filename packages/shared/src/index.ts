@@ -1435,6 +1435,9 @@ export interface KnowledgeImportResult {
   facts: { key: string; value: string; source?: string }[];
   title: string;
   shareId: string;
+  /** 批量导入时：逐条结果与汇总 */
+  items?: { url: string; ok: boolean; imported: number; title?: string; message?: string }[];
+  summary?: string;
 }
 
 /** 知识问答结果（kbAsk；失败为 KnowledgeErrorResult） */
