@@ -79,6 +79,7 @@ export default function KnowledgeHubTool() {
   const [ndName, setNdName] = useState("");
   const [ndDesc, setNdDesc] = useState("");
   const [ndKeywords, setNdKeywords] = useState("");
+  const [ndGenTpl, setNdGenTpl] = useState(false);
   const [nvName, setNvName] = useState("");
   const [nvDesc, setNvDesc] = useState("");
   const [nvSelDomains, setNvSelDomains] = useState<string[]>([]);
@@ -214,19 +215,23 @@ export default function KnowledgeHubTool() {
   // ---------- 新建领域库 ----------
   const createNewDomain = async () => {
     if (!ndName.trim()) return setErr("请填写领域名称");
+    setBusy(true);
     try {
-      const r = await api.knowledgeHubCreateDomain(ndName.trim(), ndDesc || undefined, ndKeywords.split(/[,，、]/).map((k) => k.trim()).filter(Boolean));
+      const r = await api.knowledgeHubCreateDomain(ndName.trim(), ndDesc || undefined, ndKeywords.split(/[,，、]/).map((k) => k.trim()).filter(Boolean), ndGenTpl);
       if (!r.ok) setErr(r.message ?? "创建失败");
       else {
-        setErr("");
+        setErr((r as { warning?: string }).warning ? `⚠️ ${(r as { warning?: string }).warning}` : "");
         setShowNew("");
         setNdName("");
         setNdDesc("");
         setNdKeywords("");
+        setNdGenTpl(false);
         await load();
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -252,6 +257,15 @@ export default function KnowledgeHubTool() {
   const toggleVirtDomain = (d: string) => {
     setNvSelDomains((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
   };
+
+  // 虚拟库可选的领域 = 全部领域（有数据实例 ∪ 已建元数据，含空库）
+  const allDomains = useMemo(() => {
+    const s = new Set<string>();
+    for (const it of ov.instances) s.add(it.instance);
+    for (const d of ov.domains) s.add(d.name);
+    return [...s];
+  }, [ov]);
+  const domainCount = (name: string) => ov.instances.find((i) => i.instance === name)?.count ?? 0;
 
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "1.5rem 1rem", color: "#1e293b", fontSize: "0.9rem" }}>
@@ -283,7 +297,13 @@ export default function KnowledgeHubTool() {
               <input style={{ ...input, maxWidth: 300 }} placeholder="描述（可选）" value={ndDesc} onChange={(e) => setNdDesc(e.target.value)} />
               <input style={{ ...input }} placeholder="匹配关键词（逗号分隔，问答路由/导入分发用）" value={ndKeywords} onChange={(e) => setNdKeywords(e.target.value)} />
             </div>
-            <button style={btn} onClick={() => void createNewDomain()}>创建领域库</button>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", cursor: "pointer", color: "#475569" }}>
+                <input type="checkbox" checked={ndGenTpl} onChange={(e) => setNdGenTpl(e.target.checked)} />
+                ✨ 自动生成提示词模板（LLM 按领域信息生成 问答/导入 模板）
+              </label>
+              <button style={btn} onClick={() => void createNewDomain()} disabled={busy}>{ndGenTpl && busy ? "⏳ 生成模板中…" : "创建领域库"}</button>
+            </div>
           </div>
         )}
         {showNew === "virt" && (
@@ -292,18 +312,20 @@ export default function KnowledgeHubTool() {
               <input style={{ ...input, maxWidth: 180 }} placeholder="虚拟库名称（如 综合）" value={nvName} onChange={(e) => setNvName(e.target.value)} />
               <input style={{ ...input }} placeholder="描述（可选）" value={nvDesc} onChange={(e) => setNvDesc(e.target.value)} />
             </div>
-            <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem", color: "#475569" }}>包含的领域库（导入自动分发、问答自动路由）：</div>
+            <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem", color: "#475569" }}>包含的领域库（导入自动分发、问答自动路由；空库也可加入）：</div>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
-              {ov.instances.length === 0 && <span style={{ color: "#94a3b8" }}>（暂无领域库，可先「新建领域库」或直接导入创建）</span>}
-              {ov.instances.map((it) => {
-                const on = nvSelDomains.includes(it.instance);
+              {allDomains.length === 0 && <span style={{ color: "#94a3b8" }}>（暂无领域库，可先「新建领域库」或直接导入创建）</span>}
+              {allDomains.map((name) => {
+                const on = nvSelDomains.includes(name);
+                const count = domainCount(name);
                 return (
                   <span
-                    key={it.instance}
+                    key={name}
                     style={{ ...chip, background: on ? "#dbeafe" : "#f1f5f9", borderColor: on ? "#3b82f6" : "#cbd5e1", userSelect: "none" }}
-                    onClick={() => toggleVirtDomain(it.instance)}
+                    onClick={() => toggleVirtDomain(name)}
+                    title={count === 0 ? "空领域库（尚无数据，可先加入再导入）" : undefined}
                   >
-                    {on ? "☑" : "☐"} {it.instance}（{it.count}）
+                    {on ? "☑" : "☐"} {name}（{count}）
                   </span>
                 );
               })}

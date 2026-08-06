@@ -10,6 +10,8 @@
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { kbAsk, kbImportFromChat, matchDomain } from "./knowledge.js";
+import { chat } from "./llm.js";
+import { robustJsonParse } from "./jsonParse.js";
 import { MEDICAL_KB_ASK, MEDICAL_KB_EXTRACT } from "./prompts.js";
 import type { KnowledgeImportResult } from "@toolbox/shared";
 
@@ -112,6 +114,27 @@ export function createDomain(name: string, meta: { desc?: string; keywords?: str
   };
   kvSet(`${DOMAIN_PREFIX}${n}`, d);
   return { ok: true, domain: d };
+}
+
+/** LLM 生成领域特化提示词模板（一次调用产出 问答/导入 两个 system 模板；失败抛错由调用方降级） */
+export async function generateDomainTemplates(info: { name: string; desc?: string; keywords: string[] }): Promise<{ askTemplate: string; extractTemplate: string }> {
+  const sys =
+    "你是资深提示词工程师。根据给定领域信息，生成两个知识库 system 提示词模板，输出 JSON：\n" +
+    '{"askTemplate": "...", "extractTemplate": "..."}\n' +
+    "askTemplate：知识库问答助手 system——约束：只依据「知识库检索结果」回答、检索无相关内容时如实说明不编造、必要时建议咨询专业人士、按领域专业规范回答；" +
+    "extractTemplate：知识导入提取助手 system——约束：从对话中提取有长期价值的领域知识，输出 JSON 数组（每项 {key, value, source?}），key 用点分短标识、value 精炼完整。两个模板都要自然融入领域角色定位，直接输出 JSON 本身，不要 markdown 代码块。";
+  const user = `领域名称：${info.name}\n领域描述：${info.desc?.trim() || "（无）"}\n领域关键词：${info.keywords.join("、") || "（无）"}`;
+  const r = await chat([{ role: "system", content: sys }, { role: "user", content: user }], {
+    temperature: 0.4,
+    json: true,
+    module: "knowledge-hub.gen-template",
+  });
+  if (!r.ok) throw new Error(r.message);
+  const p = robustJsonParse(r.content.trim()) as { askTemplate?: unknown; extractTemplate?: unknown };
+  const askTemplate = typeof p?.askTemplate === "string" ? p.askTemplate.trim() : "";
+  const extractTemplate = typeof p?.extractTemplate === "string" ? p.extractTemplate.trim() : "";
+  if (!askTemplate || !extractTemplate) throw new Error("模板生成结果不完整（缺 askTemplate/extractTemplate）");
+  return { askTemplate, extractTemplate };
 }
 
 export function listDomains(): DomainMeta[] {

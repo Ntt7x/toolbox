@@ -15,6 +15,7 @@ import {
   getDomainMeta,
   setDomainMeta,
   createDomain,
+  generateDomainTemplates,
   seedMedicalTemplates,
   askVirtKb,
   importToVirtKb,
@@ -90,15 +91,30 @@ export function register(app: Hono): void {
     }
   });
 
-  // 新建领域知识库（显式建库；空库也可先建后导入）
+  // 新建领域知识库（显式建库；空库也可先建后导入；可选 LLM 自动生成领域模板）
   route.post("/domain", async (c: Context) => {
     const body = await c.req.json().catch(() => ({}));
-    const r = createDomain(String(body.name ?? ""), {
+    const name = String(body.name ?? "");
+    const keywords = Array.isArray(body.keywords) ? body.keywords.map((k: unknown) => String(k)) : undefined;
+    const r = createDomain(name, {
       desc: body.desc ? String(body.desc) : undefined,
-      keywords: Array.isArray(body.keywords) ? body.keywords.map((k: unknown) => String(k)) : undefined,
+      keywords,
     });
     if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
-    return c.json({ ok: true, domain: r.domain });
+    let warning: string | undefined;
+    if (body.generateTemplates === true) {
+      try {
+        const tpl = await generateDomainTemplates({
+          name: r.domain!.name,
+          desc: r.domain!.desc || undefined,
+          keywords: r.domain!.keywords,
+        });
+        setDomainMeta(r.domain!.name, { askTemplate: tpl.askTemplate, extractTemplate: tpl.extractTemplate });
+      } catch (e) {
+        warning = `领域已创建，但模板自动生成失败：${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    return c.json({ ok: true, domain: getDomainMeta(r.domain!.name), ...(warning ? { warning } : {}) });
   });
 
   // 领域元数据（描述/关键词/领域特化模板，供自动匹配导入与领域问答）
