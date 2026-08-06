@@ -225,7 +225,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - **知乎爬虫（多内容目标，2026-08 实测）**：
   - 不局限用户：`parseZhihuTarget` 识别 **用户/问题/回答/文章/想法** 链接，或从分享文本自动提取链接（answer 路径须在 question 之前匹配：`question/{qid}/answer/{aid}`）
-  - 用户 → 浏览器拦截签名 API + 滚动（断点续爬）；问题 → 拦截 `/api/v4/questions/{qid}/answers` 抓回答流；回答/文章/想法 → 打开详情页 DOM 提取正文（`.RichContent-inner`/`.Post-RichTextContainer`）
+  - **专栏文章（zhuanlan）**：`zhuanlan.zhihu.com/p/xxx` 与 `zhihu.com/p/xxx` 是**不同 id 体系**——专栏链接必须保留 zhuanlan 域名（规范化成 www.zhihu.com/p 会 404）；parseZhihuTarget 中专栏域须**最先匹配**；`ZH_LINK_RE` 用 `(?:[\w-]+\.)?zhihu\.com` 支持子域
+  - 用户 → 浏览器拦截签名 API + 滚动（断点续爬）；问题 → 拦截 `/api/v4/questions/{qid}/answers` 抓回答流；回答/文章/想法 → 打开详情页 DOM 提取正文（选择器：`.RichContent-inner`/`.Post-RichTextContainer`/`.RichText.ztext`/`.Post-RichText`/`.ArticleContent`）
   - 断点续爬：进度存 `zhihuCrawl:progress:<id>`（seed/phaseIndex/commentsDone），数量上限 100/超时 20min 自动暂停、取消返回已抓结果、续爬 seed 去重
   - 知乎新版评论 API：`/api/v4/comment_v5/{type}/{id}/root_comment`；入口是「N 条评论」按钮
   - 风控 40362：临时限流，等待恢复；Chrome profile 锁残留 → launch 失败重试前 `rmSync(PROFILE_DIR)`
