@@ -45,11 +45,11 @@ interface MenuGroup {
 
 const MENU_GROUPS: MenuGroup[] = [
   {
-    label: "设置",
+    label: "后台管理",
     staticItems: [
-      { name: "LLM 管理", path: "/settings/llm", icon: "🤖" },
-      { name: "Agent 会话管理", path: "/settings/agent-sessions", icon: "💬" },
-      { name: "本地数据管理", path: "/settings/local-data", icon: "🗄️" },
+      { name: "LLM 用量", path: "/settings/llm", icon: "🤖" },
+      { name: "LLM 会话", path: "/settings/agent-sessions", icon: "💬" },
+      { name: "本地数据", path: "/settings/local-data", icon: "🗄️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
@@ -286,7 +286,7 @@ export default function App() {
             </div>
             {editing && (
               <div style={{ padding: "0.2rem 0.9rem", fontSize: "0.7rem", color: "#94a3b8" }}>
-                拖动 ⠿ 调整菜单顺序，保存后同步到服务端设置（本地数据管理可见）。
+                拖动 ⠿ 调整菜单顺序，保存后同步到服务端设置（本地数据可见）。
               </div>
             )}
 

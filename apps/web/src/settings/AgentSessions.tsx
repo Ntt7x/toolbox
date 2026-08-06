@@ -339,7 +339,7 @@ export default function AgentSessions() {
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "1.2rem" }}>
-      <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.2rem" }}>🤖 Agent 会话管理</h2>
+      <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.2rem" }}>💬 LLM 会话</h2>
       <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0 0 1rem" }}>
         管理两类有状态 LLM 会话。会话共享前缀缓存（DeepSeek 缓存价 1/50），同主题多次调用建议复用同一会话以降本。
       </p>
