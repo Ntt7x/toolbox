@@ -100,3 +100,14 @@ test("parseZhihuTarget：裸 token 视为用户；无法识别返回 unknown", (
   assert.equal(parseZhihuTarget("zhihu").kind, "user");
   assert.equal(parseZhihuTarget("随便一段没有链接的文字").kind, "unknown");
 });
+
+test("parseZhihuTarget：zhuanlan 专栏文章链接（含分享文本）识别为 article 且保留专栏域", () => {
+  const text = "Python 处理 API 的十个实用技巧：把脚本从能跑升级到好用 - deephub的文章 - 知乎 https://zhuanlan.zhihu.com/p/2068818795909666748";
+  const r = parseZhihuTarget(text);
+  assert.equal(r.kind, "article");
+  assert.equal(r.ref, "2068818795909666748");
+  assert.equal(r.url, "https://zhuanlan.zhihu.com/p/2068818795909666748");
+  const r2 = parseZhihuTarget("https://zhuanlan.zhihu.com/p/123456");
+  assert.equal(r2.kind, "article");
+  assert.equal(r2.url, "https://zhuanlan.zhihu.com/p/123456");
+});

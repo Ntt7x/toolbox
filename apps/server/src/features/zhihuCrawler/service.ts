@@ -56,10 +56,13 @@ export interface ZhihuTargetInfo {
   label: string;
 }
 
-const ZH_LINK_RE = /https?:\/\/(?:www\.)?zhihu\.com\/[^\s"'“”，。；;]+/g;
+const ZH_LINK_RE = /https?:\/\/(?:[\w-]+\.)?zhihu\.com\/[^\s"'“”，。；;]+/g;
 
 export function parseZhihuTarget(input: string): ZhihuTargetInfo {
   const t = input.trim();
+  // 0) 专栏域必须最先匹配：zhuanlan.zhihu.com/p/xxx 与 zhihu.com/p/xxx 是不同 id 体系，专栏文章须保留 zhuanlan 域名
+  const zl = t.match(/zhuanlan\.zhihu\.com\/p\/([A-Za-z0-9_-]+)/);
+  if (zl) return { kind: "article", ref: zl[1], url: `https://zhuanlan.zhihu.com/p/${zl[1]}`, label: `专栏文章 ${zl[1]}` };
   // 1) 直接是知乎链接 → 按路径识别类型（answer 路径需在 question 之前匹配：question/{qid}/answer/{aid}）
   const ans = t.match(/zhihu\.com\/question\/(\d+)\/answer\/(\d+)/);
   if (ans) return { kind: "answer", ref: ans[2], url: `${BASE}/question/${ans[1]}/answer/${ans[2]}`, label: `回答 ${ans[2]}` };
@@ -600,8 +603,8 @@ async function crawlSingleContent(
       const content = await page
         .evaluate((kind) => {
           const selectors: Record<string, string[]> = {
-            answer: [".RichContent-inner", ".RichText", ".AnswerCard .RichContent"],
-            article: [".Post-RichTextContainer", ".Post-Content"],
+            answer: [".RichContent-inner", ".RichText", ".AnswerCard .RichContent", ".RichText.ztext"],
+            article: [".Post-RichTextContainer", ".Post-Content", ".RichText.ztext", ".Post-RichText", ".ArticleContent"],
             pin: [".Pin .RichText", ".PinItem .RichText"],
           };
           for (const sel of selectors[kind] ?? []) {
