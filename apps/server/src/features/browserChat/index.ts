@@ -138,7 +138,8 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     // 窗口置前，用户可见可操作
     await page.bringToFront().catch(() => {});
     await page.goto(DS_HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await sleep(3500);
+    // 条件等待页面就绪（替代固定 3.5s）：先等 SPA 首屏路由稳定，再判断登录态
+    await sleep(1200);
 
     // 未登录 → 保持窗口，轮询等待用户登录（URL 离开 /sign_in 即视为登录成功）
     if ((await safeUrl(page)).includes("/sign_in")) {
@@ -152,12 +153,16 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
       if ((await safeUrl(page)).includes("/sign_in")) {
         return { ok: true, loggedIn: false, message: "请在浏览器窗口中完成 DeepSeek 登录（仅首次需要），登录后会自动继续填入并发送。" };
       }
-      await sleep(1500); // 等登录后页面就绪
+      await sleep(1200); // 登录后等页面就绪
     }
+    // 已登录：等主输入框出现（通常已渲染，立即返回）
+    await page.locator("textarea").first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
 
-    // 1. 先开开关（深度思考/智能搜索；此时不依赖输入框焦点）
-    if (opts.deepThink !== false) await setToggle(page, "深度思考", true);
-    if (opts.search !== false) await setToggle(page, "智能搜索", true);
+    // 1. 先开开关（深度思考/智能搜索；两个开关并行，互不影响）
+    await Promise.all([
+      opts.deepThink !== false ? setToggle(page, "深度思考", true) : Promise.resolve(),
+      opts.search !== false ? setToggle(page, "智能搜索", true) : Promise.resolve(),
+    ]);
 
     // 2. 填入提示词（焦点进入输入框）
     const filled = await fillPrompt(page, prompt);
@@ -167,9 +172,9 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
 
     // 3. 自动发送：重聚焦输入框（点开关后焦点可能丢失）→ 等待受控状态提交 → Enter 启动对话
     if (opts.send) {
-      await sleep(400);
+      await sleep(200);
       await focusInput(page);
-      await sleep(300);
+      await sleep(150);
       await page.keyboard.press("Enter");
       return { ok: true, loggedIn: true, message: "✅ 已填入提示词并发送，请在浏览器窗口中查看回复。" };
     }
