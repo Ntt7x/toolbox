@@ -6,8 +6,8 @@
 // - 持久化 profile（.file/ds-chat-profile）：登录态自动记住（首次弹窗登录一次）
 // - 单实例：模块级持有当前 context，重复调用先关旧窗口（避免同 profile 独占锁）
 // - 未登录：保持窗口 + 轮询等待用户登录（最多 3 分钟）→ 登录后继续
-// 输入框填入选器实测（2026-08）：textarea（React 受控，须 keyboard.type 真实键入）；
-// 开关：div.ds-toggle-button（hasText「深度思考」「智能搜索」），aria-checked 判状态。
+// 输入框填入选器实测（2026-08）：textarea（React 受控，须 keyboard.insertText 整段插入触发 onChange）；
+// 开关：div.ds-toggle-button（hasText「深度思考」「智能搜索」），状态在 aria-pressed（aria-checked 恒 null）。
 // ============================================================
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -39,6 +39,25 @@ export interface ChatBrowserOpenResult {
   ok: boolean;
   loggedIn: boolean;
   message: string;
+}
+
+/** 安全读取当前 URL（页面关闭/跳转时返回空串，不抛错） */
+async function safeUrl(page: Page): Promise<string> {
+  try {
+    return page.url();
+  } catch {
+    return "";
+  }
+}
+
+/** 点击输入框聚焦（textarea 优先，兜底 contenteditable——与 fillPrompt 对齐） */
+async function focusInput(page: Page): Promise<void> {
+  try {
+    await page.locator("textarea").first().click({ timeout: 2000 });
+    return;
+  } catch {
+    await page.locator('div[contenteditable="true"]').first().click({ timeout: 1000 }).catch(() => {});
+  }
 }
 
 /** 定位输入框并填入提示词（textarea 优先，兜底 contenteditable）
@@ -122,17 +141,15 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     await sleep(3500);
 
     // 未登录 → 保持窗口，轮询等待用户登录（URL 离开 /sign_in 即视为登录成功）
-    if (page.url().includes("/sign_in")) {
+    if ((await safeUrl(page)).includes("/sign_in")) {
       const deadline = Date.now() + LOGIN_WAIT_MS;
       while (Date.now() < deadline) {
         await sleep(2000);
-        try {
-          if (!page.url().includes("/sign_in")) break;
-        } catch {
-          break; // 页面已跳转/关闭
-        }
+        const u = await safeUrl(page);
+        if (!u.includes("/sign_in")) break;
+        if (!u) break; // 页面已关闭
       }
-      if (page.url().includes("/sign_in")) {
+      if ((await safeUrl(page)).includes("/sign_in")) {
         return { ok: true, loggedIn: false, message: "请在浏览器窗口中完成 DeepSeek 登录（仅首次需要），登录后会自动继续填入并发送。" };
       }
       await sleep(1500); // 等登录后页面就绪
@@ -151,7 +168,7 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     // 3. 自动发送：重聚焦输入框（点开关后焦点可能丢失）→ 等待受控状态提交 → Enter 启动对话
     if (opts.send) {
       await sleep(400);
-      await page.locator("textarea").first().click().catch(() => {});
+      await focusInput(page);
       await sleep(300);
       await page.keyboard.press("Enter");
       return { ok: true, loggedIn: true, message: "✅ 已填入提示词并发送，请在浏览器窗口中查看回复。" };

@@ -3,7 +3,7 @@
 // 统一封装 playwright-core + 本机 Chrome/Edge 的启动、持久化 profile、指纹伪装。
 // 供业务模块复用：知乎爬虫（抓取/登录）、DeepSeek Chat 自动填入、书籍下载等。
 // - launchPersistentContext：持久化 profile（登录态复用）+ headless/headful 切换
-// - profile 独占锁自愈：Windows Chrome 同 profile 并发启动会失败，重试前清理残留锁
+// - profile 独占锁自愈：Windows Chrome 同 profile 并发启动会失败，重试时按 profile 杀残留进程
 // ============================================================
 import { chromium, type BrowserContext } from "playwright-core";
 import { existsSync, mkdirSync } from "node:fs";
@@ -32,13 +32,14 @@ export interface LaunchPersistentOptions {
   headless?: boolean;
   userAgent?: string;
   extraArgs?: string[];
-  /** 启动失败重试次数（默认 3）；Windows profile 锁问题靠重试 + 清理自愈 */
+  /** 启动失败重试次数（默认 5）；Windows profile 锁问题靠等待重试 + 杀残留进程自愈 */
   retries?: number;
 }
 
 /**
  * 杀掉仍占用指定 profile 的残留 Chrome 进程（按 --user-data-dir 匹配）。
- * profile 锁的根源是残留进程（窗口未关/ctx.close 后进程未退出），杀进程而非删数据（保留登录态 cookie）。
+ * 仅 Windows（依赖 wmic/taskkill）。profile 锁的根源是残留进程（窗口未关/ctx.close 后进程未退出），
+ * 杀进程而非删数据（保留登录态 cookie）。
  */
 function killChromeUsingProfile(profileDir: string): void {
   try {
