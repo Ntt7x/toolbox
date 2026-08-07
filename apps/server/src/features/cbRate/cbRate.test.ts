@@ -132,8 +132,9 @@ test("cbRateCacheKey: 参数归一化（banks 排序、search 区分）", () => 
   const c = cbRateCacheKey({ period: "month", banks: ["boj", "fed"], search: false });
   assert.notEqual(a, c, "search 开关必须区分缓存");
   const d = cbRateCacheKey({ period: "month" });
-  assert.match(d, /^cbRate:v2:month::/);
-  // schema 版本隔离：v1 旧缓存 key 不再命中
-  const old = cbRateCacheKey({ period: "month" }).replace(":v2:", ":");
+  // v3：无显式月份时按当前月纳入 key（本月以来跨月自动失效）
+  assert.match(d, /^cbRate:v3:month:\d{4}-\d{2}::nocal:search/);
+  // schema 版本隔离：v2 旧缓存 key 不再命中
+  const old = cbRateCacheKey({ period: "month" }).replace(":v3:", ":v2:");
   assert.notEqual(old, d, "版本号必须参与缓存 key");
 });
