@@ -51,6 +51,14 @@ const btn: CSSProperties = {
   boxShadow: "0 2px 8px rgba(37,99,235,0.25)",
 };
 
+/** 统一的小按钮变体（历史记录行内操作等，与主按钮同风格仅尺寸更小） */
+const btnSm: CSSProperties = {
+  padding: "0.3rem 0.8rem",
+  borderRadius: 8,
+  fontSize: "0.78rem",
+  fontWeight: 500,
+};
+
 const input: CSSProperties = {
   width: 110,
   padding: "0.5rem 0.7rem",
@@ -444,8 +452,8 @@ export default function GridPlanTool() {
                   {e.summary.maxAmount ? <span style={{ color: "#94a3b8" }}>上限 {e.summary.maxAmount.toLocaleString()}</span> : null}
                   {e.summary.perBuy ? <span style={{ color: "#94a3b8" }}>单档买入 {e.summary.perBuy.toLocaleString()}</span> : null}
                   <span style={{ marginLeft: "auto", display: "flex", gap: "0.35rem" }}>
-                    <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.7rem" }} onClick={() => void viewHistory(e.id)} type="button">查看</button>
-                    <button style={{ ...btn, background: "#dc2626", padding: "0.25rem 0.7rem" }} onClick={() => void deleteHistoryEntry(e.id)} type="button">删除</button>
+                    <button style={{ ...btn, background: "#0891b2", ...btnSm }} onClick={() => void viewHistory(e.id)} type="button">查看</button>
+                    <button style={{ ...btn, background: "#dc2626", ...btnSm }} onClick={() => void deleteHistoryEntry(e.id)} type="button">删除</button>
                   </span>
                 </div>
               ))
@@ -454,7 +462,7 @@ export default function GridPlanTool() {
               <div style={{ marginTop: "0.8rem", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.8rem 1rem", background: "#f8fafc" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>📄 历史计划详情</span>
-                  <button style={{ ...btn, background: "#64748b", padding: "0.25rem 0.7rem" }} onClick={() => { setViewingId(null); setViewingResult(null); }} type="button">关闭</button>
+                  <button style={{ ...btn, background: "#64748b", ...btnSm }} onClick={() => { setViewingId(null); setViewingResult(null); }} type="button">关闭</button>
                 </div>
                 <ResultView r={viewingResult} />
               </div>

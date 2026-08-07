@@ -3,7 +3,7 @@
 // 某用户的时间降序创作内容（回答/文章/想法），转 markdown；
 // 支持：作者参与讨论的评论抓取、历史结果持久化、导入知识库
 // ============================================================
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import type { ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlRequest, ZhihuComment, ZhihuUserInfo } from "@toolbox/shared";
@@ -553,7 +553,8 @@ export default function ZhihuCrawlerTool() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
             <tbody>
               {history.map((h) => (
-                <tr key={h.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <Fragment key={h.id}>
+                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={{ padding: "0.4rem 0.5rem" }}>
                     <b>{h.name || h.target}</b>
                     <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.5rem" }}>{h.target}</span>
@@ -564,17 +565,22 @@ export default function ZhihuCrawlerTool() {
                     {h.resultId && (
                       <button
                         onClick={async () => {
-                          setViewResultId(h.resultId ?? null);
-                          try {
-                            const r = await api.zhihuResult(h.resultId!);
-                            setViewItems(r.ok ? (r.items ?? []) : null);
-                          } catch {
+                          const same = viewResultId === h.resultId;
+                          setViewResultId(same ? null : (h.resultId ?? null));
+                          if (same) {
                             setViewItems(null);
+                          } else {
+                            try {
+                              const r = await api.zhihuResult(h.resultId!);
+                              setViewItems(r.ok ? (r.items ?? []) : null);
+                            } catch {
+                              setViewItems(null);
+                            }
                           }
                         }}
                         style={{ fontSize: "0.72rem", padding: "0.2rem 0.6rem", marginRight: "0.3rem" }}
                       >
-                        查看结果
+                        {viewResultId === h.resultId ? "收起结果 ▲" : "查看结果"}
                       </button>
                     )}
                     <button
@@ -592,27 +598,20 @@ export default function ZhihuCrawlerTool() {
                     </button>
                   </td>
                 </tr>
+                {/* 该行原地向下展开结果（非弹窗/非列表底部） */}
+                {viewResultId === h.resultId && viewItems && (
+                  <tr style={{ background: "#f8faff" }}>
+                    <td colSpan={4} style={{ padding: "0.6rem 0.9rem", borderBottom: "1px solid #f1f5f9" }}>
+                      <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+                        <ResultItems items={viewItems} />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
-          {/* 历史结果行内展开（查看结果；非弹窗，更贴合阅读长内容） */}
-          {viewResultId && viewItems && (
-            <div style={{ marginTop: "0.8rem", border: "1px solid #bfdbfe", borderRadius: 10, background: "#f8faff", padding: "0.9rem 1rem" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
-                <h4 style={{ margin: 0, fontSize: "0.9rem" }}>📄 历史结果（{viewItems.length} 条）</h4>
-                <span style={{ flex: 1 }} />
-                <button
-                  style={{ fontSize: "0.75rem", padding: "0.3rem 0.8rem", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", cursor: "pointer" }}
-                  onClick={() => { setViewItems(null); setViewResultId(null); }}
-                >
-                  收起 ▲
-                </button>
-              </div>
-              <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
-                <ResultItems items={viewItems} />
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
