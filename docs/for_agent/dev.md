@@ -36,6 +36,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 3. web：`api.ts` 加方法（`get`/`post` 封装，错误响应携带 message）→ 工具页组件
 4. 验证：`pnpm typecheck` + curl 全量回归（health/tools/各工具端点）+ 页面 200
 
+## 3.1 开发进程管理（scripts/dev.mjs，2026-08-07 起强制）
+
+- **禁止手动在后台任务里直接起 `tsx watch` / `vite`**（历史多次 EADDRINUSE/残留进程/服务静默挂掉，排查耗时）。
+- 一律用 `node scripts/dev.mjs start|stop|restart|status|kill-port <port|all>`：
+  - `start`：先清 8787/5173 端口残留（netstat 找 PID → tasklist 确认 node → taskkill /T /F），再拉起 server+web；
+    常驻 supervisor 每 5s 健康检查——进程退出或「进程存活但端口空闲」（tsx 子服务挂掉）都自动重启（≤8 次）；
+  - `stop`：写 `.file/dev.stop` 标记（supervisor 不再拉起并自行退出）+ 杀进程树 + 清端口；
+  - 子进程日志在 `.file/dev-logs/{server,web}.log`（排查服务崩溃看这里）；
+- 排查步骤：`node scripts/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
+- 后台运行 start 用 PowerShell 语法：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH; cd D:\Agent\toolbox; node scripts/dev.mjs start`。
+
 ## 3. 环境与工具注意（Windows）
 
 - node 在 `D:\Softwares\nodejs`（**不在 PATH**）；每次命令需 `set "PATH=D:\Softwares\nodejs;%PATH%"`
