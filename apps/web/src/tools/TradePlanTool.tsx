@@ -351,11 +351,12 @@ export default function TradePlanTool() {
                     <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.4rem" }}>
                       <StockCodeInput
                         code={s.code}
+                        name={s.name}
                         onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
-                        onChange={(code) => setStockAt(i, { code })}
+                        onChange={(code) => setStockAt(i, { code, name: undefined })}
                       />
                       {s.name && (
-                        <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
+                        <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6 }}>
                           {s.name}
                         </span>
                       )}
@@ -376,7 +377,7 @@ export default function TradePlanTool() {
                           style={{ width: 70, accentColor: "#2563eb" }}
                           title="单标的上限（占总仓位百分比）"
                         />
-                        <input style={{ ...input, width: 44, padding: "0.3rem 0.45rem", borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                        <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem", borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
                         %
                       </label>
                       <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
@@ -417,7 +418,6 @@ export default function TradePlanTool() {
                         );
                       })}
                     </select>
-                    <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>每标的一天一个操作</span>
                     <select style={{ ...input, width: 80, padding: "0.4rem 0.55rem" }} value={it.action} onChange={(e) => setItemAt(i, { action: e.target.value as "add" | "reduce" })}>
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
@@ -699,13 +699,20 @@ function AllCalendar() {
   );
 }
 
-function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v: string) => void; onPick: (code: string, name?: string) => void }) {
+function StockCodeInput({ code, name, onChange, onPick }: { code: string; name?: string; onChange: (v: string) => void; onPick: (code: string, name?: string) => void }) {
   const [cands, setCands] = useState<{ code: string; name: string }[]>([]);
   const [focus, setFocus] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 显示文本：有名称时显示「名称 代码」（可读性优先），否则仅代码
+  const [disp, setDisp] = useState(code ? (name ? name + " " + code : code) : "");
+  useEffect(() => {
+    const target = code ? (name ? name + " " + code : code) : "";
+    setDisp((d) => (d === target ? d : target));
+  }, [code, name]);
 
   const onInput = (v: string) => {
-    onChange(v);
+    setDisp(v);
+    onChange(v); // 外部同步清空 name（手动输入 = 更换标的）
     if (timer.current) clearTimeout(timer.current);
     const t = v.trim();
     if (!t || /^\d{5,6}$/.test(t)) { setCands([]); return; } // 纯代码不搜索
@@ -725,7 +732,7 @@ function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v
       <input
         style={{ ...input, width: "100%" }}
         placeholder="代码 / 名称（搜索补全）"
-        value={code}
+        value={disp}
         onChange={(e) => onInput(e.target.value)}
         onFocus={() => setFocus(true)}
         onBlur={() => setTimeout(() => setFocus(false), 200)}
@@ -735,7 +742,7 @@ function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v
           {cands.map((c) => (
             <div
               key={c.code}
-              onMouseDown={() => { onChange(c.code); onPick(c.code, c.name); setCands([]); }}
+              onMouseDown={() => { setDisp(c.name + " " + c.code); onChange(c.code); onPick(c.code, c.name); setCands([]); }}
               style={{ padding: "0.4rem 0.6rem", cursor: "pointer", display: "flex", justifyContent: "space-between", fontSize: "0.84rem" }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
