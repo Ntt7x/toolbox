@@ -122,6 +122,12 @@ export default function TradePlanTool() {
       setMsg(`❌ 标的 ${bad.code || "（未填代码）"} 的仓位上限需在 0-100% 之间`);
       return;
     }
+    // 起始数量以 100 为最小单位（A股一手）
+    const badShares = strategy.stocks.find((s) => s.initShares && s.initShares > 0 && s.initShares % 100 !== 0);
+    if (badShares) {
+      setMsg(`❌ 标的 ${badShares.code || "（未填代码）"} 的起始数量需为 100 的整数倍（A股一手 100 股）`);
+      return;
+    }
     setMsg(null);
     try {
       const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
@@ -149,7 +155,8 @@ export default function TradePlanTool() {
     }
   };
 
-  const deleteSt = async (id: string) => {
+  const deleteSt = async (id: string, name: string) => {
+    if (!confirm(`确定删除策略「${name}」？该策略的全部日度计划将一并删除。`)) return;
     try {
       await api.tradePlanDeleteStrategy(id);
       setSelectedId("");
@@ -293,7 +300,7 @@ export default function TradePlanTool() {
               </div>
               <button
                 style={{ ...btn, background: "transparent", color: "#94a3b8", padding: "0.2rem 0.4rem", fontSize: "0.85rem" }}
-                onClick={(e) => { e.stopPropagation(); void deleteSt(s.id); }}
+                onClick={(e) => { e.stopPropagation(); void deleteSt(s.id, s.name); }}
                 title="删除策略"
                 type="button"
               >
@@ -339,37 +346,51 @@ export default function TradePlanTool() {
                 <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的（搜索补全；上限% 可选；起始数量与成本价选填）</div>
                 {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，添加后限定可交易范围</div>}
                 {strategy.stocks.map((s, i) => (
-                  <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem", alignItems: "center" }}>
-                    <StockCodeInput
-                      code={s.code}
-                      onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
-                      onChange={(code) => setStockAt(i, { code })}
-                    />
-                    {s.name && (
-                      <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
-                        {s.name}
-                      </span>
-                    )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        step={1}
-                        value={s.maxWeightPct ?? 0}
-                        onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })}
-                        style={{ width: 62, accentColor: "#2563eb" }}
-                        title="单标的上限（占总仓位百分比）"
+                  <div key={i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "0.5rem 0.6rem", marginBottom: "0.45rem", background: "#fcfcfd" }}>
+                    {/* 第一行：股票代码 / 名称（搜索补全） */}
+                    <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.4rem" }}>
+                      <StockCodeInput
+                        code={s.code}
+                        onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
+                        onChange={(code) => setStockAt(i, { code })}
                       />
-                      <input style={{ ...input, width: 44, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
-                      <span style={{ fontSize: "0.78rem", color: "#64748b" }}>%</span>
+                      {s.name && (
+                        <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
+                          {s.name}
+                        </span>
+                      )}
+                      <span style={{ flex: 1 }} />
+                      <button style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, jj) => jj !== i) } : st))} type="button">✕</button>
                     </div>
-                    <input style={{ ...input, width: 92 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
-                    <input style={{ ...input, width: 92 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
-                    <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
+                    {/* 第二行：上限% 滑块 / 起始数量 / 成本价 */}
+                    <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                        上限
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={s.maxWeightPct ?? 0}
+                          onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })}
+                          style={{ width: 70, accentColor: "#2563eb" }}
+                          title="单标的上限（占总仓位百分比）"
+                        />
+                        <input style={{ ...input, width: 44, padding: "0.3rem 0.45rem", borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                        %
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                        起始数量
+                        <input style={{ ...input, width: 90, padding: "0.3rem 0.45rem" }} type="number" min={0} step={100} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} title="A股一手 100 股" />
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                        成本价
+                        <input style={{ ...input, width: 90, padding: "0.3rem 0.45rem" }} type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
+                      </label>
+                    </div>
                   </div>
                 ))}
-                <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: [...st.stocks, { code: "" }] } : st))} type="button">＋ 添加标的</button>
+
                 {!isDirty && <div style={{ color: "#94a3b8", fontSize: "0.76rem", marginTop: "0.4rem" }}>保存配置后日度计划才能按此策略校验</div>}
               </div>
 
@@ -377,7 +398,7 @@ export default function TradePlanTool() {
               <div style={card}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
                   <span style={{ fontWeight: 700 }}>📅 日度交易计划</span>
-                  <input style={{ ...input, width: 145, padding: "0.4rem 0.6rem" }} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                  <input style={{ ...input, width: 145, padding: "0.4rem 0.6rem" }} type="date" value={date} onChange={(e) => setDate(e.target.value)} title="默认：当日交易日；周末取下一交易日" />
                   <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>策略：{strategy.name}</span>
                 </div>
 
@@ -590,6 +611,7 @@ function AllCalendar() {
   const [data, setData] = useState<{ date: string; strategies: { id: string; name: string; items: TradePlanItem[]; result: TradePlanCheckResult }[] }[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     setData(null);
@@ -598,7 +620,7 @@ function AllCalendar() {
       setData(r.days);
       if (r.days.length > 0) setSelected(r.days[0].date);
     }).catch((e) => setErr(errMsg(e)));
-  }, [month]);
+  }, [month, refreshKey]);
 
   const byDate = useMemo(() => new Map((data ?? []).map((d) => [d.date, d])), [data]);
   const [y, m] = month.split("-").map(Number);
@@ -614,6 +636,7 @@ function AllCalendar() {
         <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={() => setMonth(m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`)} type="button">‹</button>
         <span style={{ fontWeight: 700, flex: 1, textAlign: "center" }}>{month}</span>
         <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={() => setMonth(m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`)} type="button">›</button>
+        <button style={{ ...btn, background: "#2563eb", color: "#fff", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={() => setRefreshKey((k) => k + 1)} type="button" title="刷新当月计划">🔄</button>
       </div>
       {err && <div style={{ color: "#dc2626", fontSize: "0.82rem", marginBottom: "0.4rem" }}>❌ {err}</div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, textAlign: "center", marginBottom: "0.4rem" }}>
