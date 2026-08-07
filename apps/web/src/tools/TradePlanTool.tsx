@@ -1,15 +1,16 @@
 // ============================================================
 // 交易规划（tools/trade-plan）
-// 配置区：交易策略（总仓位/交易标的/单日加仓上限/起始持仓）——保护仓位不失控
-// 每日变动：输入日度交易计划 → 校验是否符合策略配置与仓位控制 → 提醒与告警
+// 多策略：每策略独立配置（总仓位/交易标的/单日加仓上限/起始持仓）+ 日度交易计划校验。
+// 标的输入支持名称搜索补全（复用专题自选股 search-stock）。
 // ============================================================
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   TradePlanAlert,
   TradePlanCheckResult,
-  TradePlanConfig,
-  TradePlanDay,
   TradePlanItem,
+  TradePlanStrategy,
+  TradePlanStrategySummary,
+  TradePlanDay,
 } from "@toolbox/shared";
 import { api, errMsg } from "../api";
 
@@ -19,13 +20,16 @@ const card: React.CSSProperties = {
   borderRadius: 12,
   padding: "1rem 1.1rem",
   marginBottom: "0.8rem",
+  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
 };
 const input: React.CSSProperties = {
-  padding: "0.45rem 0.6rem",
+  padding: "0.5rem 0.65rem",
   borderRadius: 8,
   border: "1px solid #cbd5e1",
   fontSize: "0.88rem",
   outline: "none",
+  background: "#fff",
+  transition: "border-color 0.15s",
 };
 const btn: React.CSSProperties = {
   padding: "0.5rem 1.1rem",
@@ -37,81 +41,111 @@ const btn: React.CSSProperties = {
   fontWeight: 600,
   cursor: "pointer",
 };
-const alertColor: Record<TradePlanAlert["level"], string> = {
-  error: "#dc2626",
-  warn: "#d97706",
-  info: "#2563eb",
+const btnGhost: React.CSSProperties = {
+  ...btn,
+  background: "#f1f5f9",
+  color: "#475569",
+  fontWeight: 500,
 };
-const alertBg: Record<TradePlanAlert["level"], string> = {
-  error: "#fef2f2",
-  warn: "#fffbeb",
-  info: "#eff6ff",
-};
+const alertColor: Record<TradePlanAlert["level"], string> = { error: "#dc2626", warn: "#d97706", info: "#2563eb" };
+const alertBg: Record<TradePlanAlert["level"], string> = { error: "#fef2f2", warn: "#fffbeb", info: "#eff6ff" };
+const cny = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
 
 export default function TradePlanTool() {
-  const [config, setConfig] = useState<TradePlanConfig | null>(null);
-  const [cfgMsg, setCfgMsg] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [strategies, setStrategies] = useState<TradePlanStrategySummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [strategy, setStrategy] = useState<TradePlanStrategy | null>(null);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  // 每日变动
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [items, setItems] = useState<TradePlanItem[]>([]);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<TradePlanCheckResult | null>(null);
   const [dayMsg, setDayMsg] = useState<string | null>(null);
-
-  // 历史
   const [days, setDays] = useState<TradePlanDay[]>([]);
   const [viewDay, setViewDay] = useState<TradePlanDay | null>(null);
 
-  const loadConfig = useCallback(async () => {
+  const loadStrategies = useCallback(async () => {
     try {
-      const r = await api.tradePlanConfig();
-      setConfig(r.config);
+      const r = await api.tradePlanStrategies();
+      setStrategies(r.strategies);
+      setSelectedId((prev) => (prev && r.strategies.some((s) => s.id === prev) ? prev : r.strategies[0]?.id ?? ""));
     } catch (e) {
-      setCfgMsg("❌ " + errMsg(e));
-    }
-  }, []);
-  const loadDays = useCallback(async () => {
-    try {
-      const r = await api.tradePlanDays();
-      setDays(r.days);
-    } catch {
-      /* 静默 */
+      setMsg("❌ " + errMsg(e));
     }
   }, []);
 
+  // 选中策略变化 → 加载完整详情
   useEffect(() => {
-    void loadConfig();
-    void loadDays();
-  }, [loadConfig, loadDays]);
+    if (!selectedId) return;
+    void api.tradePlanStrategy(selectedId).then((r) => {
+      if (r.ok && r.strategy) setStrategy(r.strategy);
+      setResult(null);
+      setViewDay(null);
+      setItems([]);
+      void loadDays(selectedId);
+    }).catch(() => {});
+  }, [selectedId]);
+
+  const loadDays = useCallback(async (sid: string) => {
+    try {
+      const r = await api.tradePlanDays(sid);
+      setDays(r.days);
+    } catch { /* 静默 */ }
+  }, []);
 
   const saveCfg = async () => {
-    if (!config) return;
-    setSaving(true);
-    setCfgMsg(null);
+    if (!strategy) return;
+    setMsg(null);
     try {
-      const r = await api.tradePlanSaveConfig(config);
-      setConfig(r.config);
-      setCfgMsg("✅ 策略配置已保存");
+      const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
+      if (r.ok && r.strategy) setStrategy(r.strategy);
+      setMsg("✅ 策略配置已保存");
+      await loadStrategies();
     } catch (e) {
-      setCfgMsg("❌ " + errMsg(e));
+      setMsg("❌ " + errMsg(e));
+    }
+  };
+
+  const createSt = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      const r = await api.tradePlanCreateStrategy(name);
+      setNewName("");
+      if (r.ok && r.strategy) setSelectedId(r.strategy.id);
+      await loadStrategies();
+    } catch (e) {
+      setMsg("❌ " + errMsg(e));
     } finally {
-      setSaving(false);
+      setCreating(false);
+    }
+  };
+
+  const deleteSt = async (id: string) => {
+    try {
+      await api.tradePlanDeleteStrategy(id);
+      setSelectedId("");
+      await loadStrategies();
+    } catch (e) {
+      setMsg("❌ " + errMsg(e));
     }
   };
 
   const setStockAt = (i: number, patch: Partial<{ code: string; name: string; maxWeightPct: number }>) => {
-    if (!config) return;
-    const stocks = config.stocks.slice();
+    if (!strategy) return;
+    const stocks = strategy.stocks.slice();
     stocks[i] = { ...stocks[i], ...patch };
-    setConfig({ ...config, stocks });
+    setStrategy({ ...strategy, stocks });
   };
   const setPosAt = (i: number, patch: Partial<{ code: string; shares: number; cost: number }>) => {
-    if (!config) return;
-    const initialPositions = config.initialPositions.slice();
+    if (!strategy) return;
+    const initialPositions = strategy.initialPositions.slice();
     initialPositions[i] = { ...initialPositions[i], ...patch };
-    setConfig({ ...config, initialPositions });
+    setStrategy({ ...strategy, initialPositions });
   };
   const setItemAt = (i: number, patch: Partial<TradePlanItem>) => {
     const next = items.slice();
@@ -121,17 +155,18 @@ export default function TradePlanTool() {
   };
 
   const runCheck = async (save: boolean) => {
+    if (!strategy) return;
     setChecking(true);
     setDayMsg(null);
     setResult(null);
     try {
       if (save) {
-        const r = await api.tradePlanCreateDay(date, items);
+        const r = await api.tradePlanCreateDay(strategy.id, date, items);
         setResult(r.result);
         setDayMsg(r.day ? `✅ 已保存 ${r.day.date} 的日度计划` : r.message ?? "已保存");
-        await loadDays();
+        await loadDays(strategy.id);
       } else {
-        const r = await api.tradePlanCheck(items);
+        const r = await api.tradePlanCheck(strategy.id, items);
         setResult(r.result);
         if (r.result.ok) setDayMsg("校验通过，可保存为日度计划");
       }
@@ -142,223 +177,276 @@ export default function TradePlanTool() {
     }
   };
 
-  const deleteOne = async (id: string) => {
+  const deleteOne = async (dayId: string) => {
+    if (!strategy) return;
     try {
-      await api.tradePlanDeleteDay(id);
-      if (viewDay?.id === id) setViewDay(null);
-      await loadDays();
+      await api.tradePlanDeleteDay(strategy.id, dayId);
+      if (viewDay?.id === dayId) setViewDay(null);
+      await loadDays(strategy.id);
     } catch (e) {
       setDayMsg("❌ " + errMsg(e));
     }
   };
 
-  const stockOptions = useMemo(() => config?.stocks ?? [], [config]);
+  const stockOptions = useMemo(() => strategy?.stocks ?? [], [strategy]);
   const displayResult = viewDay?.result ?? result;
+  const isDirty = (strategy?.stocks ?? []).some((s) => s.code) || strategy?.totalCapital !== undefined;
 
   return (
-    <div style={{ maxWidth: 1180, margin: "0 auto", fontSize: "0.88rem" }}>
+    <div style={{ maxWidth: 1240, margin: "0 auto", fontSize: "0.88rem" }}>
       <div style={{ marginBottom: "0.8rem" }}>
         <h2 style={{ margin: "0 0 0.2rem" }}>📋 交易规划</h2>
         <div style={{ color: "#64748b", fontSize: "0.82rem" }}>
-          配置交易策略保护仓位不失控；每日输入交易计划，自动校验是否符合策略与仓位控制，给出提醒与告警
+          多策略管理：配置策略保护仓位不失控；每日输入交易计划，自动校验是否符合策略与仓位控制
         </div>
       </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(340px, 1fr) 2fr", gap: "1rem", alignItems: "start" }}>
-        {/* 左：策略配置 */}
-        <div>
-          <div style={card}>
-            <div style={{ fontWeight: 700, marginBottom: "0.7rem" }}>⚙️ 策略配置</div>
-
-            <label style={{ display: "block", marginBottom: "0.6rem" }}>
-              <span style={{ color: "#475569" }}>总仓位（元）</span>
-              <input
-                style={{ ...input, width: "100%", marginTop: "0.25rem" }}
-                type="number"
-                min={0}
-                value={config?.totalCapital ?? ""}
-                onChange={(e) => setConfig((c) => (c ? { ...c, totalCapital: Number(e.target.value) || 0 } : c))}
-                placeholder="如 100000"
-              />
-            </label>
-            <label style={{ display: "block", marginBottom: "0.7rem" }}>
-              <span style={{ color: "#475569" }}>单日加仓上限（元）</span>
-              <input
-                style={{ ...input, width: "100%", marginTop: "0.25rem" }}
-                type="number"
-                min={0}
-                value={config?.dailyAddLimit ?? ""}
-                onChange={(e) => setConfig((c) => (c ? { ...c, dailyAddLimit: Number(e.target.value) || 0 } : c))}
-                placeholder="如 20000"
-              />
-            </label>
-
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.3rem", fontSize: "0.82rem" }}>交易标的（含单标的上限 %，可选）</div>
-            {(config?.stocks ?? []).map((s, i) => (
-              <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem" }}>
-                <input style={{ ...input, width: 90 }} placeholder="代码" value={s.code} onChange={(e) => setStockAt(i, { code: e.target.value })} />
-                <input style={{ ...input, flex: 1 }} placeholder="名称" value={s.name ?? ""} onChange={(e) => setStockAt(i, { name: e.target.value })} />
-                <input
-                  style={{ ...input, width: 70 }}
-                  type="number"
-                  min={0}
-                  max={100}
-                  placeholder="上限%"
-                  value={s.maxWeightPct ?? ""}
-                  onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })}
-                />
-                <button
-                  style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }}
-                  onClick={() => setConfig((c) => (c ? { ...c, stocks: c.stocks.filter((_, j) => j !== i) } : c))}
-                  type="button"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button
-              style={{ ...btn, background: "#475569", padding: "0.35rem 0.9rem", fontSize: "0.82rem" }}
-              onClick={() => setConfig((c) => (c ? { ...c, stocks: [...c.stocks, { code: "" }] } : c))}
-              type="button"
-            >
-              ＋ 添加标的
-            </button>
-
-            <div style={{ fontWeight: 600, color: "#475569", margin: "0.7rem 0 0.3rem", fontSize: "0.82rem" }}>起始持仓（数量 × 成本价）</div>
-            {(config?.initialPositions ?? []).map((p, i) => (
-              <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem" }}>
-                <input style={{ ...input, width: 90 }} placeholder="代码" value={p.code} onChange={(e) => setPosAt(i, { code: e.target.value })} />
-                <input style={{ ...input, flex: 1 }} type="number" min={0} placeholder="数量" value={p.shares || ""} onChange={(e) => setPosAt(i, { shares: Number(e.target.value) || 0 })} />
-                <input style={{ ...input, flex: 1 }} type="number" min={0} placeholder="成本价" value={p.cost || ""} onChange={(e) => setPosAt(i, { cost: Number(e.target.value) || 0 })} />
-                <button
-                  style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }}
-                  onClick={() => setConfig((c) => (c ? { ...c, initialPositions: c.initialPositions.filter((_, j) => j !== i) } : c))}
-                  type="button"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button
-              style={{ ...btn, background: "#475569", padding: "0.35rem 0.9rem", fontSize: "0.82rem", marginTop: "0.35rem" }}
-              onClick={() => setConfig((c) => (c ? { ...c, initialPositions: [...c.initialPositions, { code: "", shares: 0, cost: 0 }] } : c))}
-              type="button"
-            >
-              ＋ 添加持仓
-            </button>
-
-            <div style={{ marginTop: "0.8rem", display: "flex", alignItems: "center", gap: "0.6rem" }}>
-              <button style={btn} onClick={() => void saveCfg()} disabled={saving} type="button">
-                {saving ? "保存中…" : "💾 保存配置"}
-              </button>
-              {cfgMsg && <span style={{ color: cfgMsg.startsWith("❌") ? "#dc2626" : "#16a34a", fontSize: "0.82rem" }}>{cfgMsg}</span>}
-            </div>
-          </div>
+      {msg && (
+        <div style={{ marginBottom: "0.6rem", padding: "0.5rem 0.8rem", borderRadius: 8, background: msg.startsWith("❌") ? "#fef2f2" : "#ecfdf5", border: `1px solid ${msg.startsWith("❌") ? "#fca5a5" : "#6ee7b7"}`, color: msg.startsWith("❌") ? "#b91c1c" : "#047857", fontSize: "0.84rem" }}>
+          {msg}
         </div>
+      )}
 
-        {/* 右：每日变动 */}
-        <div>
-          <div style={card}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
-              <span style={{ fontWeight: 700 }}>📅 日度交易计划</span>
-              <input style={{ ...input, width: 140 }} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-
-            {(items.length === 0) && (
-              <div style={{ color: "#94a3b8", fontSize: "0.82rem", marginBottom: "0.5rem" }}>添加今日的交易操作（加仓 / 减仓）</div>
-            )}
-            {items.map((it, i) => (
-              <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.4rem", alignItems: "center" }}>
-                <select
-                  style={{ ...input, width: 130 }}
-                  value={it.code}
-                  onChange={(e) => setItemAt(i, { code: e.target.value })}
-                >
-                  <option value="">选择标的</option>
-                  {stockOptions.map((s) => (
-                    <option key={s.code} value={s.code}>
-                      {s.name ? `${s.name} ${s.code}` : s.code}
-                    </option>
-                  ))}
-                </select>
-                <select style={{ ...input, width: 84 }} value={it.action} onChange={(e) => setItemAt(i, { action: e.target.value as "add" | "reduce" })}>
-                  <option value="add">加仓</option>
-                  <option value="reduce">减仓</option>
-                </select>
-                <input
-                  style={{ ...input, width: 120 }}
-                  type="number"
-                  min={0}
-                  placeholder="金额（元）"
-                  value={it.amount || ""}
-                  onChange={(e) => setItemAt(i, { amount: Number(e.target.value) || 0 })}
-                />
-                <input
-                  style={{ ...input, flex: 1, minWidth: 80 }}
-                  placeholder="备注（可选）"
-                  value={it.note ?? ""}
-                  onChange={(e) => setItemAt(i, { note: e.target.value })}
-                />
-                <button style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }} onClick={() => setItems((arr) => arr.filter((_, j) => j !== i))} type="button">
-                  ✕
-                </button>
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "1rem", alignItems: "start" }}>
+        {/* 左：策略列表 */}
+        <div style={card}>
+          <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>📁 策略列表</div>
+          <div style={{ display: "flex", gap: "0.35rem", marginBottom: "0.6rem" }}>
+            <input
+              style={{ ...input, flex: 1, minWidth: 0 }}
+              placeholder="新策略名称"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void createSt(); }}
+            />
+            <button style={{ ...btn, padding: "0.5rem 0.8rem" }} onClick={() => void createSt()} disabled={creating || !newName.trim()} type="button">
+              ＋
+            </button>
+          </div>
+          {strategies.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无策略，先新建一个</div>}
+          {strategies.map((s) => (
+            <div
+              key={s.id}
+              onClick={() => setSelectedId(s.id)}
+              style={{
+                padding: "0.55rem 0.7rem",
+                borderRadius: 10,
+                border: `1.5px solid ${selectedId === s.id ? "var(--primary)" : "#e2e8f0"}`,
+                background: selectedId === s.id ? "var(--primary-soft)" : "#fff",
+                cursor: "pointer",
+                marginBottom: "0.4rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.4rem",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: "0.9rem", color: selectedId === s.id ? "var(--primary)" : "#1e293b" }}>{s.name}</div>
+                <div style={{ fontSize: "0.74rem", color: "#64748b" }}>
+                  仓位 {cny(s.totalCapital)} · {s.stockCount} 标的 · {s.dayCount} 计划
+                </div>
               </div>
-            ))}
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.4rem" }}>
               <button
-                style={{ ...btn, background: "#475569", padding: "0.4rem 0.9rem", fontSize: "0.84rem" }}
-                onClick={() => setItems((arr) => [...arr, { code: "", action: "add", amount: 0 }])}
+                style={{ ...btn, background: "transparent", color: "#94a3b8", padding: "0.2rem 0.4rem", fontSize: "0.85rem" }}
+                onClick={(e) => { e.stopPropagation(); void deleteSt(s.id); }}
+                title="删除策略"
                 type="button"
               >
-                ＋ 添加操作
+                ✕
               </button>
-              <button style={{ ...btn, background: "#0891b2" }} onClick={() => void runCheck(false)} disabled={checking || items.length === 0} type="button">
-                {checking ? "分析中…" : "🔍 分析校验"}
-              </button>
-              <button style={btn} onClick={() => void runCheck(true)} disabled={checking || items.length === 0} type="button">
-                💾 保存为日度计划
-              </button>
-              {dayMsg && <span style={{ color: dayMsg.startsWith("❌") ? "#dc2626" : "#16a34a", fontSize: "0.82rem" }}>{dayMsg}</span>}
             </div>
+          ))}
+        </div>
 
-            {/* 校验结果 */}
-            {displayResult && <ResultView result={displayResult} />}
-          </div>
+        {/* 右：选中策略 */}
+        <div>
+          {!strategy ? (
+            <div style={card}>
+              <div style={{ color: "#94a3b8", textAlign: "center", padding: "2rem 0" }}>请选择或新建一个策略</div>
+            </div>
+          ) : (
+            <>
+              {/* 策略配置 */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>⚙️ 策略配置</span>
+                  <input
+                    style={{ ...input, width: 160, fontWeight: 700 }}
+                    value={strategy.name}
+                    onChange={(e) => setStrategy({ ...strategy, name: e.target.value })}
+                    placeholder="策略名称"
+                  />
+                  <span style={{ flex: 1 }} />
+                  <button style={btn} onClick={() => void saveCfg()} type="button">💾 保存配置</button>
+                </div>
 
-          {/* 历史计划 */}
-          <div style={card}>
-            <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>🗂️ 历史日度计划</div>
-            {days.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无记录，保存后自动累积</div>}
-            {days.map((d) => (
-              <div key={d.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 600 }}>{d.date}</span>
-                <span style={{ color: d.result.ok ? "#16a34a" : "#dc2626", fontSize: "0.8rem" }}>
-                  {d.result.ok ? "✅ 通过" : `⚠️ ${d.result.alerts.filter((a) => a.level === "error").length} 项告警`}
-                </span>
-                <span style={{ color: "#64748b", fontSize: "0.78rem" }}>
-                  {d.items.map((it) => `${it.code} ${it.action === "add" ? "加" : "减"}${it.amount}`).join("；")}
-                </span>
-                <span style={{ flex: 1 }} />
-                <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => setViewDay(viewDay?.id === d.id ? null : d)} type="button">
-                  {viewDay?.id === d.id ? "收起" : "查看"}
-                </button>
-                <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => void deleteOne(d.id)} type="button">
-                  删除
-                </button>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem", marginBottom: "0.7rem" }}>
+                  <label>
+                    <span style={{ color: "#475569", fontSize: "0.8rem" }}>总仓位（元）</span>
+                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="number" min={0} value={strategy.totalCapital || ""} onChange={(e) => setStrategy({ ...strategy, totalCapital: Number(e.target.value) || 0 })} placeholder="如 100000" />
+                  </label>
+                  <label>
+                    <span style={{ color: "#475569", fontSize: "0.8rem" }}>单日加仓上限（元）</span>
+                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="number" min={0} value={strategy.dailyAddLimit || ""} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: Number(e.target.value) || 0 })} placeholder="如 20000" />
+                  </label>
+                </div>
+
+                <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的（可搜索名称补全；上限% 可选）</div>
+                {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，添加后限定可交易范围</div>}
+                {strategy.stocks.map((s, i) => (
+                  <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem", alignItems: "center" }}>
+                    <StockCodeInput
+                      code={s.code}
+                      onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
+                      onChange={(code) => setStockAt(i, { code })}
+                    />
+                    <input style={{ ...input, width: 70 }} placeholder="上限%" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                    <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
+                  </div>
+                ))}
+                <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: [...st.stocks, { code: "" }] } : st))} type="button">＋ 添加标的</button>
+
+                <div style={{ fontWeight: 600, color: "#475569", margin: "0.8rem 0 0.35rem", fontSize: "0.82rem" }}>起始持仓（数量 × 成本价）</div>
+                {strategy.initialPositions.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无持仓</div>}
+                {strategy.initialPositions.map((p, i) => (
+                  <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem", alignItems: "center" }}>
+                    <StockCodeInput
+                      code={p.code}
+                      onPick={(code) => setPosAt(i, { code })}
+                      onChange={(code) => setPosAt(i, { code })}
+                    />
+                    <input style={{ ...input, flex: 1, minWidth: 70 }} type="number" min={0} placeholder="数量" value={p.shares || ""} onChange={(e) => setPosAt(i, { shares: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, flex: 1, minWidth: 70 }} type="number" min={0} placeholder="成本价" value={p.cost || ""} onChange={(e) => setPosAt(i, { cost: Number(e.target.value) || 0 })} />
+                    <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, initialPositions: st.initialPositions.filter((_, j) => j !== i) } : st))} type="button">✕</button>
+                  </div>
+                ))}
+                <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, initialPositions: [...st.initialPositions, { code: "", shares: 0, cost: 0 }] } : st))} type="button">＋ 添加持仓</button>
+                {!isDirty && <div style={{ color: "#94a3b8", fontSize: "0.76rem", marginTop: "0.4rem" }}>保存配置后日度计划才能按此策略校验</div>}
               </div>
-            ))}
-          </div>
+
+              {/* 日度交易计划 */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+                  <span style={{ fontWeight: 700 }}>📅 日度交易计划</span>
+                  <input style={{ ...input, width: 145, padding: "0.4rem 0.6rem" }} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                  <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>策略：{strategy.name}</span>
+                </div>
+
+                {items.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem", marginBottom: "0.5rem" }}>添加今日的交易操作（加仓 / 减仓）</div>}
+                {items.map((it, i) => (
+                  <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.4rem", alignItems: "center" }}>
+                    <select style={{ ...input, width: 150, padding: "0.4rem 0.55rem" }} value={it.code} onChange={(e) => setItemAt(i, { code: e.target.value })}>
+                      <option value="">选择标的</option>
+                      {stockOptions.map((s) => (
+                        <option key={s.code} value={s.code}>{s.name ? `${s.name} ${s.code}` : s.code}</option>
+                      ))}
+                    </select>
+                    <select style={{ ...input, width: 80, padding: "0.4rem 0.55rem" }} value={it.action} onChange={(e) => setItemAt(i, { action: e.target.value as "add" | "reduce" })}>
+                      <option value="add">加仓</option>
+                      <option value="reduce">减仓</option>
+                    </select>
+                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="number" min={0} placeholder="金额（元）" value={it.amount || ""} onChange={(e) => setItemAt(i, { amount: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, flex: 1, minWidth: 70, padding: "0.4rem 0.55rem" }} placeholder="备注（可选）" value={it.note ?? ""} onChange={(e) => setItemAt(i, { note: e.target.value })} />
+                    <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setItems((arr) => arr.filter((_, j) => j !== i))} type="button">✕</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.4rem", alignItems: "center" }}>
+                  <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.84rem" }} onClick={() => setItems((arr) => [...arr, { code: "", action: "add", amount: 0 }])} type="button">＋ 添加操作</button>
+                  <button style={{ ...btn, background: "#0891b2" }} onClick={() => void runCheck(false)} disabled={checking || items.length === 0 || stockOptions.length === 0} type="button">
+                    {checking ? "分析中…" : "🔍 分析校验"}
+                  </button>
+                  <button style={btn} onClick={() => void runCheck(true)} disabled={checking || items.length === 0 || stockOptions.length === 0} type="button">
+                    💾 保存为日度计划
+                  </button>
+                  {dayMsg && <span style={{ color: dayMsg.startsWith("❌") ? "#dc2626" : "#16a34a", fontSize: "0.82rem" }}>{dayMsg}</span>}
+                </div>
+
+                {displayResult && <ResultView result={displayResult} />}
+              </div>
+
+              {/* 历史 */}
+              <div style={card}>
+                <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>🗂️ 历史日度计划</div>
+                {days.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无记录，保存后自动累积</div>}
+                {days.map((d) => (
+                  <div key={d.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600 }}>{d.date}</span>
+                    <span style={{ color: d.result.ok ? "#16a34a" : "#dc2626", fontSize: "0.8rem" }}>
+                      {d.result.ok ? "✅ 通过" : `⚠️ ${d.result.alerts.filter((a) => a.level === "error").length} 项告警`}
+                    </span>
+                    <span style={{ color: "#64748b", fontSize: "0.78rem" }}>
+                      {d.items.map((it) => `${it.code} ${it.action === "add" ? "加" : "减"}${it.amount}`).join("；")}
+                    </span>
+                    <span style={{ flex: 1 }} />
+                    <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => setViewDay(viewDay?.id === d.id ? null : d)} type="button">
+                      {viewDay?.id === d.id ? "收起" : "查看"}
+                    </button>
+                    <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => void deleteOne(d.id)} type="button">删除</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+/** 股票代码/名称搜索补全输入（名称 → 代码候选，复用专题自选股 search-stock） */
+function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v: string) => void; onPick: (code: string, name?: string) => void }) {
+  const [cands, setCands] = useState<{ code: string; name: string }[]>([]);
+  const [focus, setFocus] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onInput = (v: string) => {
+    onChange(v);
+    if (timer.current) clearTimeout(timer.current);
+    const t = v.trim();
+    if (!t || /^\d{5,6}$/.test(t)) { setCands([]); return; } // 纯代码不搜索
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await api.watchlistSearchStock(t, 6);
+        if (r.ok) setCands(r.items.map((x) => ({ code: x.code, name: x.name })));
+        else setCands([]);
+      } catch {
+        setCands([]);
+      }
+    }, 300);
+  };
+
+  return (
+    <div style={{ position: "relative", flex: 2, minWidth: 160 }}>
+      <input
+        style={{ ...input, width: "100%" }}
+        placeholder="代码 / 名称（搜索补全）"
+        value={code}
+        onChange={(e) => onInput(e.target.value)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setTimeout(() => setFocus(false), 200)}
+      />
+      {focus && cands.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, boxShadow: "0 4px 12px rgba(15,23,42,0.08)", marginTop: 2, maxHeight: 220, overflow: "auto" }}>
+          {cands.map((c) => (
+            <div
+              key={c.code}
+              onMouseDown={() => { onChange(c.code); onPick(c.code, c.name); setCands([]); }}
+              style={{ padding: "0.4rem 0.6rem", cursor: "pointer", display: "flex", justifyContent: "space-between", fontSize: "0.84rem" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+            >
+              <span>{c.name}</span>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>{c.code}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultView({ result }: { result: TradePlanCheckResult }) {
-  const cny = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
   return (
     <div style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
-      {/* 汇总卡 */}
       <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
         {[
           { label: "当日加仓", value: cny(result.totals.addTotal) },
@@ -373,7 +461,6 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
         ))}
       </div>
 
-      {/* 告警列表 */}
       {result.alerts.map((a, i) => (
         <div
           key={i}
@@ -394,7 +481,6 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
         </div>
       ))}
 
-      {/* 执行后仓位表 */}
       {result.after.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "0.5rem", fontSize: "0.8rem" }}>
           <thead>

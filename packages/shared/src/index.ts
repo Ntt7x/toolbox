@@ -1692,6 +1692,54 @@ export interface TradePlanConfig {
   updatedAt: string;
 }
 
+/** 交易策略（多策略：每策略独立配置与日度计划） */
+export interface TradePlanStrategy {
+  id: string;
+  /** 策略名称（如「稳健成长」） */
+  name: string;
+  /** 总仓位（元） */
+  totalCapital: number;
+  /** 单日加仓上限（元） */
+  dailyAddLimit: number;
+  /** 交易标的列表 */
+  stocks: TradePlanStockCfg[];
+  /** 起始持仓情况 */
+  initialPositions: TradePlanPosition[];
+  updatedAt: string;
+  createdAt: string;
+}
+
+/** 策略摘要（列表展示） */
+export interface TradePlanStrategySummary {
+  id: string;
+  name: string;
+  totalCapital: number;
+  dailyAddLimit: number;
+  stockCount: number;
+  dayCount: number;
+  updatedAt: string;
+}
+
+/** 策略列表响应 */
+export interface TradePlanStrategyListResult {
+  ok: boolean;
+  strategies: TradePlanStrategySummary[];
+}
+
+/** 策略读写响应 */
+export interface TradePlanStrategyResult {
+  ok: boolean;
+  strategy?: TradePlanStrategy;
+  message?: string;
+}
+
+/** 删除策略响应（含其日度计划） */
+export interface TradePlanStrategyDeleteResult {
+  ok: boolean;
+  message?: string;
+}
+
+
 /** 日度计划条目 */
 export interface TradePlanItem {
   code: string;

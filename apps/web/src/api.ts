@@ -6,10 +6,13 @@
   type FundSnapshot,
   type GridPlanRequest,
   type TradePlanCheckResponse,
-  type TradePlanConfig,
   type TradePlanDayListResult,
   type TradePlanDeleteResult,
   type TradePlanItem,
+  type TradePlanStrategy,
+  type TradePlanStrategyDeleteResult,
+  type TradePlanStrategyListResult,
+  type TradePlanStrategyResult,
   type GridPlanResult,
   type GridPlanHistoryDeleteResult,
   type GridPlanHistoryDetailResult,
@@ -167,20 +170,26 @@ export const api = {
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
     /** DeepSeek Chat 自动填入（服务端 playwright 打开浏览器并填提示词；未登录会弹窗登录一次） */
-  /** 交易规划：策略配置 */
-  tradePlanConfig: () =>
-    request<{ ok: boolean; config: TradePlanConfig }>("/tools/trade-plan/config"),
-  tradePlanSaveConfig: (config: TradePlanConfig) =>
-    request<{ ok: boolean; config: TradePlanConfig; message?: string }>("/tools/trade-plan/config", jsonInit("PUT", config)),
-  /** 交易规划：校验（preview）与日度计划 */
-  tradePlanCheck: (items: TradePlanItem[]) =>
-    request<TradePlanCheckResponse>("/tools/trade-plan/check", jsonInit("POST", { items })),
-  tradePlanCreateDay: (date: string, items: TradePlanItem[]) =>
-    request<TradePlanCheckResponse>("/tools/trade-plan/day", jsonInit("POST", { date, items })),
-  tradePlanDays: () =>
-    request<TradePlanDayListResult>("/tools/trade-plan/days"),
-  tradePlanDeleteDay: (id: string) =>
-    request<TradePlanDeleteResult>("/tools/trade-plan/day/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  /** 交易规划：多策略 */
+  tradePlanStrategies: () =>
+    request<TradePlanStrategyListResult>("/tools/trade-plan/strategies"),
+  tradePlanStrategy: (id: string) =>
+    request<TradePlanStrategyResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id)),
+  tradePlanCreateStrategy: (name: string) =>
+    request<TradePlanStrategyResult>("/tools/trade-plan/strategies", jsonInit("POST", { name })),
+  tradePlanSaveStrategy: (id: string, strategy: Partial<TradePlanStrategy>) =>
+    request<TradePlanStrategyResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("PUT", strategy)),
+  tradePlanDeleteStrategy: (id: string) =>
+    request<TradePlanStrategyDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  /** 交易规划：校验与日度计划（按策略） */
+  tradePlanCheck: (strategyId: string, items: TradePlanItem[]) =>
+    request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/check", jsonInit("POST", { items })),
+  tradePlanCreateDay: (strategyId: string, date: string, items: TradePlanItem[]) =>
+    request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day", jsonInit("POST", { date, items })),
+  tradePlanDays: (strategyId: string) =>
+    request<TradePlanDayListResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/days"),
+  tradePlanDeleteDay: (strategyId: string, dayId: string) =>
+    request<TradePlanDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day/" + encodeURIComponent(dayId), jsonInit("DELETE", {})),
     chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   watchlistFundamental: (id: string, code: string, force = false) =>
