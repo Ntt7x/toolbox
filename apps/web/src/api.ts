@@ -157,6 +157,11 @@ export const api = {
   /** 批量行情快照（个股基本信息） */
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
+  /** 近期热点新闻（东财 7x24 快讯） */
+  watchlistHotNews: (limit = 20) =>
+    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string }[]; fromCache?: boolean; at?: string; message?: string }>(
+      `/tools/watchlist/hot-news?limit=${limit}`,
+    ),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,

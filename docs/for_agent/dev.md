@@ -227,6 +227,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **终态防重复**：settledRef 标记——error 帧/迟到轮询结果不得重复处理（防止 onerror 与
   error 帧双路径互相覆盖）
 
+- **东财 7x24 快讯（2026-08-07）**：`https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html`
+  返回 JSONP（`var ajaxResult={...}`，须正则剥 `var ` 前缀与尾分号再 JSON.parse），字段 `LivesList[].title/digest/showtime/url_w`；
+  缓存 10 分钟（`watchlist:hotnews`）；np-listapi 新版接口实测常返回空 list，勿用。
+
 ## 5. 外部数据源经验
 
 - **知乎爬虫（多内容目标，2026-08 实测）**：

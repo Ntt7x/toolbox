@@ -48,12 +48,19 @@ function cbRateTaskName(req: CbRateRequest): string {
   return `${month} · 央行利率分析（${scope}）`;
 }
 
-export function cbRateCacheKey(req: CbRateRequest): string {  const banks = (req.banks ?? []).slice().sort().join(",");
+export function cbRateCacheKey(req: CbRateRequest): string {
+  const banks = (req.banks ?? []).slice().sort().join(",");
+  const n = new Date();
+  // 无显式月份时按「当前月/年」纳入 key：本月以来/今年以来 跨月跨年自动失效（v3）
+  const scope =
+    req.period === "month"
+      ? (req.month || `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`)
+      : `${n.getFullYear()}`;
   return [
     "cbRate",
-    "v2",
+    "v3",
     req.period,
-    req.month ?? "",
+    scope,
     banks,
     req.withCalendar ? "cal" : "nocal",
     req.search !== false ? "search" : "noknowledge",

@@ -137,114 +137,6 @@ export default function ReverseRepoTool() {
         desc="央行买断式逆回购（2024 年 10 月推出的中期流动性工具，3M/6M）存量余额跟踪：逐笔操作流水 + 月度汇总 + 存量余额曲线（累计净投放口径，权威数据）；每日变动量探查 + 当月变动量说明（LLM 增量）。仅关注买断式逆回购。"
       />
 
-      {/* 存量部分 */}
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📊 存量余额（买断式逆回购）</span>
-          <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-            存量余额 = 累计净投放（2026-03 锚点 7.2 万亿元）；逐笔与月度数据经多轮修订整合
-          </span>
-        </div>
-        {monthlyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {monthlyErr}</div>}
-        {monthly && monthly.ok && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "0.6rem" }}>{monthly.source}</div>
-
-            {/* 余额曲线 + 逐笔投放（ECharts：x 轴精确到月/日期，缩放+十字准星+峰谷标注） */}
-            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>
-              📈 买断式逆回购存量余额曲线（亿元，累计净投放；柱=逐笔投放，右轴）
-            </div>
-            <BalanceChart series={monthly.series} operations={monthly.operations} />
-
-            {/* 月度明细汇总表（逐笔操作并入每月可展开明细） */}
-            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>
-              📋 月度明细汇总表（亿元；每日经济新闻口径，推算补充）— 点击「明细」展开当月逐笔操作
-            </div>
-            <table style={table}>
-              <thead>
-                <tr>
-                  <th style={th}>月份</th>
-                  <th style={th}>操作日期</th>
-                  <th style={th}>投放</th>
-                  <th style={th}>3M</th>
-                  <th style={th}>6M</th>
-                  <th style={th}>净投放</th>
-                  <th style={th}>累计净投放=存量</th>
-                  <th style={th}>备注</th>
-                  <th style={th}>明细</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthly.rows.map((r: ReverseRepoMonthlyRow, i: number) => {
-                  const monthKey = r.month.length === 7 ? r.month : r.month.slice(0, 7);
-                  const ops = monthly.operations.filter((op) => (op.date.length === 7 ? op.date : op.date.slice(0, 7)) === monthKey);
-                  const open = expandedMonth === monthKey;
-                  return (
-                    <Fragment key={i}>
-                      <tr style={{ background: open ? "#eff6ff" : undefined }}>
-                        <td style={thTd}><b>{r.month}</b></td>
-                        <td style={thTd}>{r.opDate}</td>
-                        <td style={thTd}>{r.operationTotal}</td>
-                        <td style={thTd}>{r.m3}</td>
-                        <td style={thTd}>{r.m6}</td>
-                        <td style={{ ...thTd, color: (r.netChange ?? 0) >= 0 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
-                          {r.netChange !== null ? (r.netChange >= 0 ? `+${r.netChange}` : `${r.netChange}`) : "—"}
-                        </td>
-                        <td style={{ ...thTd, fontWeight: 700 }}>
-                          {r.cumulativeNet !== null ? r.cumulativeNet : "—"}
-                        </td>
-                        <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{r.note ?? ""}</td>
-                        <td style={thTd}>
-                          <button
-                            type="button"
-                            style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer", color: "#334155" }}
-                            onClick={() => setExpandedMonth(open ? null : monthKey)}
-                          >
-                            {open ? "收起 ▲" : `${ops.length ? `明细 ${ops.length} 笔 ▾` : "—"}`}
-                          </button>
-                        </td>
-                      </tr>
-                      {open && (
-                        <tr>
-                          <td style={{ ...thTd, padding: 0, background: "#f8fafc" }} colSpan={9}>
-                            {ops.length > 0 ? (
-                              <table style={{ ...table, margin: "0.5rem", width: "calc(100% - 1rem)" }}>
-                                <thead>
-                                  <tr>
-                                    <th style={th}>操作日期</th>
-                                    <th style={th}>期限</th>
-                                    <th style={th}>金额(亿)</th>
-                                    <th style={th}>公告/来源</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {ops.map((op: ReverseRepoOperation, j: number) => (
-                                    <tr key={j}>
-                                      <td style={thTd}>
-                                        <b>{op.date.length === 7 ? `${op.date}（月内）` : op.date}</b>
-                                      </td>
-                                      <td style={thTd}>{op.term}</td>
-                                      <td style={thTd}>{op.amount}</td>
-                                      <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            ) : (
-                              <div style={{ padding: "0.5rem 0.8rem", color: "#94a3b8", fontSize: "0.78rem" }}>本月无逐笔操作记录</div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
       {/* 增量部分：每日变动探查（探查区：当日 / 当月 分栏） */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
@@ -402,6 +294,114 @@ export default function ReverseRepoTool() {
             );
           }}
         />
+      </div>
+
+      {/* 存量部分 */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: "1rem" }}>📊 存量余额（买断式逆回购）</span>
+          <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
+            存量余额 = 累计净投放（2026-03 锚点 7.2 万亿元）；逐笔与月度数据经多轮修订整合
+          </span>
+        </div>
+        {monthlyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {monthlyErr}</div>}
+        {monthly && monthly.ok && (
+          <div style={{ marginTop: "0.8rem" }}>
+            <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "0.6rem" }}>{monthly.source}</div>
+
+            {/* 余额曲线 + 逐笔投放（ECharts：x 轴精确到月/日期，缩放+十字准星+峰谷标注） */}
+            <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>
+              📈 买断式逆回购存量余额曲线（亿元，累计净投放；柱=逐笔投放，右轴）
+            </div>
+            <BalanceChart series={monthly.series} operations={monthly.operations} />
+
+            {/* 月度明细汇总表（逐笔操作并入每月可展开明细） */}
+            <div style={{ fontWeight: 600, margin: "0.8rem 0 0.3rem" }}>
+              📋 月度明细汇总表（亿元；每日经济新闻口径，推算补充）— 点击「明细」展开当月逐笔操作
+            </div>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={th}>月份</th>
+                  <th style={th}>操作日期</th>
+                  <th style={th}>投放</th>
+                  <th style={th}>3M</th>
+                  <th style={th}>6M</th>
+                  <th style={th}>净投放</th>
+                  <th style={th}>累计净投放=存量</th>
+                  <th style={th}>备注</th>
+                  <th style={th}>明细</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthly.rows.map((r: ReverseRepoMonthlyRow, i: number) => {
+                  const monthKey = r.month.length === 7 ? r.month : r.month.slice(0, 7);
+                  const ops = monthly.operations.filter((op) => (op.date.length === 7 ? op.date : op.date.slice(0, 7)) === monthKey);
+                  const open = expandedMonth === monthKey;
+                  return (
+                    <Fragment key={i}>
+                      <tr style={{ background: open ? "#eff6ff" : undefined }}>
+                        <td style={thTd}><b>{r.month}</b></td>
+                        <td style={thTd}>{r.opDate}</td>
+                        <td style={thTd}>{r.operationTotal}</td>
+                        <td style={thTd}>{r.m3}</td>
+                        <td style={thTd}>{r.m6}</td>
+                        <td style={{ ...thTd, color: (r.netChange ?? 0) >= 0 ? "#15803d" : "#dc2626", fontWeight: 600 }}>
+                          {r.netChange !== null ? (r.netChange >= 0 ? `+${r.netChange}` : `${r.netChange}`) : "—"}
+                        </td>
+                        <td style={{ ...thTd, fontWeight: 700 }}>
+                          {r.cumulativeNet !== null ? r.cumulativeNet : "—"}
+                        </td>
+                        <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{r.note ?? ""}</td>
+                        <td style={thTd}>
+                          <button
+                            type="button"
+                            style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer", color: "#334155" }}
+                            onClick={() => setExpandedMonth(open ? null : monthKey)}
+                          >
+                            {open ? "收起 ▲" : `${ops.length ? `明细 ${ops.length} 笔 ▾` : "—"}`}
+                          </button>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td style={{ ...thTd, padding: 0, background: "#f8fafc" }} colSpan={9}>
+                            {ops.length > 0 ? (
+                              <table style={{ ...table, margin: "0.5rem", width: "calc(100% - 1rem)" }}>
+                                <thead>
+                                  <tr>
+                                    <th style={th}>操作日期</th>
+                                    <th style={th}>期限</th>
+                                    <th style={th}>金额(亿)</th>
+                                    <th style={th}>公告/来源</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {ops.map((op: ReverseRepoOperation, j: number) => (
+                                    <tr key={j}>
+                                      <td style={thTd}>
+                                        <b>{op.date.length === 7 ? `${op.date}（月内）` : op.date}</b>
+                                      </td>
+                                      <td style={thTd}>{op.term}</td>
+                                      <td style={thTd}>{op.amount}</td>
+                                      <td style={{ ...thTd, textAlign: "left", fontSize: "0.78rem" }}>{op.source ?? ""}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            ) : (
+                              <div style={{ padding: "0.5rem 0.8rem", color: "#94a3b8", fontSize: "0.78rem" }}>本月无逐笔操作记录</div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
     </div>

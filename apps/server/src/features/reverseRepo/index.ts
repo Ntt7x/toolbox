@@ -29,7 +29,7 @@ registerDataSource({
 });
 registerDataSource({
   kind: "kv",
-  name: "reverseRepo:daily",
+  name: "reverseRepo:daily:",
   page: "买断式逆回购余额",
   tag: "分析数据",
   description: "买断式逆回购每日变动探查缓存（Key-结构化 Value）",
@@ -77,14 +77,20 @@ export function register(app: Hono): void {
     return c.json({ ok: true, state: "running", months: stale, taskId });
   });
 
-  /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查） */
+  /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查）
+   *  缓存 key 按「分析日期」隔离（v2）：每日探查按天独立，跨天自动失效不命中旧缓存 */
   const DAILY_CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+  const dailyCacheKey = () => {
+    const n = new Date();
+    const d = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+    return `reverseRepo:daily:${d}`;
+  };
   app.post(`${API_PREFIX}/tools/reverse-repo/daily`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as { force?: unknown } | null;
     const force = raw?.force === true;
 
     if (!force) {
-      const cached = kvGet<ReverseRepoDailyResponse & { _at?: string }>("reverseRepo:daily");
+      const cached = kvGet<ReverseRepoDailyResponse & { _at?: string }>(dailyCacheKey());
       const at = cached?._at ? Date.parse(cached._at) : NaN;
       if (cached && Number.isFinite(at) && Date.now() - at < DAILY_CACHE_TTL_MS) {
         const hit: AsyncTaskResult<ReverseRepoDailyResult> = {
@@ -102,7 +108,7 @@ export function register(app: Hono): void {
       async (signal) => {
         const r = await probeDaily(signal);
         if (!r.ok) throw new Error(r.message);
-        kvSet("reverseRepo:daily", { ...r, _at: new Date().toISOString() });
+        kvSet(dailyCacheKey(), { ...r, _at: new Date().toISOString() });
         return r;
       },
       { timeoutMs: 5 * 60 * 1000, module: "reverse-repo.daily" },

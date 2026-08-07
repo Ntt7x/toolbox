@@ -30,10 +30,12 @@ registerDataSource({
 /** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
 export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
-/** 缓存 key：参数归一化。v1 = 初始 schema */
+/** 缓存 key：参数归一化 + 分析日期隔离。v2 = 按日缓存（跨天自动失效，避免命中昨日旧数据） */
 export function treasuryFxCacheKey(req: TreasuryFxRequest): string {
   const days = typeof req.days === "number" && Number.isInteger(req.days) ? Math.min(10, Math.max(1, req.days)) : 5;
-  return ["treasuryFx", "v1", String(days), req.search !== false ? "search" : "noknowledge"].join(":");
+  const n = new Date();
+  const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  return ["treasuryFx", "v2", today, String(days), req.search !== false ? "search" : "noknowledge"].join(":");
 }
 
 export const meta: ToolMeta = {

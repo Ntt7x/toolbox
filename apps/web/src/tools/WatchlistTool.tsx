@@ -106,6 +106,12 @@ export default function WatchlistTool() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // 近期热点尝鲜（东财 7x24 快讯）
+  const [hotNews, setHotNews] = useState<{ title: string; digest: string; time: string; url: string }[]>([]);
+  const [hotLoading, setHotLoading] = useState(false);
+  const [hotAt, setHotAt] = useState<string | null>(null);
+  const [hotErr, setHotErr] = useState<string | null>(null);
+
   // 新建专题
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -158,11 +164,31 @@ export default function WatchlistTool() {
     }
   }, []);
 
+  /** 加载近期热点新闻（东财快讯，缓存 10 分钟） */
+  const loadHotNews = useCallback(async () => {
+    setHotLoading(true);
+    setHotErr(null);
+    try {
+      const r = await api.watchlistHotNews(20);
+      if (r.ok) {
+        setHotNews(r.items ?? []);
+        setHotAt(r.at ?? null);
+      } else {
+        setHotErr(r.message ?? "热点加载失败");
+      }
+    } catch (e) {
+      setHotErr(errMsg(e));
+    } finally {
+      setHotLoading(false);
+    }
+  }, []);
+
   // 挂载：加载专题列表 + 自动捕获剪贴板（Chat 导入 / Chat 补充链接）
   useEffect(() => {
     void refreshList();
     void readImportClipboard();
     void readAppendClipboard();
+    void loadHotNews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -494,6 +520,63 @@ export default function WatchlistTool() {
         desc="自建投资专题，收录（入选个股 + 入选理由）；每只股票可用 LLM 财报分析（联网搜索，缓存 2 年）。示例专题：AI 硬件 / 通胀消费 / 水利开支 / 商业航天…"
       />
       {err && <ErrorCard>{err}</ErrorCard>}
+
+      {/* 🔥 近期热点尝鲜（东财 7x24 快讯，纯抓取非 LLM；缓存 10 分钟） */}
+      <div style={{ ...card, padding: "0.9rem 1.1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>🔥 近期热点尝鲜</span>
+          <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>东财 7x24 快讯汇总（自动刷新 · 缓存 10 分钟）</span>
+          <span style={{ flex: 1 }} />
+          <button
+            style={{ padding: "0.3rem 0.8rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", fontSize: "0.78rem", cursor: "pointer" }}
+            onClick={() => void loadHotNews()}
+            disabled={hotLoading}
+            type="button"
+          >
+            {hotLoading ? "加载中…" : "🔄 刷新"}
+          </button>
+        </div>
+        {hotErr && <div style={{ color: "#b91c1c", fontSize: "0.82rem", marginTop: "0.4rem" }}>❌ {hotErr}</div>}
+        {hotNews.length > 0 && (
+          <>
+            <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              {hotNews.slice(0, 8).map((n, i) => (
+                <a
+                  key={i}
+                  href={n.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={n.digest}
+                  style={{
+                    display: "flex",
+                    gap: "0.6rem",
+                    alignItems: "baseline",
+                    textDecoration: "none",
+                    color: "#334155",
+                    fontSize: "0.84rem",
+                    lineHeight: 1.5,
+                    padding: "0.18rem 0.3rem",
+                    borderRadius: 6,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#f1f5f9"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0, width: 104 }}>{n.time.slice(5, 16)}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{n.title}</span>
+                </a>
+              ))}
+            </div>
+            {hotAt && (
+              <div style={{ color: "#cbd5e1", fontSize: "0.72rem", marginTop: "0.35rem" }}>
+                更新于 {new Date(hotAt).toLocaleTimeString()} · 点击标题查看原文
+              </div>
+            )}
+          </>
+        )}
+        {!hotLoading && hotNews.length === 0 && !hotErr && (
+          <div style={{ color: "#94a3b8", fontSize: "0.82rem", marginTop: "0.4rem" }}>暂无热点数据（点击「刷新」重试）</div>
+        )}
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "1rem", alignItems: "start" }}>
         {/* 左：专题列表 */}

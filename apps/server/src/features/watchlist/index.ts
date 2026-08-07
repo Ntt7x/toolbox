@@ -19,6 +19,7 @@ import {
 } from "@toolbox/shared";
 import { createTask, getTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
+import { kvGet, kvSet } from "../../core/kvStore.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
 import { fundamentalAnalysis, importFromChat, resolveStockName } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
@@ -40,6 +41,52 @@ registerDataSource({
   description: "个股财报分析结果缓存（LLM 驱动，TTL 2 年）",
 });
 
+// ============================================================
+// 近期热点尝鲜：东财 7x24 快讯（新闻数据/热点汇总，纯抓取非 LLM）
+// ============================================================
+
+const HOT_NEWS_URL = "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html";
+const HOT_TTL_MS = 10 * 60 * 1000; // 快讯 10 分钟缓存
+const HOT_NEWS_KEY = "watchlist:hotnews";
+
+export interface HotNewsItem {
+  title: string;
+  digest: string;
+  time: string;
+  url: string;
+}
+
+/** 抓取东财 7x24 快讯（JSONP 剥离 → 归一化） */
+export async function fetchHotNews(limit = 20): Promise<HotNewsItem[]> {
+  const res = await fetch(HOT_NEWS_URL, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!res.ok) throw new Error(`东财快讯接口 ${res.status}`);
+  const text = await res.text();
+  // JSONP：var ajaxResult={...}（剥离 var 前缀与尾分号）
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("东财快讯响应格式异常");
+  const data = JSON.parse(m[0]) as { LivesList?: { title?: string; digest?: string; showtime?: string; url_w?: string }[] };
+  return (data.LivesList ?? [])
+    .filter((x) => x?.title)
+    .slice(0, limit)
+    .map((x) => ({
+      title: x.title ?? "",
+      digest: x.digest ?? "",
+      time: x.showtime ?? "",
+      url: x.url_w ?? "",
+    }));
+}
+
+registerDataSource({
+  kind: "kv",
+  name: "watchlist:hotnews",
+  page: "专题自选股",
+  tag: "分析数据",
+  description: "近期热点新闻缓存（东财 7x24 快讯，TTL 10 分钟）",
+});
+
 export const meta: ToolMeta = {
   id: "watchlist",
   name: "专题自选股",
@@ -53,6 +100,25 @@ function isValidCode(code: string): boolean {
 }
 
 export function register(app: Hono): void {
+  // 近期热点新闻（东财 7x24 快讯，缓存 10 分钟）
+  app.get(`${API_PREFIX}/tools/watchlist/hot-news`, async (c) => {
+    const limit = Math.min(50, Math.max(5, Number(c.req.query("limit") ?? 20) || 20));
+    const cached = kvGet<{ _at?: string; items?: HotNewsItem[] }>(HOT_NEWS_KEY);
+    const at = cached?._at ? Date.parse(cached._at) : NaN;
+    if (cached?.items && Number.isFinite(at) && Date.now() - at < HOT_TTL_MS) {
+      return c.json({ ok: true, items: cached.items.slice(0, limit), fromCache: true, at: cached._at });
+    }
+    try {
+      const items = await fetchHotNews(limit);
+      kvSet(HOT_NEWS_KEY, { _at: new Date().toISOString(), items });
+      return c.json({ ok: true, items, fromCache: false, at: new Date().toISOString() });
+    } catch (e) {
+      // 抓取失败：降级返回旧缓存（若有），否则错误
+      if (cached?.items) return c.json({ ok: true, items: cached.items.slice(0, limit), fromCache: true, stale: true });
+      return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  });
+
   // 专题列表（轻量）
   app.get(`${API_PREFIX}/tools/watchlist`, (c) => {
     return c.json({ ok: true, topics: listTopics() });

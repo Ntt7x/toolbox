@@ -256,7 +256,37 @@ export default function KellyTool() {
           <button style={btn} onClick={() => void runCalculate()} disabled={loading} type="button">
             {loading ? "计算中…" : "🧮 计算"}
           </button>
+          {/* 查看提示词并入计算按钮组（与其他工具页一致） */}
+          <button
+            style={{ ...btn, background: "#7c3aed", fontWeight: 500, padding: "0.55rem 1rem" }}
+            onClick={() => setShowPrompt((v) => !v)}
+            type="button"
+          >
+            {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
+          </button>
         </div>
+        {/* 提示词展开（紧跟计算按钮下方） */}
+        {showPrompt && (
+          <div style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+              <button style={{ ...btn, background: "#16a34a", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={copyPrompt} type="button">
+                {copied ? "✅ 已复制" : "📋 复制"}
+              </button>
+              <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
+                💬 Chat
+              </button>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
+                本工具即由该 LLM 提示词固化而来，提示词统一存储于「本地设置数据」，可编辑与重置
+              </span>
+            </div>
+            <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
+            {chatHint && (
+              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                💬 已打开 DeepSeek 网页版并复制提示词；请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {err && <ErrorCard>{err}</ErrorCard>}
@@ -323,36 +353,6 @@ export default function KellyTool() {
           </div>
         </div>
       )}
-
-      {/* 程序性提示词 */}
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>📜 程序性提示词</span>
-          <button style={{ ...btn, background: "#64748b", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setShowPrompt((v) => !v)} type="button">
-            {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
-          </button>
-          {showPrompt && (
-            <>
-              <button style={{ ...btn, background: "#16a34a", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={copyPrompt} type="button">
-                {copied ? "✅ 已复制" : "📋 复制"}
-              </button>
-              <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
-                💬 Chat
-              </button>
-            </>
-          )}
-        </div>
-        {showPrompt && (
-          <div style={{ marginTop: "0.7rem" }}>
-            <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
-          </div>
-        )}
-        {chatHint && (
-          <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-            💬 已打开 DeepSeek 网页版并将提示词复制到剪贴板；请在对话输入框粘贴后发送。
-          </div>
-        )}
-      </div>
 
       {/* 历史记录 */}
       <div style={card}>
