@@ -50,6 +50,7 @@ export default function ReverseRepoTool() {
   const [copied, setCopied] = useState(false);
   const [chatHint, setChatHint] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
+  const [cacheHint, setCacheHint] = useState(false);
   const [dailyErr, setDailyErr] = useState<string | null>(null);
   // 探查分区：当日 / 当月（服务端一次探查含两者，前端分区展示）
   const [probeView, setProbeView] = useState<"today" | "month">("today");
@@ -71,12 +72,14 @@ export default function ReverseRepoTool() {
 
   const probeDaily = async (force: boolean) => {
     setDailyErr(null);
+    setCacheHint(false);
     try {
       const t = await api.reverseRepoDaily(force);
       if (!t.ok) {
         setDailyErr(t.message);
         return;
       }
+      if (t.taskId && t.taskId.startsWith("cache-")) setCacheHint(true);
       dailyTask.watch(t.taskId, t);
     } catch (e) {
       setDailyErr(errMsg(e));
@@ -297,6 +300,11 @@ export default function ReverseRepoTool() {
           </div>
         )}
         {dailyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {dailyErr}</div>}
+        {cacheHint && (
+          <div style={{ borderColor: "#fde68a", background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", borderRadius: 10, padding: "0.6rem 0.9rem", fontSize: "0.82rem", marginTop: "0.6rem" }}>
+            💾 已从缓存加载（{new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新请点「强制刷新」。
+          </div>
+        )}
         {daily && (
           <div style={{ marginTop: "0.8rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.85rem", color: "#475569" }}>
