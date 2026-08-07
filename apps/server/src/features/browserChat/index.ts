@@ -31,21 +31,22 @@ export interface ChatBrowserOpenResult {
   message: string;
 }
 
-/** 定位输入框并填入提示词（textarea 优先，兜底 contenteditable） */
+/** 定位输入框并填入提示词（textarea 优先，兜底 contenteditable）
+ *  用 click + keyboard.type 真实键入：DeepSeek 输入框是 React 受控组件，
+ *  fill() 直接设值不触发受控更新（实测会静默失败），键盘输入最接近真实用户且稳定触发事件。 */
 async function fillPrompt(page: Page, prompt: string): Promise<boolean> {
-  try {
-    const ta = page.locator("textarea").first();
-    await ta.waitFor({ state: "visible", timeout: 8000 });
-    await ta.click();
-    await ta.fill(prompt);
+  const tryFill = async (sel: string) => {
+    const el = page.locator(sel).first();
+    await el.waitFor({ state: "visible", timeout: 10000 });
+    await el.click();
+    await page.keyboard.type(prompt, { delay: 5 });
     return true;
+  };
+  try {
+    return await tryFill("textarea");
   } catch {
     try {
-      const ce = page.locator('div[contenteditable="true"]').first();
-      await ce.waitFor({ state: "visible", timeout: 4000 });
-      await ce.click();
-      await ce.fill(prompt);
-      return true;
+      return await tryFill('div[contenteditable="true"]');
     } catch {
       return false;
     }
