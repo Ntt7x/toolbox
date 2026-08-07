@@ -87,7 +87,11 @@
 // 统一约定：非 2xx 时若后端返回 { message }，优先抛出该 message（调用方展示详情）。
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_PREFIX}${path}`, init);
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    ...init,
+    // 统一超时（仅普通请求；调用方已传 signal 的任务流不覆盖，避免破坏 SSE/长任务）
+    signal: init?.signal ?? AbortSignal.timeout(20000),
+  });
   if (res.status === 204) return undefined as T;
   const body = (await res.json().catch(() => null)) as (T & { message?: string }) | null;
   if (res.ok) return body as T;
