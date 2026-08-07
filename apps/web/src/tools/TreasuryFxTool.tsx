@@ -47,6 +47,7 @@ export default function TreasuryFxTool() {
   const [withCache, setWithCache] = useState(true);
   const [loading, setLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [cacheHint, setCacheHint] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
   const [chatHint, setChatHint] = useState(false);
@@ -72,12 +73,15 @@ export default function TreasuryFxTool() {
   const run = async () => {
     setShowRaw(false);
     setLoading(true);
+    setCacheHint(false);
     try {
       const t = await api.treasuryFx({ days, search: withSearch, useCache: withCache });
       if (!t.ok) {
         setLocalErr(t.message);
         return;
       }
+      // 缓存命中（cache- 前缀 taskId）：瞬时完成，给出明确反馈避免「点了没反应」的错觉
+      if (t.taskId && t.taskId.startsWith("cache-")) setCacheHint(true);
       task.watch(t.taskId, t);
     } catch (e) {
       setLocalErr(errMsg(e));
@@ -201,6 +205,13 @@ export default function TreasuryFxTool() {
 
       {/* 错误 */}
       {err && <ErrorCard>❌ {err}</ErrorCard>}
+
+      {/* 缓存命中提示（瞬时完成反馈） */}
+      {cacheHint && (
+        <div style={{ ...card, borderColor: "#fde68a", background: "#fffbeb", color: "#b45309", padding: "0.7rem 1rem" }}>
+          💾 已从缓存加载（{new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新数据请关闭「缓存」或修改参数。
+        </div>
+      )}
 
       {/* 结果 */}
       {result && <ResultView r={result} showRaw={showRaw} setShowRaw={setShowRaw} />}

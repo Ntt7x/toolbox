@@ -12,7 +12,7 @@ import type {
   QuoteResponse,
 } from "@toolbox/shared";
 
-// ---------- 趋势类型选项 ----------
+// ---------- 趋势类型选项（按方向性分组：趋势 / 震荡 / 变盘） ----------
 
 const TREND_OPTIONS: { type: GridTrendType; name: string; desc: string }[] = [
   { type: 1, name: "单边强牛市", desc: "陡峭上升，几乎无回调，回调即买点" },
@@ -22,6 +22,13 @@ const TREND_OPTIONS: { type: GridTrendType; name: string; desc: string }[] = [
   { type: 5, name: "宽幅震荡市", desc: "区间内大幅来回波动，无方向" },
   { type: 6, name: "窄幅盘整市", desc: "波动率极低或持续收窄，等待突破" },
   { type: 7, name: "喇叭口震荡", desc: "波动从低渐高或从高渐低，即将变盘" },
+];
+
+/** 趋势类型分组（组名 → 类型号列表），用于分组分行展示 */
+const TREND_GROUPS: { label: string; icon: string; types: number[] }[] = [
+  { label: "趋势", icon: "📈", types: [1, 2] },
+  { label: "震荡", icon: "🎢", types: [3, 4, 5, 6] },
+  { label: "变盘", icon: "🔀", types: [7] },
 ];
 
 const STYLE_ORDER: GridStyleKey[] = ["rad", "bal", "con"];
@@ -273,37 +280,33 @@ export default function GridPlanTool() {
       {/* 表单 */}
       <div style={card}>
         <div style={stepLabel}>① 行情趋势类型</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "0.5rem" }}>
-          {TREND_OPTIONS.map((o) => (
-            <label
-              key={o.type}
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "0.5rem",
-                padding: "0.55rem 0.7rem",
-                borderRadius: 10,
-                border: `1.5px solid ${type === o.type ? "var(--primary)" : "#e2e8f0"}`,
-                background: type === o.type ? "var(--primary-soft)" : "#fff",
-                cursor: "pointer",
-                transition: "border-color 150ms ease, background 150ms ease, transform 150ms ease",
-              }}
-              onMouseEnter={(e) => { if (type !== o.type) e.currentTarget.style.borderColor = "#bfdbfe"; }}
-              onMouseLeave={(e) => { if (type !== o.type) e.currentTarget.style.borderColor = "#e2e8f0"; }}
-            >
-              <input
-                type="radio"
-                name="trend"
-                checked={type === o.type}
-                onChange={() => setType(o.type)}
-                style={{ marginTop: "0.2rem" }}
-              />
-              <span>
-                <span style={{ fontWeight: 600 }}>{o.type}. {o.name}</span>
-                <br />
-                <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>{o.desc}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+          {TREND_GROUPS.map((g) => (
+            <div key={g.label} style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+              <span style={{ width: 64, flexShrink: 0, fontSize: "0.78rem", fontWeight: 700, color: "#64748b" }}>
+                {g.icon} {g.label}
               </span>
-            </label>
+              {TREND_OPTIONS.filter((o) => g.types.includes(o.type)).map((o) => (
+                <button
+                  key={o.type}
+                  type="button"
+                  title={o.desc}
+                  onClick={() => setType(o.type)}
+                  style={{
+                    padding: "0.28rem 0.85rem",
+                    borderRadius: 999,
+                    border: `1.5px solid ${type === o.type ? "var(--primary)" : "#e2e8f0"}`,
+                    background: type === o.type ? "var(--primary-soft)" : "#fff",
+                    color: type === o.type ? "var(--primary)" : "#475569",
+                    fontWeight: type === o.type ? 700 : 500,
+                    fontSize: "0.82rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  {o.name}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
 
@@ -368,7 +371,37 @@ export default function GridPlanTool() {
           <button style={btn} onClick={submit} disabled={loading} type="button">
             {loading ? "计算中…" : "⚡ 生成计划"}
           </button>
+          {/* 查看提示词并入生成计划按钮组 */}
+          <button
+            style={{ ...btn, background: "#7c3aed", fontWeight: 500, padding: "0.55rem 1rem" }}
+            onClick={() => setShowPrompt((v) => !v)}
+            type="button"
+          >
+            {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
+          </button>
         </div>
+        {/* 提示词展开（紧跟生成计划按钮下方） */}
+        {showPrompt && (
+          <div style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+              <button style={{ ...btn, background: "#16a34a", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={copyPrompt} type="button">
+                {copied ? "✅ 已复制" : "📋 复制"}
+              </button>
+              <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
+                💬 Chat
+              </button>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
+                本工具即由该 LLM 提示词固化而来，提示词统一存储于「本地设置数据」，可编辑与重置
+              </span>
+            </div>
+            <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
+            {chatHint && (
+              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ color: "#94a3b8", fontSize: "0.78rem", marginTop: "0.5rem" }}>
           示例数值：1.073（上轨）1.290（中轨）0.856（下轨）——请直接填写三个数字，顺序任意。
         </div>
@@ -386,45 +419,6 @@ export default function GridPlanTool() {
           </span>
         </div>
       </div>
-
-      {/* 原始提示词展示/复制 */}
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          <button
-            style={{ ...btn, background: "#7c3aed" }}
-            onClick={() => setShowPrompt((v) => !v)}
-            type="button"
-          >
-            {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
-          </button>
-          {showPrompt && (
-            <>
-              <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
-                {copied ? "✅ 已复制" : "📋 复制"}
-              </button>
-              <button style={{ ...btn, background: "#0891b2" }} onClick={() => openChat(promptText)} type="button">
-                💬 Chat
-              </button>
-            </>
-          )}
-          <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-            本工具即由该 LLM 提示词固化而来，提示词统一存储于「本地设置数据」，可编辑与重置
-          </span>
-        </div>
-        {showPrompt && (
-          <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
-        )}
-        {chatHint && <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。</div>}
-      </div>
-
-      {/* 错误提示 */}
-      {err && <ErrorCard>❌ {err}</ErrorCard>}
-
-      {/* 后端错误 */}
-      {result && !result.ok && <ErrorCard>❌ {result.message}</ErrorCard>}
-
-      {/* 结果 */}
-      {result && result.ok && <ResultView r={result} />}
 
       {/* 历史网格计划 */}
       <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.1rem 1.3rem", marginTop: "1rem" }}>
