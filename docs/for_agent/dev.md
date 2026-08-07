@@ -331,6 +331,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 6.1 分支工作流（强制，2026-08-05 起）
 
+> ⚠️ **硬性规则（2026-08 再次强调）：所有改动无论大小、无论是否小修补，一律先 `git switch -c <type>/<简述>` 新建分支再动手；禁止在 main 上直接修改、提交或推送。曾发生多起「小改动顺手改 main」的违规（如备忘录小修），导致 main 被直接污染、验收流程失效。用户验收通过后才允许合并回 main。**
+
+
+
 - **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
   `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
 - 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
