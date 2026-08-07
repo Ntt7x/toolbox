@@ -106,6 +106,12 @@ export default function TradePlanTool() {
 
   const saveCfg = async () => {
     if (!strategy) return;
+    // 上限% 校验：0-100
+    const bad = strategy.stocks.find((s) => s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100));
+    if (bad) {
+      setMsg(`❌ 标的 ${bad.code || "（未填代码）"} 的仓位上限需在 0-100% 之间`);
+      return;
+    }
     setMsg(null);
     try {
       const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
@@ -295,11 +301,11 @@ export default function TradePlanTool() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem", marginBottom: "0.7rem" }}>
                   <label>
                     <span style={{ color: "#475569", fontSize: "0.8rem" }}>总仓位（元）</span>
-                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="number" min={0} value={strategy.totalCapital || ""} onChange={(e) => setStrategy({ ...strategy, totalCapital: Number(e.target.value) || 0 })} placeholder="如 100000" />
+                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.totalCapital ? strategy.totalCapital.toLocaleString("zh-CN") : ""} onChange={(e) => setStrategy({ ...strategy, totalCapital: Number(e.target.value.replace(/[,，\s]/g, "")) || 0 })} placeholder="如 100,000" />
                   </label>
                   <label>
                     <span style={{ color: "#475569", fontSize: "0.8rem" }}>单日加仓上限（元）</span>
-                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="number" min={0} value={strategy.dailyAddLimit || ""} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: Number(e.target.value) || 0 })} placeholder="如 20000" />
+                    <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.dailyAddLimit ? strategy.dailyAddLimit.toLocaleString("zh-CN") : ""} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: Number(e.target.value.replace(/[,，\s]/g, "")) || 0 })} placeholder="如 20,000" />
                   </label>
                 </div>
 
@@ -318,11 +324,11 @@ export default function TradePlanTool() {
                       </span>
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                      <input style={{ ...input, width: 52 }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                      <input style={{ ...input, width: 52, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
                       <span style={{ fontSize: "0.78rem", color: "#64748b" }}>%</span>
                     </div>
-                    <input style={{ ...input, width: 76 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
-                    <input style={{ ...input, width: 76 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 72 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 72 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
                   </div>
                 ))}
@@ -541,7 +547,7 @@ function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v
   };
 
   return (
-    <div style={{ position: "relative", flex: 1.3, minWidth: 140 }}>
+    <div style={{ position: "relative", flex: 1.1, minWidth: 120 }}>
       <input
         style={{ ...input, width: "100%" }}
         placeholder="代码 / 名称（搜索补全）"
