@@ -43,6 +43,7 @@ export function listTopics(): WatchlistSummary[] {
       id: t.id,
       name: t.name,
       ...(typeof t.description === "string" && t.description ? { description: t.description } : {}),
+      ...(typeof t.group === "string" && t.group ? { group: t.group } : {}),
       stockCount: Array.isArray(t.stocks) ? t.stocks.length : 0,
       updatedAt: t.updatedAt,
     });

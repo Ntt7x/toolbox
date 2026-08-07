@@ -45,6 +45,8 @@ export default function LlmSettings() {
   const [balance, setBalance] = useState<LlmBalanceResult | null>(null);
   // 单日扇形图：选中日期（默认最新一天）
   const [pieDay, setPieDay] = useState<string>("");
+  // 单日扇形图：按用量 / 按费用切换
+  const [pieMode, setPieMode] = useState<"tokens" | "cost">("tokens");
 
   const refreshUsage = async () => {
     try {
@@ -251,7 +253,7 @@ export default function LlmSettings() {
             <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", marginBottom: "0.4rem" }}>📈 逐日用量（tokens）</div>
             <DailyTokensBar byDay={usage?.byDay ?? []} />
             <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#64748b", margin: "0.8rem 0 0.4rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              🥧 单日用量构成
+              🥧 单日构成
               <select
                 style={{ padding: "0.25rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem", background: "#fff" }}
                 value={pieDay}
@@ -263,8 +265,30 @@ export default function LlmSettings() {
                   </option>
                 ))}
               </select>
+              <span style={{ display: "inline-flex", gap: "0.3rem", marginLeft: "0.4rem" }}>
+                {([["tokens", "按用量"], ["cost", "按费用"]] as const).map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setPieMode(v)}
+                    style={{
+                      padding: "0.2rem 0.6rem",
+                      borderRadius: 6,
+                      border: `1px solid ${pieMode === v ? "#2563eb" : "#cbd5e1"}`,
+                      background: pieMode === v ? "#eff6ff" : "#fff",
+                      color: pieMode === v ? "#2563eb" : "#64748b",
+                      fontSize: "0.75rem",
+                      fontWeight: pieMode === v ? 600 : 400,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </span>
             </div>
             <DayModulePie
+              mode={pieMode}
               byModule={usage?.byDay.find((d) => d.day === pieDay)?.byModule ?? []}
             />
           </div>

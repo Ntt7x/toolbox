@@ -960,7 +960,7 @@ export default function WatchlistTool() {
                 );
               })()}
 
-              {/* 延续思考提示词结果（生成后可复制 / 跳转 DeepSeek Chat） */}
+              {/* 延续思考提示词结果（生成后可复制 / 跳转 DeepSeek Chat；可收起） */}
               {extendResult && (
                 <div style={{ marginBottom: "0.8rem", padding: "0.8rem 1rem", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
@@ -971,6 +971,9 @@ export default function WatchlistTool() {
                     </button>
                     <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={openExtendChat} type="button">
                       💬 去 DeepSeek Chat
+                    </button>
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => setExtendResult(null)} type="button">
+                      🙈 收起
                     </button>
                   </div>
                   <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "0.82rem", lineHeight: 1.6, color: "#4c1d95", margin: 0, maxHeight: "40vh", overflowY: "auto" }}>

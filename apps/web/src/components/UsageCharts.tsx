@@ -77,19 +77,19 @@ export function DailyTokensBar({ byDay, height = 240 }: { byDay: LlmUsageSummary
 }
 
 /** 单日用量扇形图（模块占比） */
-export function DayModulePie({ byModule, height = 260 }: { byModule: { label: string; totalTokens: number }[]; height?: number }) {
+export function DayModulePie({ byModule, mode = "tokens", height = 260 }: { byModule: { label: string; totalTokens: number; costCny?: number }[]; mode?: "tokens" | "cost"; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el || byModule.length === 0) return;
     const chart = echarts.init(el);
-    const total = byModule.reduce((s, m) => s + m.totalTokens, 0);
+    const total = byModule.reduce((s, m) => s + (mode === "cost" ? m.costCny ?? 0 : m.totalTokens), 0);
     chart.setOption({
       color: PALETTE,
       tooltip: {
         trigger: "item",
         formatter: (p: { name: string; value: number; percent: number }) =>
-          `${p.name}<br/>${kfmt(p.value)} tokens（${p.percent}%）`,
+          mode === "cost" ? `${p.name}<br/>¥${(p.value).toFixed(2)}（${p.percent}%）` : `${p.name}<br/>${kfmt(p.value)} tokens（${p.percent}%）`,
       },
       legend: {
         orient: "vertical",
@@ -98,19 +98,20 @@ export function DayModulePie({ byModule, height = 260 }: { byModule: { label: st
         textStyle: { color: "#475569", fontSize: 11 },
         formatter: (name: string) => {
           const m = byModule.find((x) => x.label === name);
-          return `${name} · ${m ? kfmt(m.totalTokens) : ""}`;
+          if (!m) return name;
+            return mode === "cost" ? `${name} · ¥${(m.costCny ?? 0).toFixed(2)}` : `${name} · ${kfmt(m.totalTokens)}`;
         },
       },
       series: [
         {
-          name: "用量",
+          name: mode === "cost" ? "费用" : "用量",
           type: "pie",
           radius: ["42%", "68%"],
           center: ["38%", "50%"],
           itemStyle: { borderColor: "#fff", borderWidth: 2, borderRadius: 4 },
           label: { show: false },
           emphasis: { label: { show: true, fontSize: 11, fontWeight: 600, formatter: "{b}\n{d}%" } },
-          data: byModule.map((m) => ({ name: m.label, value: m.totalTokens })),
+          data: byModule.map((m) => ({ name: m.label, value: mode === "cost" ? m.costCny ?? 0 : m.totalTokens })),
         },
       ],
       graphic: [
@@ -118,13 +119,13 @@ export function DayModulePie({ byModule, height = 260 }: { byModule: { label: st
           type: "text",
           left: "30%",
           top: "43%",
-          style: { text: kfmt(total), textAlign: "center", fill: "#334155", fontSize: 16, fontWeight: 700 },
+          style: { text: mode === "cost" ? `¥${total.toFixed(2)}` : kfmt(total), textAlign: "center", fill: "#334155", fontSize: 16, fontWeight: 700 },
         },
         {
           type: "text",
           left: "30%",
           top: "52%",
-          style: { text: "tokens", textAlign: "center", fill: "#94a3b8", fontSize: 10 },
+          style: { text: mode === "cost" ? "估算费用" : "tokens", textAlign: "center", fill: "#94a3b8", fontSize: 10 },
         },
       ],
     });
@@ -134,6 +135,6 @@ export function DayModulePie({ byModule, height = 260 }: { byModule: { label: st
       window.removeEventListener("resize", onResize);
       chart.dispose();
     };
-  }, [byModule]);
+  }, [byModule, mode]);
   return <div ref={ref} style={{ width: "100%", height }} />;
 }

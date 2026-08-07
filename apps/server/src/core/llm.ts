@@ -439,7 +439,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
   const byMode = new Map<LlmCallMode, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const byScene = new Map<LlmUsageScene, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
   const sceneOf = new Map<string, LlmUsageScene>(); // module → scene（供 byModule/byDay 输出）
-  const byModule = new Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>();
+  const byModule = new Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; completionTokens: number }>();
   const byDay = new Map<
     string,
     {
@@ -449,7 +449,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
       cacheHitTokens: number;
       cacheMissTokens: number;
       cacheRate: number;
-      byModule: Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }>;
+      byModule: Map<string, { calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; completionTokens: number }>;
     }
   >();
   for (const e of entries) {
@@ -473,11 +473,12 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     sc.cacheHitTokens += e.cacheHitTokens ?? 0;
     sc.cacheMissTokens += e.cacheMissTokens ?? 0;
     byScene.set(scene, sc);
-    const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+    const m = byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, completionTokens: 0 };
     m.calls++;
     m.totalTokens += e.promptTokens + e.completionTokens;
     m.cacheHitTokens += e.cacheHitTokens ?? 0;
     m.cacheMissTokens += e.cacheMissTokens ?? 0;
+    m.completionTokens += e.completionTokens ?? 0;
     byModule.set(e.module, m);
     const day = localDay(e.ts);
     const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, completionTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, byModule: new Map() };
@@ -486,11 +487,12 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     d.cacheHitTokens += e.cacheHitTokens ?? 0;
     d.cacheMissTokens += e.cacheMissTokens ?? 0;
     d.completionTokens = (d.completionTokens ?? 0) + (e.completionTokens ?? 0);
-    const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
+    const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, completionTokens: 0 };
     dm.calls++;
     dm.totalTokens += e.promptTokens + e.completionTokens;
     dm.cacheHitTokens += e.cacheHitTokens ?? 0;
     dm.cacheMissTokens += e.cacheMissTokens ?? 0;
+    dm.completionTokens += e.completionTokens ?? 0;
     d.byModule.set(e.module, dm);
     byDay.set(day, d);
   }
@@ -521,7 +523,15 @@ export function getLlmUsageSummary(): LlmUsageSummary {
         .sort((a, b) => b.calls - a.calls),
     },
     byModule: [...byModule.entries()]
-      .map(([module, v]) => ({ module, label: moduleLabel(module), scene: sceneOf.get(module) ?? "business", ...v, cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens) }))
+      .map(([module, v]) => ({
+        module,
+        label: moduleLabel(module),
+        scene: sceneOf.get(module) ?? "business",
+        ...v,
+        cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens),
+        costUsd: estimateCostUsd(v.cacheHitTokens, v.cacheMissTokens, v.completionTokens),
+        costCny: estimateCostUsd(v.cacheHitTokens, v.cacheMissTokens, v.completionTokens) * DS_PRICE.usdCny,
+      }))
       .sort(sortDesc),
     byDay: [...byDay.entries()]
       .map(([day, v]) => ({
@@ -533,7 +543,15 @@ export function getLlmUsageSummary(): LlmUsageSummary {
         cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens),
         costCny: estimateCostUsd(v.cacheHitTokens, v.cacheMissTokens, v.completionTokens ?? 0) * DS_PRICE.usdCny,
         byModule: [...v.byModule.entries()]
-          .map(([module, m]) => ({ module, label: moduleLabel(module), scene: sceneOf.get(module) ?? "business", ...m, cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens) }))
+          .map(([module, m]) => ({
+            module,
+            label: moduleLabel(module),
+            scene: sceneOf.get(module) ?? "business",
+            ...m,
+            cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens),
+            costUsd: estimateCostUsd(m.cacheHitTokens, m.cacheMissTokens, m.completionTokens ?? 0),
+            costCny: estimateCostUsd(m.cacheHitTokens, m.cacheMissTokens, m.completionTokens ?? 0) * DS_PRICE.usdCny,
+          }))
           .sort(sortDesc),
       }))
       .sort((a, b) => (a.day < b.day ? 1 : -1)),
