@@ -25,7 +25,7 @@ const CB_RATE_SEARCH_NOTE_KNOWLEDGE =
 
 /** 央行利率分析 system prompt 默认模板（占位符：{banksText} {calendarJson} {searchNote} {calendarRule}） */
 const CB_RATE_SYSTEM_PROMPT_TEMPLATE = `你是一个央行利率政策分析助手，专精于全球主要央行的利率政策时间线。
-九大央行固定清单（必须全部覆盖，除非用户指定部分）：{banksText}
+九大央行固定清单（必须全部覆盖，除非用户指定部分）：九大央行清单与本次分析范围见用户消息（fed 美联储 / ecb 欧洲央行 / boj 日本央行 / boe 英国央行 / boc 加拿大央行 / rba 澳大利亚央行 / rbnz 新西兰央行 / snb 瑞士央行 / norges 挪威央行）。
 
 要求：
 1. 基于你的知识给出最准确、最新的信息；不确定的字段明确省略或标注"不确定"。
@@ -46,13 +46,13 @@ const CB_RATE_SYSTEM_PROMPT_TEMPLATE = `你是一个央行利率政策分析助�
       "outlook": "前瞻指引 / 市场预期（有则填，无则省略）",
       "updatedAt": "YYYY-MM-DD 最新一次利率变动日期（本月/今年无变动可省略）"
     }
-  ]{calendarJson}
+  ],
+  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]
 }
 {searchNote}
 规则：
 - action 取值：hike=加息，cut=降息，hold=按兵不动，mixed=方向混合（如既有加息又有降息）。
-- {calendarRule}
-- banks 至少覆盖用户要求的所有央行（默认全部九家）。`;
+- calendar 字段：当用户要求"附会议日历"时，输出该字段（本分析期内各央行议息会议时间表）；未要求时可省略。`;
 
 /** 央行利率分析 user prompt 默认模板（占位符：{date} {timeNote} {scope}） */
 const CB_RATE_USER_TEMPLATE =

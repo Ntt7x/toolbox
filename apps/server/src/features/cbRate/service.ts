@@ -31,25 +31,15 @@ const BANKS: { id: string; name: string }[] = [
 const VALID_ACTIONS: CbAction[] = ["hike", "cut", "hold", "mixed"];
 
 /** 基于「本地设置数据」中的提示词模板构建 system prompt（占位符替换，支持 search/日历四组合） */
-function buildSystemPrompt(withCalendar: boolean, withSearch: boolean): string {
-  const banksText = BANKS.map((b) => `${b.id} ${b.name}`).join(" | ");
-  return getPromptTemplate("cb-rate.system")
-    .replace("{banksText}", banksText)
-    .replace(
-      "{calendarJson}",
-      withCalendar ? ',\n  "calendar": [{"date": "YYYY-MM-DD", "bank": "美联储", "desc": "议息会议"}]' : "",
-    )
-    .replace(
-      "{searchNote}",
-      withSearch ? getPromptTemplate("cb-rate.note.search") : getPromptTemplate("cb-rate.note.knowledge"),
-    )
-    .replace(
-      "{calendarRule}",
-      withCalendar ? "calendar 列出近期（未来 2 个月内）各央行议息会议日历。" : "不要输出 calendar 字段。",
-    );
+function buildSystemPrompt(_withCalendar: boolean, withSearch: boolean): string {
+  // 成本原则：system 仅按 search 模式 2 变体（banks/日历/日期全部在 user 消息，保持前缀缓存命中）
+  return getPromptTemplate("cb-rate.system").replace(
+    "{searchNote}",
+    withSearch ? getPromptTemplate("cb-rate.note.search") : getPromptTemplate("cb-rate.note.knowledge"),
+  );
 }
 
-function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string): string {
+function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string, withCalendar = false): string {
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   let periodLabel: string;
@@ -65,10 +55,15 @@ function buildUserPrompt(period: CbRatePeriod, banks?: string[], month?: string)
   const timeNote = month
     ? `${periodLabel}当月（自然月，截至月末）`
     : `${periodLabel}（截至今天 ${today}）`;
-  return getPromptTemplate("cb-rate.user")
-    .replace("{date}", today)
-    .replace("{timeNote}", timeNote)
-    .replace("{scope}", scope);
+  // 成本原则：banks 固定清单与日历指令放 user（system 保持固定，前缀缓存命中）
+  const bankList = `九大央行：${BANKS.map((b) => `${b.id}=${b.name}`).join(" | ")}`;
+  const calendarNote = withCalendar ? "\n请附 calendar 字段：本分析期内各央行议息会议时间表（含未来 2 个月内）。" : "";
+  return (
+    getPromptTemplate("cb-rate.user")
+      .replace("{date}", today)
+      .replace("{timeNote}", timeNote)
+      .replace("{scope}", scope) + `\n${bankList}${calendarNote}`
+  );
 }
 
 /** 规范化 LLM 返回的银行列表：过滤未知 id、校验 action（不静默篡改，异常加 flags）、补齐名称 */
@@ -149,7 +144,7 @@ export async function analyzeCentralBankRates(
 
   const messages = [
     { role: "system" as const, content: buildSystemPrompt(req.withCalendar === true, useSearch) },
-    { role: "user" as const, content: buildUserPrompt(period, allowedIds, month) },
+    { role: "user" as const, content: buildUserPrompt(period, allowedIds, month, req.withCalendar === true) },
   ];
   const result = await chat(messages, {
     model: DEFAULT_MODEL,
