@@ -161,6 +161,9 @@ export const api = {
     ),
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
+    /** DeepSeek Chat 自动填入（服务端 playwright 打开浏览器并填提示词；未登录会弹窗登录一次） */
+  chatBrowserOpen: (prompt: string) =>
+    request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt })),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
@@ -170,8 +173,8 @@ export const api = {
   watchlistOptimizeReason: (id: string, code: string, reason?: string) =>
     request<{ ok: boolean; reason?: string; topic?: WatchlistTopic; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
   /** 生成延续思路/扩展思考提示词（LLM；返回可粘贴 DeepSeek Chat 的提示词） */
-  watchlistExtendPrompt: (id: string) =>
-    request<{ ok: boolean; prompt?: string; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", {})),
+  watchlistExtendPrompt: (id: string, force = false) =>
+    request<{ ok: boolean; prompt?: string; fromCache?: boolean; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", { ...(force ? { force: true } : {}) })),
   watchlistFundamentalTaskStatus: (id: string, taskId: string) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,

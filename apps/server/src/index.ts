@@ -32,6 +32,7 @@ import * as localDataFeature from "./features/localData/index.js";
 import * as zhihuCrawlerFeature from "./features/zhihuCrawler/index.js";
 import * as knowledgeHubFeature from "./features/knowledgeHub/index.js";
 import * as newsCenterFeature from "./features/newsCenter/index.js";
+import * as browserChatFeature from "./features/browserChat/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -88,6 +89,7 @@ agentSessionsFeature.register(app);
 // 设置页模块（本地数据管理，非工具）
 localDataFeature.register(app);
 zhihuCrawlerFeature.register(app);
+browserChatFeature.register(app);
 knowledgeHubFeature.register(app);
 // 新闻中心：注册东财源 + 路由
 newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);

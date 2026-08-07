@@ -18,6 +18,7 @@ import {
   type WatchlistUpdateRequest,
 } from "@toolbox/shared";
 import { createTask, getTask } from "../../core/tasks.js";
+import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
 import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName, extendPrompt } from "./service.js";
@@ -31,6 +32,13 @@ registerDataSource({
   page: "专题自选股",
   tag: "自选数据",
   description: "专题自选股（专题 + 入选个股 + 入选理由，Key-结构化 Value）",
+});
+registerDataSource({
+  kind: "kv",
+  name: "watchlist:extend:",
+  page: "专题自选股",
+  tag: "分析数据",
+  description: "延续思考/扩展思考提示词结果缓存（LLM 驱动，TTL 2 年，可刷新）",
 });
 registerDataSource({
   kind: "kv",
@@ -146,13 +154,22 @@ export function register(app: Hono): void {
   });
 
   // 生成延续思路/扩展思考提示词（专题信息 → LLM；返回可粘贴 DeepSeek Chat 的提示词）
+  // 按专题缓存（TTL 2 年）；force=1 刷新（绕过缓存重新生成）
   app.post(`${API_PREFIX}/tools/watchlist/:id/extend-prompt`, async (c) => {
     const id = c.req.param("id");
     const t = getTopic(id);
     if (!t) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const raw = (await c.req.json().catch(() => null)) as { force?: unknown } | null;
+    const force = raw?.force === true;
+    const cacheKey = `watchlist:extend:${id}`;
+    if (!force) {
+      const cached = kvGet<{ prompt?: string; _at?: string }>(cacheKey);
+      if (cached?.prompt) return c.json({ ok: true, prompt: cached.prompt, fromCache: true });
+    }
     const r = await extendPrompt(t);
     if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
-    return c.json({ ok: true, prompt: r.prompt });
+    kvSet(cacheKey, { prompt: r.prompt, _at: new Date().toISOString() });
+    return c.json({ ok: true, prompt: r.prompt, fromCache: false });
   });
 
   // 根据财报分析优化入选理由（LLM；先须有 fundamental 缓存）

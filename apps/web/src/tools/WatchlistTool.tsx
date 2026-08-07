@@ -124,6 +124,8 @@ export default function WatchlistTool() {
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
   // 拖拽排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  // 个股列表排序视图（仅展示用，不影响 topic.stocks 存储顺序）
+  const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("none");
   /** 个股行情快照（code → QuoteSnapshot / FundSnapshot 混合） */
   const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot & Partial<FundSnapshot>>>({});
   // Chat 补充（追加到当前专题）
@@ -222,6 +224,33 @@ export default function WatchlistTool() {
       setTimeout(() => setExtendCopied(false), 2000);
     } catch { /* 忽略 */ }
   };
+  const refreshExtend = async () => {
+    if (!topic || extending) return;
+    setExtending(true);
+    setErr(null);
+    try {
+      const r = await api.watchlistExtendPrompt(topic.id, true);
+      if (r.ok && r.prompt) setExtendResult(r.prompt);
+      else setErr(r.message ?? "刷新失败");
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setExtending(false);
+    }
+  };
+
+  const autoFillChat = async () => {
+    if (!extendResult) return;
+    setErr(null);
+    try {
+      const r = await api.chatBrowserOpen(extendResult);
+      setErr(r.ok ? null : r.message ?? "自动填入失败");
+      if (r.ok) setExtendCopied(true);
+    } catch (e) {
+      setErr(errMsg(e));
+    }
+  };
+
   const openExtendChat = () => {
     if (!extendResult) return;
     void navigator.clipboard.writeText(extendResult).catch(() => {});
@@ -972,7 +1001,10 @@ export default function WatchlistTool() {
                     <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={openExtendChat} type="button">
                       💬 去 DeepSeek Chat
                     </button>
-                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => setExtendResult(null)} type="button">
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void autoFillChat()} type="button">
+                      🤖 自动填入
+                    </button>
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#2563eb", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void refreshExtend()} disabled={extending} type="button">🔄 刷新{extending ? "中…" : ""}</button><button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => setExtendResult(null)} type="button">
                       🙈 收起
                     </button>
                   </div>
@@ -1101,7 +1133,19 @@ export default function WatchlistTool() {
                     <th style={{ ...th, width: 34 }}>⠿</th>
                     <th style={{ ...th, textAlign: "left" }}>名称 / 代码</th>
                     <th style={{ ...th, textAlign: "left" }}>入选理由</th>
-                    <th style={{ ...th, width: 130 }}>行情</th>
+                    <th style={{ ...th, width: 130 }}>
+                      行情
+                      {Object.keys(quotes).length > 0 && (
+                        <button
+                          type="button"
+                          title="按今日涨跌幅排序（仅查看，不影响列表顺序）；排序视图下不可拖拽"
+                          onClick={() => setSortMode((m) => (m === "none" ? "desc" : m === "desc" ? "asc" : "none"))}
+                          style={{ marginLeft: "0.35rem", padding: "0.1rem 0.4rem", borderRadius: 6, border: "1px solid #cbd5e1", background: sortMode === "none" ? "#fff" : "#eff6ff", color: sortMode === "none" ? "#64748b" : "#2563eb", fontSize: "0.7rem", cursor: "pointer" }}
+                        >
+                          {sortMode === "none" ? "↕" : sortMode === "desc" ? "↓ 高→低" : "↑ 低→高"}
+                        </button>
+                      )}
+                    </th>
                     <th style={{ ...th, width: 130 }}>财报分析</th>
                     <th style={{ ...th, width: 60 }}>操作</th>
                   </tr>
@@ -1114,12 +1158,20 @@ export default function WatchlistTool() {
                       </td>
                     </tr>
                   )}
-                  {topic.stocks.map((s, i) => {
+                  {(() => {
+                       if (sortMode === "none") return topic.stocks;
+                       // 排序视图：按行情涨跌幅排序（无行情数据按 0 计，置底）
+                       return [...topic.stocks].sort((a, b) => {
+                         const qa = typeof quotes[a.code]?.pct === "number" ? (quotes[a.code]!.pct as number) : (sortMode === "desc" ? -Infinity : Infinity);
+                         const qb = typeof quotes[b.code]?.pct === "number" ? (quotes[b.code]!.pct as number) : (sortMode === "desc" ? -Infinity : Infinity);
+                         return sortMode === "desc" ? qb - qa : qa - qb;
+                       });
+                     })().map((s, i) => {
                     const q = quotes[s.code];
                     return (
                     <tr
                       key={s.code}
-                      draggable
+                      draggable={sortMode === "none"}
                       onDragStart={() => setDragIdx(i)}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={() => { if (dragIdx !== null) void reorderStock(dragIdx, i); setDragIdx(null); }}
