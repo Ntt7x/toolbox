@@ -240,26 +240,21 @@ export default function WatchlistTool() {
     }
   };
 
-  const autoFillChat = async () => {
+  const goChat = async () => {
     if (!extendResult) return;
     setErr(null);
     setInfo(null);
     try {
-      const r = await api.chatBrowserOpen(extendResult);
+      // 自动打开 + 填入 + 开启深度思考/智能搜索 + 自动发送
+      const r = await api.chatBrowserOpen(extendResult, { send: true, deepThink: true, search: true });
       if (r.ok) setInfo(r.message ?? "已打开浏览器");
-      else setErr(r.message ?? "自动填入失败");
+      else setErr(r.message ?? "打开失败");
     } catch (e) {
       setErr(errMsg(e));
     }
   };
 
-  const openExtendChat = () => {
-    if (!extendResult) return;
-    void navigator.clipboard.writeText(extendResult).catch(() => {});
-    window.open("https://chat.deepseek.com/", "_blank");
-  };
-
-  /** 加载近期热点新闻（已迁移到「新闻中心」页面，移除） */
+    /** 加载近期热点新闻（已迁移到「新闻中心」页面，移除） */
 
   /** 名称补全：输入（非纯代码）→ 防抖搜索候选 */
   const searchCandsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1006,11 +1001,8 @@ export default function WatchlistTool() {
                     <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={copyExtendPrompt} type="button">
                       {extendCopied ? "✅ 已复制" : "📋 复制"}
                     </button>
-                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={openExtendChat} type="button">
-                      💬 去 DeepSeek Chat
-                    </button>
-                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void autoFillChat()} type="button">
-                      🤖 自动填入
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void goChat()} type="button" title="自动打开 DeepSeek Chat 并填入提示词、开启深度思考+智能搜索、自动发送">
+                      💬 去 Chat
                     </button>
                     <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#2563eb", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void refreshExtend()} disabled={extending} type="button">🔄 刷新{extending ? "中…" : ""}</button><button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => setExtendResult(null)} type="button">
                       🙈 收起
