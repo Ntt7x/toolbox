@@ -42,14 +42,23 @@ export interface ChatBrowserOpenResult {
 }
 
 /** 定位输入框并填入提示词（textarea 优先，兜底 contenteditable）
- *  用 click + keyboard.type 真实键入：DeepSeek 输入框是 React 受控组件，
- *  fill() 直接设值不触发受控更新（实测会静默失败），键盘输入最接近真实用户且稳定触发事件。 */
+ *  输入策略（实测迭代）：
+ *  - fill() 直接设值不触发 React 受控更新（静默失败）→ 弃用
+ *  - keyboard.type 逐字符：长文本受控更新跟不上会丢字/未输完（用户反馈"没输完就发送"）→ 弃用
+ *  - keyboard.insertText：CDP 整段插入（等价粘贴，走输入管线触发受控 onChange），一次完整 → 采用
+ *  填入后读回 value 校验完整性，不一致则回退逐字符补齐。 */
 async function fillPrompt(page: Page, prompt: string): Promise<boolean> {
   const tryFill = async (sel: string) => {
     const el = page.locator(sel).first();
     await el.waitFor({ state: "visible", timeout: 10000 });
     await el.click();
-    await page.keyboard.type(prompt, { delay: 5 });
+    await page.keyboard.insertText(prompt);
+    // 校验输入框内容完整（insertText 应一次插入整段；受控组件未采纳时回退逐字符）
+    const actual = await el.inputValue().catch(() => "");
+    if (actual !== prompt) {
+      await el.click();
+      await page.keyboard.type(prompt, { delay: 3 });
+    }
     return true;
   };
   try {
@@ -122,8 +131,9 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     if (opts.deepThink !== false) await setToggle(page, "深度思考", true);
     if (opts.search !== false) await setToggle(page, "智能搜索", true);
 
-    // 自动发送：Enter 启动对话（保持窗口查看回复）
+    // 自动发送：等待 React 受控状态提交完成（输入后稍候）再 Enter 启动对话
     if (opts.send) {
+      await sleep(600);
       await page.keyboard.press("Enter");
       return { ok: true, loggedIn: true, message: "✅ 已填入提示词并发送，请在浏览器窗口中查看回复。" };
     }
