@@ -7,6 +7,7 @@
 // ============================================================
 import { chromium, type BrowserContext } from "playwright-core";
 import { existsSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const CHROME_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -36,10 +37,27 @@ export interface LaunchPersistentOptions {
 }
 
 /**
+ * 杀掉仍占用指定 profile 的残留 Chrome 进程（按 --user-data-dir 匹配）。
+ * profile 锁的根源是残留进程（窗口未关/ctx.close 后进程未退出），杀进程而非删数据（保留登录态 cookie）。
+ */
+function killChromeUsingProfile(profileDir: string): void {
+  try {
+    const r = spawnSync("wmic", ["process", "where", "name='chrome.exe'", "get", "ProcessId,CommandLine", "/format:csv"], { encoding: "utf8", timeout: 10000 });
+    if (r.status !== 0) return;
+    for (const line of r.stdout.split(/\r?\n/)) {
+      if (!line.includes(profileDir)) continue; // --user-data-dir=...<profileDir>
+      const m = line.match(/,(\d+)\s*$/);
+      if (m) spawnSync("taskkill", ["/PID", m[1], "/T", "/F"], { encoding: "utf8", timeout: 8000 });
+    }
+  } catch {
+    /* 清理失败不阻塞主流程 */
+  }
+}
+
+/**
  * 启动持久化浏览器上下文（真实 Chrome + 独立 profile）。
  * - 指纹伪装：稳定 UA + 禁 AutomationControlled + 清 navigator.webdriver
- * - 重试：连续启动同 profile 可能因残留 Chrome 子进程锁文件失败 → 等待重试
- *   ⚠️ 不删除 profile（会丢失登录态 cookie）；锁问题靠等待残留进程退出解决
+ * - 重试：连续启动同 profile 可能因残留 Chrome 进程锁文件失败 → 等待重试 + 按 profile 杀残留进程（保留 cookie）
  */
 export async function launchPersistentContext(profileDir: string, opts: LaunchPersistentOptions = {}): Promise<BrowserContext> {
   const exe = findBrowser();
@@ -60,8 +78,9 @@ export async function launchPersistentContext(profileDir: string, opts: LaunchPe
       return ctx;
     } catch (e) {
       if (i === retries - 1) throw e;
-      // 等待残留进程释放 profile 锁（不删除 profile，避免丢登录态）
-      await sleep(2000 + i * 1500);
+      // 等待 + 清理占用该 profile 的残留 Chrome 进程（杀进程不删数据）
+      await sleep(1500 + i * 1000);
+      killChromeUsingProfile(profileDir);
     }
   }
   throw new Error("浏览器启动失败（重试后仍失败，可能是残留 Chrome 进程占用 profile）");

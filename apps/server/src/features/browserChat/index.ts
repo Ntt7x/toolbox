@@ -72,15 +72,29 @@ async function fillPrompt(page: Page, prompt: string): Promise<boolean> {
   }
 }
 
-/** 设置输入框旁的开关（深度思考/智能搜索）：div.ds-toggle-button + hasText，aria-checked 判状态 */
+/** 读取开关状态（aria-checked 或 aria-pressed，二者取一） */
+async function toggleState(btn: ReturnType<Page["locator"]>): Promise<boolean | null> {
+  const c = await btn.getAttribute("aria-checked").catch(() => null);
+  if (c === "true" || c === "false") return c === "true";
+  const p = await btn.getAttribute("aria-pressed").catch(() => null);
+  if (p === "true" || p === "false") return p === "true";
+  return null;
+}
+
+/** 设置输入框旁的开关（深度思考/智能搜索）：div.ds-toggle-button + hasText，aria-checked/aria-pressed 判状态；点击后确认，未切换则重试一次 */
 async function setToggle(page: Page, label: "深度思考" | "智能搜索", wantOn: boolean): Promise<void> {
   try {
     const btn = page.locator("div.ds-toggle-button", { hasText: label }).first();
     await btn.waitFor({ state: "visible", timeout: 5000 });
-    const checked = (await btn.getAttribute("aria-checked")) === "true";
-    if (checked !== wantOn) {
+    const cur = await toggleState(btn);
+    if (cur === wantOn) return;
+    await btn.click();
+    await sleep(500);
+    // 点击后确认：仍未达到目标则再点一次（部分开关结构变化需重试）
+    const after = await toggleState(btn);
+    if (after !== null && after !== wantOn) {
       await btn.click();
-      await sleep(400);
+      await sleep(500);
     }
   } catch {
     // 开关结构变化时静默跳过（不阻塞主流程）
@@ -102,6 +116,8 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     ctx = await launchPersistentContext(PROFILE_DIR, { headless: false });
     activeCtx = ctx;
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // 窗口置前，用户可见可操作
+    await page.bringToFront().catch(() => {});
     await page.goto(DS_HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(3500);
 
@@ -122,18 +138,21 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
       await sleep(1500); // 等登录后页面就绪
     }
 
+    // 1. 先开开关（深度思考/智能搜索；此时不依赖输入框焦点）
+    if (opts.deepThink !== false) await setToggle(page, "深度思考", true);
+    if (opts.search !== false) await setToggle(page, "智能搜索", true);
+
+    // 2. 填入提示词（焦点进入输入框）
     const filled = await fillPrompt(page, prompt);
     if (!filled) {
       return { ok: true, loggedIn: true, message: "已打开 DeepSeek Chat 但未找到输入框（页面结构可能变化），请手动粘贴提示词。" };
     }
 
-    // 开关：默认开深度思考 + 智能搜索（用户可在 opts 关闭）
-    if (opts.deepThink !== false) await setToggle(page, "深度思考", true);
-    if (opts.search !== false) await setToggle(page, "智能搜索", true);
-
-    // 自动发送：等待 React 受控状态提交完成（输入后稍候）再 Enter 启动对话
+    // 3. 自动发送：重聚焦输入框（点开关后焦点可能丢失）→ 等待受控状态提交 → Enter 启动对话
     if (opts.send) {
-      await sleep(600);
+      await sleep(400);
+      await page.locator("textarea").first().click().catch(() => {});
+      await sleep(300);
       await page.keyboard.press("Enter");
       return { ok: true, loggedIn: true, message: "✅ 已填入提示词并发送，请在浏览器窗口中查看回复。" };
     }
