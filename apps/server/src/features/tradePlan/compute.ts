@@ -18,8 +18,10 @@ import {
 
 const CNY = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
 
-/** 计算某标的当前持仓市值（来自起始持仓；未配置视为 0） */
+/** 计算某标的当前持仓市值（优先标的行内联 initShares×initCost；兼容旧 initialPositions） */
 function currentValue(config: TradePlanConfig, code: string): number {
+  const st = config.stocks.find((x) => x.code === code);
+  if (st && st.initShares && st.initCost) return st.initShares * st.initCost;
   const p = config.initialPositions.find((x) => x.code === code);
   if (!p) return 0;
   return p.shares * p.cost;
@@ -97,9 +99,10 @@ export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]):
       }
     }
 
-    // 成本：按金额调整近似（加仓后市值/总份额；份额近似 = 市值 / 成本价）
+    // 成本：优先标的行内联（initShares×initCost），兼容旧 initialPositions
+    const st0 = config.stocks.find((x) => x.code === code);
     const pos = config.initialPositions.find((x) => x.code === code);
-    const avgCost = pos?.cost ?? 0;
+    const avgCost = st0?.initCost || pos?.cost || 0;
     const shares = avgCost > 0 ? Math.round(marketValue / avgCost) : 0;
 
     after.push({ code, name: stock.name, shares, avgCost, marketValue, weightPct, addAmount: v.add });

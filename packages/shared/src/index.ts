@@ -1668,6 +1668,10 @@ export interface TradePlanStockCfg {
   name?: string;
   /** 单标的上限：占总仓位百分比（0~100，可选；不配则不受单标的上限约束） */
   maxWeightPct?: number;
+  /** 起始持仓数量（可选；与 initCost 配合计算初始市值） */
+  initShares?: number;
+  /** 起始持仓成本价（可选；市值 = initShares × initCost） */
+  initCost?: number;
 }
 
 /** 起始持仓（用户初始仓位情况） */

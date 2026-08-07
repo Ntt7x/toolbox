@@ -144,14 +144,16 @@ export function register(app: Hono): void {
 
 // ---------- 解析 ----------
 
-function parseStocks(raw: unknown): { code: string; name?: string; maxWeightPct?: number }[] {
+function parseStocks(raw: unknown): { code: string; name?: string; maxWeightPct?: number; initShares?: number; initCost?: number }[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((x): x is { code?: unknown; name?: unknown; maxWeightPct?: unknown } => typeof x === "object" && x !== null)
+    .filter((x): x is { code?: unknown; name?: unknown; maxWeightPct?: unknown; initShares?: unknown; initCost?: unknown } => typeof x === "object" && x !== null)
     .map((x) => ({
       code: String(x.code ?? "").trim(),
       ...(typeof x.name === "string" && x.name.trim() ? { name: x.name.trim() } : {}),
       ...(num(x.maxWeightPct) !== undefined && num(x.maxWeightPct)! > 0 && num(x.maxWeightPct)! <= 100 ? { maxWeightPct: num(x.maxWeightPct) } : {}),
+      ...(num(x.initShares) !== undefined && num(x.initShares)! > 0 ? { initShares: num(x.initShares) } : {}),
+      ...(num(x.initCost) !== undefined && num(x.initCost)! > 0 ? { initCost: num(x.initCost) } : {}),
     }))
     .filter((x) => x.code);
 }

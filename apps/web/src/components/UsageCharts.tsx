@@ -73,7 +73,7 @@ export function DailyTokensBar({ byDay, height = 240 }: { byDay: LlmUsageSummary
       chart.dispose();
     };
   }, [byDay]);
-  return <div ref={ref} style={{ width: "100%", height }} />;
+  return <div ref={ref} style={{ width: "100%", height, overflow: "hidden" }} />;
 }
 
 /** 单日用量扇形图（模块占比） */

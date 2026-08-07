@@ -135,23 +135,28 @@ export default function TradePlanTool() {
     }
   };
 
-  const setStockAt = (i: number, patch: Partial<{ code: string; name: string; maxWeightPct: number }>) => {
+  const setStockAt = (i: number, patch: Partial<{ code: string; name: string; maxWeightPct: number; initShares: number; initCost: number }>) => {
     if (!strategy) return;
     const stocks = strategy.stocks.slice();
     stocks[i] = { ...stocks[i], ...patch };
     setStrategy({ ...strategy, stocks });
-  };
-  const setPosAt = (i: number, patch: Partial<{ code: string; shares: number; cost: number }>) => {
-    if (!strategy) return;
-    const initialPositions = strategy.initialPositions.slice();
-    initialPositions[i] = { ...initialPositions[i], ...patch };
-    setStrategy({ ...strategy, initialPositions });
   };
   const setItemAt = (i: number, patch: Partial<TradePlanItem>) => {
     const next = items.slice();
     next[i] = { ...next[i], ...patch };
     setItems(next);
     setResult(null);
+    scheduleAutoCheck(next);
+  };
+
+  // #1 自动校验：条目变化后防抖 600ms 自动分析（无需手动触发）
+  const autoCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleAutoCheck = (list: TradePlanItem[]) => {
+    if (autoCheckTimer.current) clearTimeout(autoCheckTimer.current);
+    if (list.length === 0 || list.some((it) => !it.code || !it.amount)) return; // 条目不完整不自动
+    autoCheckTimer.current = setTimeout(() => {
+      void runCheck(false);
+    }, 600);
   };
 
   const runCheck = async (save: boolean) => {
@@ -290,7 +295,7 @@ export default function TradePlanTool() {
                   </label>
                 </div>
 
-                <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的（可搜索名称补全；上限% 可选）</div>
+                <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的（搜索补全；上限% 可选；起始数量与成本价选填）</div>
                 {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，添加后限定可交易范围</div>}
                 {strategy.stocks.map((s, i) => (
                   <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem", alignItems: "center" }}>
@@ -299,27 +304,18 @@ export default function TradePlanTool() {
                       onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
                       onChange={(code) => setStockAt(i, { code })}
                     />
-                    <input style={{ ...input, width: 70 }} placeholder="上限%" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                    {s.name && (
+                      <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
+                        {s.name}
+                      </span>
+                    )}
+                    <input style={{ ...input, width: 64 }} placeholder="上限%" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 76 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 76 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
                   </div>
                 ))}
                 <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: [...st.stocks, { code: "" }] } : st))} type="button">＋ 添加标的</button>
-
-                <div style={{ fontWeight: 600, color: "#475569", margin: "0.8rem 0 0.35rem", fontSize: "0.82rem" }}>起始持仓（数量 × 成本价）</div>
-                {strategy.initialPositions.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无持仓</div>}
-                {strategy.initialPositions.map((p, i) => (
-                  <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.35rem", alignItems: "center" }}>
-                    <StockCodeInput
-                      code={p.code}
-                      onPick={(code) => setPosAt(i, { code })}
-                      onChange={(code) => setPosAt(i, { code })}
-                    />
-                    <input style={{ ...input, flex: 1, minWidth: 70 }} type="number" min={0} placeholder="数量" value={p.shares || ""} onChange={(e) => setPosAt(i, { shares: Number(e.target.value) || 0 })} />
-                    <input style={{ ...input, flex: 1, minWidth: 70 }} type="number" min={0} placeholder="成本价" value={p.cost || ""} onChange={(e) => setPosAt(i, { cost: Number(e.target.value) || 0 })} />
-                    <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, initialPositions: st.initialPositions.filter((_, j) => j !== i) } : st))} type="button">✕</button>
-                  </div>
-                ))}
-                <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, initialPositions: [...st.initialPositions, { code: "", shares: 0, cost: 0 }] } : st))} type="button">＋ 添加持仓</button>
                 {!isDirty && <div style={{ color: "#94a3b8", fontSize: "0.76rem", marginTop: "0.4rem" }}>保存配置后日度计划才能按此策略校验</div>}
               </div>
 
@@ -374,7 +370,10 @@ export default function TradePlanTool() {
                       {d.result.ok ? "✅ 通过" : `⚠️ ${d.result.alerts.filter((a) => a.level === "error").length} 项告警`}
                     </span>
                     <span style={{ color: "#64748b", fontSize: "0.78rem" }}>
-                      {d.items.map((it) => `${it.code} ${it.action === "add" ? "加" : "减"}${it.amount}`).join("；")}
+                      {d.items.map((it) => {
+                        const st = strategy?.stocks.find((x) => x.code === it.code);
+                        return `${st?.name ? st.name + " " : ""}${it.code} ${it.action === "add" ? "加" : "减"}${cny(it.amount)}`;
+                      }).join("；")}
                     </span>
                     <span style={{ flex: 1 }} />
                     <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => setViewDay(viewDay?.id === d.id ? null : d)} type="button">
