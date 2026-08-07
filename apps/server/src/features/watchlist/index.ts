@@ -55,6 +55,41 @@ function isValidCode(code: string): boolean {
 }
 
 export function register(app: Hono): void {
+  // 股票名称搜索（东财 suggest：名称 → 代码候选，添加股票用）
+  app.get(`${API_PREFIX}/tools/watchlist/search-stock`, async (c) => {
+    const name = (c.req.query("name") ?? "").trim();
+    if (!name) return c.json({ ok: false, message: "请输入股票名称" }, 400);
+    const limit = Math.min(10, Math.max(1, Number(c.req.query("limit") ?? 8) || 8));
+    try {
+      const res = await fetch(`https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(name)}&type=14&count=${limit}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`东财搜索接口 ${res.status}`);
+      const j = (await res.json()) as { QuotationCodeTable?: { Data?: { Code?: string; Name?: string; MktNum?: string | number; SecurityTypeName?: string }[] } };
+      const items = (j.QuotationCodeTable?.Data ?? [])
+        .filter((x) => x?.Code && x?.Name)
+        .map((x) => {
+          const mkt = String(x.MktNum ?? "");
+          const t = x.SecurityTypeName ?? "";
+          const market =
+            mkt === "1" ? "sh"
+            : mkt === "2" ? "sz"
+            : mkt === "3" ? "bj"
+            : mkt === "116" ? "hk"
+            : t.includes("深") ? "sz"
+            : t.includes("沪") ? "sh"
+            : t.includes("京") ? "bj"
+            : t.includes("港") ? "hk"
+            : "";
+          return { code: String(x.Code), name: x.Name ?? "", market, type: t };
+        });
+      return c.json({ ok: true, items });
+    } catch (e) {
+      return c.json({ ok: false, message: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  });
+
   // 专题列表（轻量）
   app.get(`${API_PREFIX}/tools/watchlist`, (c) => {
     return c.json({ ok: true, topics: listTopics() });

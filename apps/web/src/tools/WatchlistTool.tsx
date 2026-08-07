@@ -134,6 +134,10 @@ export default function WatchlistTool() {
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
   const [addReason, setAddReason] = useState("");
+  // 名称补全：候选下拉（代码输入框支持名称搜索）
+  const [stockCands, setStockCands] = useState<{ code: string; name: string; market: string; type: string }[]>([]);
+  const [candsOpen, setCandsOpen] = useState(false);
+  const [candsLoading, setCandsLoading] = useState(false);
   /** 添加类型：stock=股票/场内ETF，fund=场外基金 */
   const [addKind, setAddKind] = useState<"stock" | "fund">("stock");
   // 财报分析：code → 结果
@@ -161,6 +165,31 @@ export default function WatchlistTool() {
 ;
 
   /** 加载近期热点新闻（已迁移到「新闻中心」页面，移除） */
+
+  /** 名称补全：输入（非纯代码）→ 防抖搜索候选 */
+  const searchCandsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchStockCands = (v: string) => {
+    if (searchCandsTimer.current) clearTimeout(searchCandsTimer.current);
+    const t = v.trim();
+    if (!t || /^[\dhk/]+$/i.test(t) || addKind === "fund") {
+      setCandsOpen(false);
+      return;
+    }
+    setCandsLoading(true);
+    searchCandsTimer.current = setTimeout(async () => {
+      try {
+        const r = await api.watchlistSearchStock(t, 8);
+        if (r.ok) {
+          setStockCands(r.items ?? []);
+          setCandsOpen((r.items?.length ?? 0) > 0);
+        }
+      } catch {
+        setCandsOpen(false);
+      } finally {
+        setCandsLoading(false);
+      }
+    }, 320);
+  };
 
   // 挂载：加载专题列表 + 自动捕获剪贴板（Chat 导入 / Chat 补充链接）
   useEffect(() => {
@@ -253,13 +282,21 @@ export default function WatchlistTool() {
     }
   };
 
-  /** 保存描述编辑（进入编辑模式 → 输入 → 保存） */
+  /** 保存描述编辑（进入编辑模式 → 输入 → 保存；直接提交，避免 setTopic 异步未生效导致保存旧值） */
   const saveDescEdit = async () => {
     if (!topic) return;
-    setTopic({ ...topic, description: descEditText.trim() || undefined });
-    setEditingDesc(false);
-    setDescExpanded(true);
-    await renameTopic();
+    setErr(null);
+    try {
+      const r = await api.watchlistUpdate(topic.id, { description: descEditText.trim() || undefined });
+      if (r.ok) {
+        setTopic(r.topic);
+        await refreshList();
+        setEditingDesc(false);
+        setDescExpanded(true);
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    }
   };
 
   const deleteTopic = async () => {
@@ -281,7 +318,24 @@ export default function WatchlistTool() {
   /** 添加/更新股票（自动解析名称） */
   const addStock = async () => {
     if (!topic) return;
-    const code = addCode.trim();
+    let code = addCode.trim();
+    // 名称补全兜底：未填代码但填了名称 → 搜索第一个结果自动填
+    if (!code && addName.trim() && addKind === "stock") {
+      try {
+        const r = await api.watchlistSearchStock(addName.trim());
+        if (r.ok && r.items.length > 0) {
+          code = r.items[0].code;
+          setAddCode(code);
+          if (!addName.trim()) setAddName(r.items[0].name);
+        } else {
+          setErr(`未找到「${addName.trim()}」对应的股票，请直接输入代码`);
+          return;
+        }
+      } catch (e) {
+        setErr(errMsg(e));
+        return;
+      }
+    }
     if (!code) {
       setErr(addKind === "fund" ? "请输入基金代码（6 位数字，如 161725）" : "请输入股票代码（如 600519 / sh600519 / hk00700）");
       return;
@@ -787,7 +841,72 @@ export default function WatchlistTool() {
                   <option value="stock">股票 / ETF</option>
                   <option value="fund">场外基金</option>
                 </select>
-                <input style={{ ...input, width: 120 }} placeholder={addKind === "fund" ? "代码 161725" : "代码 600519"} value={addCode} onChange={(e) => setAddCode(e.target.value)} />
+                <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+                  <input
+                    style={{ ...input, width: "100%", boxSizing: "border-box" }}
+                    placeholder={addKind === "fund" ? "代码 161725" : "代码或名称（如 600519 / 茅台）"}
+                    value={addCode}
+                    onChange={(e) => {
+                      setAddCode(e.target.value);
+                      setCandsOpen(false);
+                      searchStockCands(e.target.value);
+                    }}
+                    onBlur={() => setTimeout(() => setCandsOpen(false), 200)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && candsOpen && stockCands.length > 0) {
+                        const c = stockCands[0];
+                        setAddCode(c.code);
+                        if (!addName.trim()) setAddName(c.name);
+                        setCandsOpen(false);
+                        e.preventDefault();
+                      }
+                    }}
+                  />
+                  {candsOpen && stockCands.length > 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        left: 0,
+                        right: 0,
+                        marginTop: 4,
+                        background: "#fff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 10,
+                        boxShadow: "0 8px 24px rgba(15,23,42,.14)",
+                        zIndex: 20,
+                        maxHeight: 260,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {stockCands.map((c, i) => (
+                        <div
+                          key={`${c.market}-${c.code}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setAddCode(c.code);
+                            if (!addName.trim()) setAddName(c.name);
+                            setCandsOpen(false);
+                          }}
+                          style={{
+                            padding: "0.45rem 0.7rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            gap: "0.5rem",
+                            alignItems: "baseline",
+                            fontSize: "0.84rem",
+                            borderBottom: i < stockCands.length - 1 ? "1px solid #f1f5f9" : "none",
+                          }}
+                        >
+                          <span style={{ fontWeight: 600, color: "#334155" }}>{c.name}</span>
+                          <span style={{ color: "#64748b", fontFamily: "monospace", fontSize: "0.78rem" }}>{c.market}{c.code}</span>
+                          <span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>{c.type}</span>
+                        </div>
+                      ))}
+                      {candsLoading && <div style={{ padding: "0.45rem 0.7rem", color: "#94a3b8", fontSize: "0.78rem" }}>搜索中…</div>}
+                    </div>
+                  )}
+                </div>
                 <input style={{ ...input, width: 110 }} placeholder="名称(可选)" value={addName} onChange={(e) => setAddName(e.target.value)} />
                 <input
                   style={{ ...input, flex: 1, minWidth: 180 }}

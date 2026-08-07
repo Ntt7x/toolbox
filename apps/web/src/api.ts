@@ -154,7 +154,11 @@ export const api = {
   /** Chat 补充：分享链接 → 追加个股到指定专题（后台任务） */
   watchlistAppend: (id: string, url: string) =>
     request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
-  /** 批量行情快照（个股基本信息） */
+  /** 股票名称搜索（名称 → 代码候选，添加股票输入补全用） */
+  watchlistSearchStock: (name: string, limit = 8) =>
+    request<{ ok: boolean; items: { code: string; name: string; market: string; type: string }[]; message?: string }>(
+      `/tools/watchlist/search-stock?name=${encodeURIComponent(name)}&limit=${limit}`,
+    ),
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
   watchlistFundamental: (id: string, code: string, force = false) =>

@@ -4,7 +4,6 @@
 // 结果 robustJsonParse 容错 + KV 缓存（TTL 2 年，「强制分析」可绕过）。
 // ============================================================
 
-import { chat } from "../../core/llm.js";
 import { chatSessionAsk, createChatSession } from "../../core/chatSession.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
@@ -119,6 +118,13 @@ export async function fundamentalAnalysis(
 /** 对话文本上限（超长截断，防止超 token） */
 const CONVERSATION_LIMIT = 60000;
 
+/** 简单字符串哈希（会话 id 用：对话内容 → 幂等会话） */
+function hashText(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
 /** 对话内容 → 简洁文本 */
 function conversationText(messages: { role: string; content: string }[]): string {
   const parts = messages.map((m) => (m.role === "user" ? `[用户] ${m.content}` : `[AI] ${m.content}`));
@@ -149,14 +155,13 @@ export async function importFromChat(shareUrl: string, signal?: AbortSignal, top
   }
   const messages = extracted.messages;
 
-  const template = getPromptTemplate("watchlist.import").replace("{conversation}", conversationText(messages));
-  const result = await chat(
-    [
-      { role: "system" as const, content: template },
-      { role: "user" as const, content: "请整理上述对话并输出 JSON。" },
-    ],
-    { temperature: 0.2, module: "watchlist.import", ...(signal ? { signal } : {}) },
-  );
+  // 会话化调用：system 模板固定（不含对话）→ DeepSeek 前缀缓存命中省 token；
+  // 会话 id 按对话内容哈希（幂等复用 + 无跨导入历史污染）
+  const text = conversationText(messages);
+  const template = getPromptTemplate("watchlist.import");
+  const sid = `wl-imp-${hashText(text).slice(0, 16)}`;
+  createChatSession({ id: sid, module: "watchlist.import", system: template });
+  const result = await chatSessionAsk(sid, text, { module: "watchlist.import", ...(signal ? { signal } : {}) });
   if (!result.ok) throw new Error(result.message);
 
   const parsed = robustJsonParse(result.content.trim());
