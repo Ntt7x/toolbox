@@ -4,6 +4,17 @@
 // ============================================================
 import { useEffect, useRef, useState } from "react";
 import { api, errMsg } from "./api";
+import type { ToolMeta } from "@toolbox/shared";
+
+/** 非工具页路径 → 中文名（工具页走 api.tools() 动态映射） */
+const STATIC_PATHS: Record<string, string> = {
+  "/": "工作台",
+  "/settings/llm": "LLM 设置",
+  "/settings/local-data": "本地数据管理",
+  "/settings/memo": "改进备忘录",
+  "/settings/agent-sessions": "Agent 会话",
+  "/admin/deps": "架构图",
+};
 
 export default function GlobalFloating() {
   const [showTop, setShowTop] = useState(false);
@@ -12,6 +23,34 @@ export default function GlobalFloating() {
   const [busy, setBusy] = useState(false);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolsRef = useRef<ToolMeta[]>([]);
+  const [pageName, setPageName] = useState<string | null>(null);
+
+  // 加载工具 meta（id/path → 中文名）用于页面前缀
+  useEffect(() => {
+    api
+      .tools()
+      .then((r) => {
+        toolsRef.current = r.tools ?? [];
+        setPageName(pageNameOf(window.location.pathname));
+      })
+      .catch(() => {});
+  }, []);
+
+  /** 路径 → 页面中文名（未知返回 null） */
+  const pageNameOf = (path: string): string | null => {
+    if (STATIC_PATHS[path]) return STATIC_PATHS[path];
+    for (const t of toolsRef.current) {
+      if (t.path && (path === t.path || path.startsWith(t.path + "/"))) return t.name;
+    }
+    return null;
+  };
+
+  // 打开弹层时刷新当前页面前缀（浮窗常驻，页面可能在 SPA 内切换）
+  useEffect(() => {
+    if (openMemo) setPageName(pageNameOf(window.location.pathname));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openMemo]);
 
   // 滚动超过一屏才显示「回到顶部」
   useEffect(() => {
@@ -29,13 +68,15 @@ export default function GlobalFloating() {
   const submitMemo = async () => {
     const t = text.trim();
     if (!t) return;
+    // 自动添加所在页面前缀
+    const prefixed = pageName ? `[${pageName}] ${t}` : t;
     setBusy(true);
     try {
-      const r = await api.memoCreate(t, "fix");
+      const r = await api.memoCreate(prefixed, "fix");
       if (r.ok) {
         setText("");
         setOpenMemo(false);
-        flash(true, "✓ 已记入改进备忘录");
+        flash(true, `✓ 已记入改进备忘录${pageName ? `（${pageName}）` : ""}`);
       } else {
         flash(false, errMsg(r as unknown as Error) ?? "保存失败");
       }
