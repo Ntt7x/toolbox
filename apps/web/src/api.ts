@@ -49,6 +49,7 @@
   type WatchlistTopic,
   type WatchlistUpdateRequest,
   type MemoCreateResult,
+  type MemoKind,
   type MemoDeleteResult,
   type MemoDetailResult,
   type MemoListResult,
@@ -167,7 +168,7 @@ export const api = {
     ),
   // 改进备忘录（TODO list）
   memoList: () => request<MemoListResult>("/tools/memo"),
-  memoCreate: (text: string, kind: "fix" | "feature" = "fix") => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text, kind })),
+  memoCreate: (text: string, kind?: MemoKind) => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text, ...(kind ? { kind } : {}) })),
   memoUpdate: (id: string, patch: MemoUpdateRequest) =>
     request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),

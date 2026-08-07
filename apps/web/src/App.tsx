@@ -20,6 +20,7 @@ import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 import AgentSessions from "./settings/AgentSessions";
 import ArchGraph from "./settings/ArchGraph";
+import GlobalFloating from "./GlobalFloating";
 
 /** 已实现工具页的映射（未注册的工具回退到 ToolPlaceholder） */
 const toolPages: Record<string, ComponentType> = {
@@ -370,6 +371,8 @@ export default function App() {
           </div>
         </main>
       </div>
+      {/* 全局浮窗：回到顶部 + 快速新增改进备忘录 */}
+      <GlobalFloating />
     </BrowserRouter>
   );
 }

@@ -1362,14 +1362,14 @@ export type WatchlistResult =
 /** 备忘录条目状态 */
 export type MemoStatus = "open" | "doing" | "done";
 
-/** 改进类型：fix 修复型（简短改进要求）/ feature 需求型（详细需求描述） */
-export type MemoKind = "fix" | "feature";
+/** 改进类型：fix 修复型（简短改进要求）/ feature 需求型（详细需求描述）/ agent Agent 型（开发者/Agent 驱动的自增记录） */
+export type MemoKind = "fix" | "feature" | "agent";
 
 export interface MemoItem {
   id: string;
   text: string;
   status: MemoStatus;
-  /** 改进类型（缺省 fix；开发者驱动 Agent 默认只完成修复型） */
+  /** 改进类型（缺省 fix；agent 型仅供 Agent 自增记录，与用户输入严格区分） */
   kind?: MemoKind;
   createdAt: string;
   updatedAt: string;
@@ -1382,6 +1382,8 @@ export interface MemoListResult {
 
 export interface MemoCreateRequest {
   text: string;
+  /** 创建类型：Agent 新增改进记录必须显式传 "agent"；用户输入缺省 fix/feature */
+  kind?: MemoKind;
 }
 
 export interface MemoCreateResult {

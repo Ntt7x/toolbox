@@ -10,7 +10,7 @@ import type { MemoItem, MemoKind, MemoStatus } from "@toolbox/shared";
 export const MEMO_KEY = "memo:items";
 
 const STATUSES: MemoStatus[] = ["open", "doing", "done"];
-const KINDS: MemoKind[] = ["fix", "feature"];
+const KINDS: MemoKind[] = ["fix", "feature", "agent"];
 
 export function isMemoStatus(v: unknown): v is MemoStatus {
   return typeof v === "string" && (STATUSES as string[]).includes(v);

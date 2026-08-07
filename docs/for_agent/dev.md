@@ -160,6 +160,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4.4 本地数据治理原则（禁止硬编码）
 
+- **Agent 型改进备忘录（2026-08-07 起，强制）**：Agent（开发 Agent）在工作过程中
+  **自增**改进/遗留记录时，`POST /api/tools/memo` 必须显式传 `kind: "agent"`
+  （MemoKind 含 `fix`/`feature`/`agent` 三种，**agent 型仅供 Agent 创建，用户输入不可选**）；
+  Agent **禁止**创建 `fix`/`feature` 型（那是用户的输入类型，两者严格区分）。
+  前端以 🤖 Agent型 徽章 + 灰底色区分展示。处理备忘录时 agent 型与用户型一视同仁。
+
 - **提示词管理（core/prompts.ts，2026-08-06 强化）**：所有 LLM / 程序性提示词
   **必须**进 `prompts.ts` 注册表（seed 到 `settings:prompt.*`，服务端使用与页面展示
   同一条链路）；**禁止在业务代码里硬编码长 system/提示词**（审计例外可临时，随后迁移）。

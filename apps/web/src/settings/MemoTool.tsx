@@ -48,7 +48,11 @@ const STATUS_META: Record<MemoStatus, { label: string; color: string; bg: string
 const KIND_META: Record<MemoKind, { label: string; color: string; bg: string; hint: string }> = {
   fix: { label: "🔧 修复型", color: "#6d28d9", bg: "#f3e8ff", hint: "简短的改进要求（Agent 默认优先处理）" },
   feature: { label: "🧩 需求型", color: "#0e7490", bg: "#cffafe", hint: "详细的需求描述（需要用户确认后实现）" },
+  agent: { label: "🤖 Agent型", color: "#475569", bg: "#e2e8f0", hint: "Agent 驱动的自增改进记录（仅 Agent 可创建，用户输入不可选）" },
 };
+
+/** 用户可选的创建类型（agent 型仅供 Agent 自增，与用户输入严格区分） */
+const USER_KINDS: MemoKind[] = ["fix", "feature"];
 
 const STATUS_ORDER: MemoStatus[] = ["open", "doing", "done"];
 
@@ -163,7 +167,7 @@ export default function MemoTool() {
         </div>
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", fontSize: "0.82rem", color: "#64748b" }}>
           <span>类型：</span>
-          {(Object.keys(KIND_META) as MemoKind[]).map((k) => (
+          {(USER_KINDS as MemoKind[]).map((k) => (
             <button
               key={k}
               type="button"

@@ -4,7 +4,7 @@
 // - 每只股票支持「财报分析」（LLM 联网搜索，后台任务 + 缓存）
 // ============================================================
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { ErrorCard, PageHeader } from "../ui";
@@ -101,6 +101,8 @@ export default function WatchlistTool() {
   const [topics, setTopics] = useState<WatchlistSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [topic, setTopic] = useState<WatchlistTopic | null>(null);
+  // 首次加载后自动选中第一个专题（仅一次；用户手动清空后不再自动）
+  const autoSelectedRef = useRef(false);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -163,6 +165,16 @@ export default function WatchlistTool() {
     void readAppendClipboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 首次加载到专题后自动选中第一个（右侧功能区默认展示；仅一次）
+  useEffect(() => {
+    if (!autoSelectedRef.current && topics.length > 0) {
+      autoSelectedRef.current = true;
+      setSelectedId(topics[0].id);
+      void loadDetail(topics[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topics]);
 
   /** 加载个股行情快照（批量，复用公共行情模块缓存；基金走 fund: 前缀） */
   const loadQuotes = useCallback(async (codes: string[]) => {
