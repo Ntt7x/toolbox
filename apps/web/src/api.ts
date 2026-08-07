@@ -157,11 +157,6 @@ export const api = {
   /** 批量行情快照（个股基本信息） */
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
-  /** 近期热点新闻（东财 7x24 快讯） */
-  watchlistHotNews: (limit = 20) =>
-    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string }[]; fromCache?: boolean; at?: string; message?: string }>(
-      `/tools/watchlist/hot-news?limit=${limit}`,
-    ),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
@@ -170,6 +165,13 @@ export const api = {
   watchlistFundamentalTaskStatus: (id: string, taskId: string) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,
+    ),
+  // 新闻中心（多源配置 + 展示）
+  newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
+  newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
+  newsItems: (sources?: string[]) =>
+    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string; source: string; sourceName: string }[]; errors: string[]; fromCache: boolean[]; message?: string }>(
+      `/tools/news/items${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}`,
     ),
   // 改进备忘录（TODO list）
   memoList: () => request<MemoListResult>("/tools/memo"),

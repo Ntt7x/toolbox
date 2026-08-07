@@ -31,6 +31,7 @@ import * as agentSessionsFeature from "./features/agentSessions/index.js";
 import * as localDataFeature from "./features/localData/index.js";
 import * as zhihuCrawlerFeature from "./features/zhihuCrawler/index.js";
 import * as knowledgeHubFeature from "./features/knowledgeHub/index.js";
+import * as newsCenterFeature from "./features/newsCenter/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -58,6 +59,7 @@ const tools: ToolMeta[] = [
   deepseekShareFeature.meta,
   zhihuCrawlerFeature.meta,
   knowledgeHubFeature.meta,
+  newsCenterFeature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -87,6 +89,9 @@ agentSessionsFeature.register(app);
 localDataFeature.register(app);
 zhihuCrawlerFeature.register(app);
 knowledgeHubFeature.register(app);
+// 新闻中心：注册东财源 + 路由
+newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);
+newsCenterFeature.register(app);
 
 // 导出 app 供集成测试（app.request 免端口调用）
 export { app };
