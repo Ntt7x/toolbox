@@ -51,6 +51,16 @@ test("减仓超过当前持仓 → error 且市值不为负", () => {
   assert.equal(m.marketValue, 0);
 });
 
+test("同一标的多个操作 → error（一标的一天一个操作）", () => {
+  const r = checkTradePlan(cfg, [
+    { code: "600519", action: "add", amount: 3000 },
+    { code: "600519", action: "add", amount: 2000 },
+  ]);
+  assert.equal(r.ok, false);
+  assert.ok(r.alerts.some((x) => x.level === "error" && x.message.includes("合并为一个交易操作")));
+  assert.equal(r.totals.addTotal, 5000); // 重复金额合并统计
+});
+
 test("告警按级别排序：error 在前", () => {
   const r = checkTradePlan(cfg, [
     { code: "000001", action: "add", amount: 50000 },

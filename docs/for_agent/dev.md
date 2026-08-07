@@ -305,6 +305,14 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - 页面 URL 读取用安全包装（页面关闭时 page.url() 抛错）
 
 
+### 4.6 策略仓位管理（trade-plan，2026-08）
+- 多策略持久化：单 KV 文档 `tradePlan:config` → `{ strategies: [{ id, name, totalCapital, dailyAddLimit, stocks: [{ code, name, maxWeightPct, initShares, initCost }] }] }`；日度计划 `tradePlan:day:<策略id>:<YYYY-MM-DD>`，日期即 id（一策略一天一份）
+- 校验纯服务端（无 LLM）：`checkTradePlan` 规则——标的必须∈策略、当日加仓≤日限、单标的上限%、总市值≤总仓位、减仓≤当前持仓、同 code 同日多操作→error「请合并为一个交易操作」；告警三级 error→warn→info 排序
+- 前端自动校验：600ms debounce（输入停止后自动跑 check，**不设手动校验按钮**）；save 被 error 阻断并弹错误级 alert
+- 标的搜索补全：复用 `watchlistSearchStock`；StockCodeInput 输入框内显示「名称 代码」（有名称时），用户手动输入自动清空名称（视为更换标的）——**只显示代码可读性差（备忘录教训）**
+- 类表单校验依赖：判定已配置用「存在有 code 的标的行」而非 `totalCapital !== undefined`（数字默认 0 恒非 undefined，曾导致提示永不出现）
+- 页面级冒烟：TradePlanTool 曾出现卡加载中（mount useEffect 被重构误删，curl 测 API 测不出）——凡改页面加载逻辑必须跑 `node scripts/smoke-pages.mjs`
+
 ## 5. 外部数据源经验
 
 - **知乎爬虫（多内容目标，2026-08 实测）**：

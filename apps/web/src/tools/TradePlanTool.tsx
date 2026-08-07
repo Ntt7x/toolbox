@@ -226,7 +226,7 @@ export default function TradePlanTool() {
 
   const stockOptions = useMemo(() => strategy?.stocks ?? [], [strategy]);
   const displayResult = viewDay?.result ?? result;
-  const isDirty = (strategy?.stocks ?? []).some((s) => s.code) || strategy?.totalCapital !== undefined;
+  const isDirty = (strategy?.stocks ?? []).some((s) => s.code);
 
   return (
     <div style={{ maxWidth: 1240, margin: "0 auto", fontSize: "0.88rem" }}>
