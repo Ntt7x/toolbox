@@ -244,12 +244,18 @@ export default function ReverseRepoTool() {
 
       {/* 增量部分：每日变动探查（探查区：当日 / 当月 分栏） */}
       <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
           <span style={{ fontWeight: 700, fontSize: "1rem" }}>📈 每日变动量探查（LLM，仅买断式）</span>
-          <button style={{ ...btn, background: probeView === "today" ? "#3b82f6" : "#94a3b8" }} onClick={() => probeViewDaily("today")} disabled={dailyTask.running} type="button">
+          <span style={{ color: "#94a3b8", fontSize: "0.8rem", marginLeft: "auto" }}>
+            {dailyTask.running ? `探查中…（已耗时 ${runSec}s）` : probeView === "today" ? "当日变动明细 + 当月说明" : "当月变动量说明（含存量余额估算）"}
+          </span>
+        </div>
+        {/* 探查按钮组：当日 / 当月 切换 + 强制刷新 + 查看提示词 */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button style={{ ...btn, background: probeView === "today" ? "#3b82f6" : "#cbd5e1", color: probeView === "today" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("today")} disabled={dailyTask.running} type="button">
             🕐 探查当日
           </button>
-          <button style={{ ...btn, background: probeView === "month" ? "#3b82f6" : "#94a3b8" }} onClick={() => probeViewDaily("month")} disabled={dailyTask.running} type="button">
+          <button style={{ ...btn, background: probeView === "month" ? "#3b82f6" : "#cbd5e1", color: probeView === "month" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("month")} disabled={dailyTask.running} type="button">
             📅 探查当月
           </button>
           <button
@@ -260,7 +266,6 @@ export default function ReverseRepoTool() {
           >
             ♻️ 强制刷新
           </button>
-          {/* 查看提示词并入探查按钮组 */}
           <button
             style={{ ...btn, background: "#7c3aed", fontWeight: 500, padding: "0.55rem 1rem" }}
             onClick={() => setShowPrompt((v) => !v)}
@@ -268,8 +273,29 @@ export default function ReverseRepoTool() {
           >
             {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
           </button>
-          <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>{dailyTask.running ? `探查中…（已耗时 ${runSec}s）` : probeView === "today" ? "当日变动明细 + 当月变动量说明" : "当月变动量说明（含存量余额估算）"}</span>
         </div>
+        {/* 提示词展开（紧跟探查按钮组下方，位置直观） */}
+        {showPrompt && (
+          <div style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+              <button style={{ ...btn, background: "#16a34a", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={copyPrompt} type="button">
+                {copied ? "✅ 已复制" : "📋 复制"}
+              </button>
+              <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
+                💬 Chat
+              </button>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
+                增量部分由 LLM 提示词驱动（每日变动探查 reverse-repo.daily）；提示词统一存储于「本地设置数据」
+              </span>
+            </div>
+            <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
+            {chatHint && (
+              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                💬 已打开 DeepSeek 网页版并复制提示词；请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              </div>
+            )}
+          </div>
+        )}
         {dailyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {dailyErr}</div>}
         {daily && (
           <div style={{ marginTop: "0.8rem" }}>
@@ -370,28 +396,6 @@ export default function ReverseRepoTool() {
         />
       </div>
 
-      {/* 提示词（查看按钮已在探查按钮组） */}
-      {showPrompt && (
-        <div style={card}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-            <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
-              {copied ? "✅ 已复制" : "📋 复制"}
-            </button>
-            <button style={{ ...btn, background: "#0891b2" }} onClick={() => openChat(promptText)} type="button">
-              💬 Chat
-            </button>
-            <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-              增量部分由 LLM 提示词驱动（每日变动探查 reverse-repo.daily）；提示词统一存储于「本地设置数据」
-            </span>
-          </div>
-          <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
-          {chatHint && (
-            <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-              💬 已打开 DeepSeek 网页版并复制提示词；请在输入框粘贴（Ctrl/Cmd+V）后发送。
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

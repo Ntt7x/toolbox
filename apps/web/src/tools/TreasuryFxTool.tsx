@@ -126,26 +126,30 @@ export default function TreasuryFxTool() {
 
       {/* 参数区 */}
       <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600 }}>分析窗口：</span>
+        {/* 第一行：分析窗口 */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+          <span style={{ fontWeight: 600, marginRight: "0.2rem" }}>分析窗口：</span>
           {DAY_OPTIONS.map((d) => (
             <button key={d} style={chip(days === d)} onClick={() => setDays(d)} type="button">
               {dayLabel(d)}
             </button>
           ))}
-          <span style={{ marginLeft: "0.6rem" }} />
+        </div>
+        {/* 第二行：开关 + 操作按钮（开始分析 / 查看提示词） */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", flexWrap: "wrap" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.88rem", cursor: "pointer" }}>
             <input type="checkbox" checked={withSearch} onChange={(e) => setWithSearch(e.target.checked)} />
-            📡 联网搜索（实时汇率/国债数据，较慢）
+            📡 联网搜索（实时数据，较慢）
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.88rem", cursor: "pointer" }}>
             <input type="checkbox" checked={withCache} onChange={(e) => setWithCache(e.target.checked)} />
             💾 缓存（命中免调 LLM）
           </label>
+          <span style={{ flex: 1 }} />
           <button style={btn} onClick={run} disabled={loading || taskRunning} type="button">
             {loading ? "提交中…" : taskRunning ? "⏳ 后台分析中…" : "⚡ 开始分析"}
           </button>
-          {/* 查看提示词并入按钮组（更紧凑） */}
+          {/* 查看提示词并入按钮组（更紧凑；紫色小按钮） */}
           <button
             style={{ ...btn, background: "#7c3aed", fontWeight: 500, padding: "0.55rem 1rem" }}
             onClick={() => setShowPrompt((v) => !v)}
@@ -154,30 +158,29 @@ export default function TreasuryFxTool() {
             {showPrompt ? "🙈 收起提示词" : "📜 查看提示词"}
           </button>
         </div>
-      </div>
-
-      {/* 程序性提示词展示/复制/Chat（提示词存于本地设置数据；查看按钮已在参数区按钮组） */}
-      {showPrompt && (
-        <div style={card}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-            <button style={{ ...btn, background: "#16a34a" }} onClick={copyPrompt} type="button">
-              {copied ? "✅ 已复制" : "📋 复制"}
-            </button>
-            <button style={{ ...btn, background: "#0891b2" }} onClick={() => openChat(promptText)} type="button">
-              💬 Chat
-            </button>
-            <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-              本功能由 LLM 提示词固化而来（人民币短波段研判框架）；提示词统一存储于「本地设置数据」，可编辑与重置
-            </span>
-          </div>
-          <CodeBlock maxHeight="24rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
-          {chatHint && (
-            <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-              💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。
+        {/* 提示词展开（紧跟按钮组下方，位置直观） */}
+        {showPrompt && (
+          <div style={{ marginTop: "0.9rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.8rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+              <button style={{ ...btn, background: "#16a34a", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={copyPrompt} type="button">
+                {copied ? "✅ 已复制" : "📋 复制"}
+              </button>
+              <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
+                💬 Chat
+              </button>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
+                本功能由 LLM 提示词固化而来；提示词统一存储于「本地设置数据」，可编辑与重置
+              </span>
             </div>
-          )}
-        </div>
-      )}
+            <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
+            {chatHint && (
+              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 后台任务进行中提示 */}
       {taskRunning && (
