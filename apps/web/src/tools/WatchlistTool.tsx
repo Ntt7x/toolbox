@@ -113,6 +113,7 @@ export default function WatchlistTool() {
   // 首次加载后自动选中第一个专题（仅一次；用户手动清空后不再自动）
   const autoSelectedRef = useRef(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // 新建专题
@@ -242,10 +243,11 @@ export default function WatchlistTool() {
   const autoFillChat = async () => {
     if (!extendResult) return;
     setErr(null);
+    setInfo(null);
     try {
       const r = await api.chatBrowserOpen(extendResult);
-      setErr(r.ok ? null : r.message ?? "自动填入失败");
-      if (r.ok) setExtendCopied(true);
+      if (r.ok) setInfo(r.message ?? "已打开浏览器");
+      else setErr(r.message ?? "自动填入失败");
     } catch (e) {
       setErr(errMsg(e));
     }
@@ -646,6 +648,12 @@ export default function WatchlistTool() {
         desc="自建投资专题，收录（入选个股 + 入选理由）；每只股票可用 LLM 财报分析（联网搜索，缓存 2 年）。示例专题：AI 硬件 / 通胀消费 / 水利开支 / 商业航天…"
       />
       {err && <ErrorCard>{err}</ErrorCard>}
+      {info && (
+        <div style={{ padding: "0.6rem 0.9rem", borderRadius: 8, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#047857", fontSize: "0.85rem", marginBottom: "0.6rem", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+          <span>ℹ️ {info}</span>
+          <button type="button" onClick={() => setInfo(null)} style={{ border: "none", background: "none", color: "#047857", cursor: "pointer", fontSize: "0.8rem" }}>✕</button>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "1rem", alignItems: "start" }}>
         {/* 左：专题列表 */}
