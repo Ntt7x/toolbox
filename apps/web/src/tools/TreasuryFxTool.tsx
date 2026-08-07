@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
+import { openDeepSeekChat } from "../deepseekChat";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { TaskHistory } from "../components/TaskHistory";
@@ -50,7 +51,8 @@ export default function TreasuryFxTool() {
   const [cacheHint, setCacheHint] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [chatHint, setChatHint] = useState(false);
+  const [chatHint, setChatHint] = useState<string | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
   const task = useAsyncTask<TreasuryFxResponse>("treasuryFxTaskId", api.treasuryFxTaskStatus, api.cancelTask);
@@ -102,13 +104,18 @@ export default function TreasuryFxTool() {
   };
 
   /** 携带提示词跳转 DeepSeek 网页版 Chat（剪贴板中转：网页版不支持 URL 预填输入） */
-  const openChat = (text: string | null) => {
-    if (!text) return;
-    // 同步打开新标签（必须在用户手势内，异步调用会被浏览器弹窗拦截）
-    window.open("https://chat.deepseek.com/", "_blank", "noopener");
-    void navigator.clipboard.writeText(text).catch(() => {});
-    setChatHint(true);
-    setTimeout(() => setChatHint(false), 8000);
+  const openChat = async (text: string | null) => {
+    if (!text || chatBusy) return;
+    setChatBusy(true);
+    try {
+      // 一键去 Chat：服务端 playwright 自动打开浏览器、开深度思考/智能搜索、填入提示词并自动发送
+      const msg = await openDeepSeekChat(text);
+      setChatHint(msg);
+    } catch (e) {
+      setChatHint("❌ " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setChatBusy(false);
+    }
   };
 
   // 挂载时从「本地设置数据」加载程序性提示词（展示/复制）
@@ -170,7 +177,7 @@ export default function TreasuryFxTool() {
                 {copied ? "✅ 已复制" : "📋 复制"}
               </button>
               <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
-                💬 Chat
+                💬 去 Chat{chatBusy ? "…" : ""}
               </button>
               <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
                 本功能由 LLM 提示词固化而来；提示词统一存储于「本地设置数据」，可编辑与重置
@@ -178,8 +185,8 @@ export default function TreasuryFxTool() {
             </div>
             <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
             {chatHint && (
-              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-                💬 已打开 DeepSeek 网页版并复制提示词；网页版不支持 URL 预填，请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              <div style={{ color: chatHint?.startsWith("❌") ? "#dc2626" : "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                {chatHint}
               </div>
             )}
           </div>

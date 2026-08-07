@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
+import { openDeepSeekChat } from "../deepseekChat";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { TaskHistory } from "../components/TaskHistory";
@@ -48,7 +49,8 @@ export default function ReverseRepoTool() {
   );
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [chatHint, setChatHint] = useState(false);
+  const [chatHint, setChatHint] = useState<string | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
   const [cacheHint, setCacheHint] = useState(false);
   const [dailyErr, setDailyErr] = useState<string | null>(null);
@@ -108,12 +110,18 @@ export default function ReverseRepoTool() {
     }
   };
 
-  const openChat = (text: string | null) => {
-    if (!text) return;
-    window.open("https://chat.deepseek.com/", "_blank", "noopener");
-    void navigator.clipboard.writeText(text).catch(() => {});
-    setChatHint(true);
-    setTimeout(() => setChatHint(false), 8000);
+  const openChat = async (text: string | null) => {
+    if (!text || chatBusy) return;
+    setChatBusy(true);
+    try {
+      // 一键去 Chat：服务端 playwright 自动打开浏览器、开深度思考/智能搜索、填入提示词并自动发送
+      const msg = await openDeepSeekChat(text);
+      setChatHint(msg);
+    } catch (e) {
+      setChatHint("❌ " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setChatBusy(false);
+    }
   };
 
   // 挂载：读取存量数据 + 每日探查提示词
@@ -177,7 +185,7 @@ export default function ReverseRepoTool() {
                 {copied ? "✅ 已复制" : "📋 复制"}
               </button>
               <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
-                💬 Chat
+                💬 去 Chat{chatBusy ? "…" : ""}
               </button>
               <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
                 增量部分由 LLM 提示词驱动（每日变动探查 reverse-repo.daily）；提示词统一存储于「本地设置数据」
@@ -185,8 +193,8 @@ export default function ReverseRepoTool() {
             </div>
             <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
             {chatHint && (
-              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-                💬 已打开 DeepSeek 网页版并复制提示词；请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              <div style={{ color: chatHint?.startsWith("❌") ? "#dc2626" : "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                {chatHint}
               </div>
             )}
           </div>

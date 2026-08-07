@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
+import { openDeepSeekChat } from "../deepseekChat";
 import { ErrorCard, PageHeader, CodeBlock } from "../ui";
 import type { KellyHistoryEntry, KellyRequest, KellyResult, QuoteSnapshot } from "@toolbox/shared";
 
@@ -65,7 +66,8 @@ export default function KellyTool() {
   // 提示词
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [chatHint, setChatHint] = useState(false);
+  const [chatHint, setChatHint] = useState<string | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
   // 计算
   const [loading, setLoading] = useState(false);
@@ -113,12 +115,18 @@ export default function KellyTool() {
   };
 
   /** 携带提示词跳转 DeepSeek 网页版 Chat（剪贴板中转） */
-  const openChat = (text: string | null) => {
-    if (!text) return;
-    window.open("https://chat.deepseek.com/", "_blank", "noopener");
-    void navigator.clipboard.writeText(text).catch(() => {});
-    setChatHint(true);
-    setTimeout(() => setChatHint(false), 8000);
+  const openChat = async (text: string | null) => {
+    if (!text || chatBusy) return;
+    setChatBusy(true);
+    try {
+      // 一键去 Chat：服务端 playwright 自动打开浏览器、开深度思考/智能搜索、填入提示词并自动发送
+      const msg = await openDeepSeekChat(text);
+      setChatHint(msg);
+    } catch (e) {
+      setChatHint("❌ " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setChatBusy(false);
+    }
   };
 
   /** 输入股票代码 → 快照自动填当前价格（可选，显示名称） */
@@ -273,7 +281,7 @@ export default function KellyTool() {
                 {copied ? "✅ 已复制" : "📋 复制"}
               </button>
               <button style={{ ...btn, background: "#0891b2", padding: "0.4rem 1rem", fontSize: "0.82rem" }} onClick={() => openChat(promptText)} type="button">
-                💬 Chat
+                💬 去 Chat{chatBusy ? "…" : ""}
               </button>
               <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
                 本工具即由该 LLM 提示词固化而来，提示词统一存储于「本地设置数据」，可编辑与重置
@@ -281,8 +289,8 @@ export default function KellyTool() {
             </div>
             <CodeBlock maxHeight="22rem">{promptText ?? "（提示词加载中…）"}</CodeBlock>
             {chatHint && (
-              <div style={{ color: "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
-                💬 已打开 DeepSeek 网页版并复制提示词；请在输入框粘贴（Ctrl/Cmd+V）后发送。
+              <div style={{ color: chatHint?.startsWith("❌") ? "#dc2626" : "#0891b2", fontSize: "0.82rem", marginTop: "0.5rem" }}>
+                {chatHint}
               </div>
             )}
           </div>
