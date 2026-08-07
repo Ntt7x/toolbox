@@ -385,6 +385,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   只测读/纯计算链路，**禁止触发 LLM/外网**（网格计划计算/总览/用量/数据源/备忘录 CRUD/prompts 列表）。
   index.ts 已 `export { app }`——新增路由后在此补一条断言即完成「装配级回归」。
 
+### 6.4 页面级冒烟自测（2026-08-08 起）
+
+- 脚本：`node scripts/smoke-pages.mjs`（需 dev 5173 + 8787 在运行）——playwright 打开全部 17 个前端页面，检查 JS 崩溃 + API 非 2xx，ALL-PASS 才可提交
+- **历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**必须跑浏览器级冒烟**
+- 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
+
 ### 7.1 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
 
 新增任何页面/路由/菜单项后，必须逐项核对：

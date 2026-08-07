@@ -89,6 +89,11 @@ export default function TradePlanTool() {
     }
   }, []);
 
+  // 挂载：加载策略列表（缺失此 effect 会导致列表卡"加载中"——历史教训）
+  useEffect(() => {
+    void loadStrategies();
+  }, [loadStrategies]);
+
   // 选中策略变化 → 加载完整详情
   useEffect(() => {
     if (!selectedId) return;
