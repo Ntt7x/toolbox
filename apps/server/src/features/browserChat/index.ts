@@ -3,16 +3,15 @@
 // 用 playwright-core + 系统 Chrome 打开 chat.deepseek.com 并自动填入提示词，
 // 解决"去 DeepSeek Chat"按钮无法预填提示词的问题（DeepSeek 网页版不支持 URL 预填）。
 // - 浏览器操控复用公共模块 core/browser（findBrowser/launchPersistentContext）
-// - 持久化 profile（.file/ds-chat-profile）：首次需用户在弹出窗口中手动登录一次
-// - 打开后保持窗口（不自动发送），用户确认后回车发送
-// - headful（真实窗口，用户可操作）
-// 评估（2026-08）：chat.deepseek.com 未登录跳 /sign_in 且无输入框 → 必须登录态；
-// 登录后输入框为 textarea。
+// - 持久化 profile（.file/ds-chat-profile）：登录态自动记住（首次弹窗登录一次）
+// - 单实例：模块级持有当前 context，重复调用先关旧窗口（避免同 profile 独占锁）
+// - 未登录：保持窗口 + 轮询等待用户登录（最多 3 分钟）→ 登录后自动填入
+// - 打开后不自动发送，用户确认后回车发送
 // ============================================================
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type { BrowserContext, Page } from "playwright-core";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
 import { API_PREFIX } from "@toolbox/shared";
 import { DATA_DIR } from "../../core/db.js";
 import { launchPersistentContext, sleep } from "../../core/browser.js";
@@ -21,6 +20,10 @@ export const meta = { id: "browser-chat", name: "DeepSeek Chat 自动填入" };
 
 const PROFILE_DIR = join(DATA_DIR, "ds-chat-profile");
 const DS_HOME = "https://chat.deepseek.com/";
+const LOGIN_WAIT_MS = 3 * 60 * 1000; // 未登录时等待用户登录的时限
+
+// 单实例：同一时间只允许一个 browserChat 窗口（防同 profile 独占锁）
+let activeCtx: BrowserContext | null = null;
 
 export interface ChatBrowserOpenResult {
   ok: boolean;
@@ -28,48 +31,71 @@ export interface ChatBrowserOpenResult {
   message: string;
 }
 
+/** 定位输入框并填入提示词（textarea 优先，兜底 contenteditable） */
+async function fillPrompt(page: Page, prompt: string): Promise<boolean> {
+  try {
+    const ta = page.locator("textarea").first();
+    await ta.waitFor({ state: "visible", timeout: 8000 });
+    await ta.click();
+    await ta.fill(prompt);
+    return true;
+  } catch {
+    try {
+      const ce = page.locator('div[contenteditable="true"]').first();
+      await ce.waitFor({ state: "visible", timeout: 4000 });
+      await ce.click();
+      await ce.fill(prompt);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /**
  * 打开 chat.deepseek.com 并自动填入提示词（保持窗口，不自动发送）。
- * 未登录时保持窗口并提示用户登录后重试（profile 会记住登录态）。
+ * 未登录时保持窗口并轮询等待用户登录，登录完成后自动填入。
  */
 export async function openChatWithPrompt(prompt: string): Promise<ChatBrowserOpenResult> {
-  let ctx;
+  // 关闭上一个残留窗口（避免同 profile 并发锁）
+  if (activeCtx) {
+    await activeCtx.close().catch(() => {});
+    activeCtx = null;
+  }
+  let ctx: BrowserContext | null = null;
   try {
     ctx = await launchPersistentContext(PROFILE_DIR, { headless: false });
+    activeCtx = ctx;
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(DS_HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(3500);
 
-    // 未登录 → 跳转 sign_in（保持窗口让用户登录，profile 记住登录态）
+    // 未登录 → 保持窗口，轮询等待用户登录（URL 离开 /sign_in 即视为登录成功）
     if (page.url().includes("/sign_in")) {
-      return { ok: true, loggedIn: false, message: "DeepSeek 未登录，请在弹窗中登录（仅需一次，之后自动记住）。登录后请重试自动填入。" };
+      const deadline = Date.now() + LOGIN_WAIT_MS;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        try {
+          if (!page.url().includes("/sign_in")) break;
+        } catch {
+          break; // 页面已跳转/关闭
+        }
+      }
+      if (page.url().includes("/sign_in")) {
+        return { ok: true, loggedIn: false, message: "请在浏览器窗口中完成 DeepSeek 登录（仅首次需要），登录后将自动填入提示词。" };
+      }
+      await sleep(1500); // 等登录后页面就绪
     }
 
-    // 定位输入框：textarea 优先（登录后主输入框），兜底 contenteditable
-    let filled = false;
-    try {
-      const ta = page.locator("textarea").first();
-      await ta.waitFor({ state: "visible", timeout: 8000 });
-      await ta.click();
-      await ta.fill(prompt);
-      filled = true;
-    } catch {
-      const ce = page.locator('div[contenteditable="true"]').first();
-      try {
-        await ce.waitFor({ state: "visible", timeout: 4000 });
-        await ce.click();
-        await ce.fill(prompt);
-        filled = true;
-      } catch {
-        filled = false;
-      }
-    }
+    // 登录后：自动填入
+    const filled = await fillPrompt(page, prompt);
     if (!filled) {
       return { ok: true, loggedIn: true, message: "已打开 DeepSeek Chat 但未找到输入框（页面结构可能变化），请手动粘贴提示词。" };
     }
     return { ok: true, loggedIn: true, message: "✅ 已自动填入提示词，请在浏览器窗口中确认并发送。" };
   } catch (e) {
     if (ctx) await ctx.close().catch(() => {});
+    activeCtx = null;
     return { ok: false, loggedIn: false, message: e instanceof Error ? e.message : String(e) };
   }
 }

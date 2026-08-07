@@ -6,7 +6,7 @@
 // - profile 独占锁自愈：Windows Chrome 同 profile 并发启动会失败，重试前清理残留锁
 // ============================================================
 import { chromium, type BrowserContext } from "playwright-core";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 
 const CHROME_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -38,13 +38,14 @@ export interface LaunchPersistentOptions {
 /**
  * 启动持久化浏览器上下文（真实 Chrome + 独立 profile）。
  * - 指纹伪装：稳定 UA + 禁 AutomationControlled + 清 navigator.webdriver
- * - 重试：连续启动同 profile 可能因残留 Chrome 子进程锁文件失败 → 等待重试，最后清锁
+ * - 重试：连续启动同 profile 可能因残留 Chrome 子进程锁文件失败 → 等待重试
+ *   ⚠️ 不删除 profile（会丢失登录态 cookie）；锁问题靠等待残留进程退出解决
  */
 export async function launchPersistentContext(profileDir: string, opts: LaunchPersistentOptions = {}): Promise<BrowserContext> {
   const exe = findBrowser();
   if (!exe) throw new Error("未找到系统 Chrome/Edge 浏览器");
   mkdirSync(profileDir, { recursive: true });
-  const retries = opts.retries ?? 3;
+  const retries = opts.retries ?? 5;
   for (let i = 0; i < retries; i++) {
     try {
       const ctx = await chromium.launchPersistentContext(profileDir, {
@@ -59,15 +60,9 @@ export async function launchPersistentContext(profileDir: string, opts: LaunchPe
       return ctx;
     } catch (e) {
       if (i === retries - 1) throw e;
-      await sleep(1500 + i * 1000);
-      // 失败重试前清除 profile 锁：残留 Chrome 子进程锁文件导致同 profile 无法再启动
-      try {
-        rmSync(profileDir, { recursive: true, force: true });
-        mkdirSync(profileDir, { recursive: true });
-      } catch {
-        /* 忽略清理失败，重试会再试 */
-      }
+      // 等待残留进程释放 profile 锁（不删除 profile，避免丢登录态）
+      await sleep(2000 + i * 1500);
     }
   }
-  throw new Error("浏览器启动失败（重试后仍失败）");
+  throw new Error("浏览器启动失败（重试后仍失败，可能是残留 Chrome 进程占用 profile）");
 }
