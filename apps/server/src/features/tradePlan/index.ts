@@ -57,18 +57,23 @@ export function register(app: Hono): void {
     return c.json({ ok: true, strategy: st });
   });
 
-  // 新建策略
+  // 新建策略（名称唯一）
   app.post(`${API_PREFIX}/tools/trade-plan/strategies`, async (c: Context) => {
     const raw = (await c.req.json().catch(() => null)) as { name?: unknown } | null;
     const name = typeof raw?.name === "string" ? raw.name.trim() : "";
     if (!name) return c.json({ ok: false, message: "策略名称不能为空" }, 400);
+    if (listStrategies().some((s) => s.name === name)) {
+      return c.json({ ok: false, message: `策略名称「${name}」已存在，请换一个名称` }, 400);
+    }
     return c.json({ ok: true, strategy: createStrategy(name) });
   });
 
-  // 更新策略
+  // 更新策略（名称唯一，不含自己）
   app.put(`${API_PREFIX}/tools/trade-plan/strategies/:id`, async (c: Context) => {
     const id = c.req.param("id");
-    if (!id || !getStrategy(id)) return c.json({ ok: false, message: "策略不存在" }, 404);
+    if (!id) return c.json({ ok: false, message: "策略不存在" }, 404);
+    const cur = getStrategy(id);
+    if (!cur) return c.json({ ok: false, message: "策略不存在" }, 404);
     const raw = (await c.req.json().catch(() => null)) as {
       name?: unknown;
       totalCapital?: unknown;
@@ -77,6 +82,11 @@ export function register(app: Hono): void {
       initialPositions?: unknown;
     } | null;
     if (!raw || typeof raw !== "object") return c.json({ ok: false, message: "请求体无效" }, 400);
+    if (typeof raw.name === "string" && raw.name.trim() && raw.name.trim() !== cur.name) {
+      if (listStrategies().some((s) => s.name === raw.name!.toString().trim())) {
+        return c.json({ ok: false, message: `策略名称「${raw.name}」已存在，请换一个名称` }, 400);
+      }
+    }
     const totalCapital = raw.totalCapital !== undefined ? num(raw.totalCapital) : undefined;
     const dailyAddLimit = raw.dailyAddLimit !== undefined ? num(raw.dailyAddLimit) : undefined;
     if (totalCapital === undefined && raw.totalCapital !== undefined) return c.json({ ok: false, message: "总仓位必须为非负数值" }, 400);

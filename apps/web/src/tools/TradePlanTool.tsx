@@ -57,6 +57,7 @@ export default function TradePlanTool() {
   const [strategy, setStrategy] = useState<TradePlanStrategy | null>(null);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [date, setDate] = useState(() => {
@@ -76,12 +77,15 @@ export default function TradePlanTool() {
   const [calView, setCalView] = useState(false);
 
   const loadStrategies = useCallback(async () => {
+    setListLoading(true);
     try {
       const r = await api.tradePlanStrategies();
       setStrategies(r.strategies);
       setSelectedId((prev) => (prev && r.strategies.some((s) => s.id === prev) ? prev : r.strategies[0]?.id ?? ""));
     } catch (e) {
-      setMsg("❌ " + errMsg(e));
+      setMsg("❌ 策略列表加载失败：" + errMsg(e));
+    } finally {
+      setListLoading(false);
     }
   }, []);
 
@@ -228,7 +232,7 @@ export default function TradePlanTool() {
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "1rem", alignItems: "start" }}>
         {/* 左：策略列表 */}
         <div style={card}>
-          <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>📁 策略列表</div>
+          <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>📁 策略仓位列表</div>
           <div style={{ display: "flex", gap: "0.35rem", marginBottom: "0.6rem" }}>
             <input
               style={{ ...input, flex: 1, minWidth: 0 }}
@@ -241,7 +245,8 @@ export default function TradePlanTool() {
               ＋
             </button>
           </div>
-          {strategies.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无策略，先新建一个</div>}
+          {listLoading && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>加载中…</div>}
+          {!listLoading && strategies.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无策略，先新建一个</div>}
           {strategies.map((s) => (
             <div
               key={s.id}
@@ -287,7 +292,7 @@ export default function TradePlanTool() {
               {/* 策略配置 */}
               <div style={card}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>⚙️ 策略配置</span>
+                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>⚙️ 策略仓位配置</span>
                   <input
                     style={{ ...input, width: 160, fontWeight: 700 }}
                     value={strategy.name}
@@ -324,11 +329,11 @@ export default function TradePlanTool() {
                       </span>
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                      <input style={{ ...input, width: 52, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                      <input style={{ ...input, width: 64, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
                       <span style={{ fontSize: "0.78rem", color: "#64748b" }}>%</span>
                     </div>
-                    <input style={{ ...input, width: 72 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
-                    <input style={{ ...input, width: 72 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 92 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 92 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
                   </div>
                 ))}
@@ -349,10 +354,16 @@ export default function TradePlanTool() {
                   <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.4rem", alignItems: "center" }}>
                     <select style={{ ...input, width: 150, padding: "0.4rem 0.55rem" }} value={it.code} onChange={(e) => setItemAt(i, { code: e.target.value })}>
                       <option value="">选择标的</option>
-                      {stockOptions.map((s) => (
-                        <option key={s.code} value={s.code}>{s.name ? `${s.name} ${s.code}` : s.code}</option>
-                      ))}
+                      {stockOptions.map((s) => {
+                        const used = items.some((it2, j) => j !== i && it2.code === s.code);
+                        return (
+                          <option key={s.code} value={s.code} disabled={used}>
+                            {used ? `✓ 已添加 ${s.name ? s.name + " " + s.code : s.code}` : s.name ? `${s.name} ${s.code}` : s.code}
+                          </option>
+                        );
+                      })}
                     </select>
+                    <span style={{ fontSize: "0.72rem", color: "#94a3b8", flexShrink: 0 }}>每标的一天一个操作</span>
                     <select style={{ ...input, width: 80, padding: "0.4rem 0.55rem" }} value={it.action} onChange={(e) => setItemAt(i, { action: e.target.value as "add" | "reduce" })}>
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
