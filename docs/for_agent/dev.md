@@ -262,6 +262,34 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   返回 JSONP（`var ajaxResult={...}`，须正则剥 `var ` 前缀与尾分号再 JSON.parse），字段 `LivesList[].title/digest/showtime/url_w`；
   缓存 10 分钟（`watchlist:hotnews`）；np-listapi 新版接口实测常返回空 list，勿用。
 
+## 4.9 LLM 调用开发经验总结（决策清单，2026-08-07 整合）
+
+**选择调用模式（先决策再写码）**：
+| 场景 | 模式 | 理由 |
+|---|---|---|
+| 单次分析、参数随请求变化 | 模式 1 `chat`（system 固定） | 无会话语义，一次即弃 |
+| 多轮续问 / 批量同类任务 / 同 system 高频复用 | 模式 2 `createChatSession`+`chatSessionAsk` | append-only，前缀缓存命中（实测 3 轮 0%→51%→88.7%） |
+| 长上下文 / Agent 任务 / 知识库问答 | 模式 3 Reasonix ACP | 自带压缩/持久化/工具（代价 ~20k token system 开销） |
+
+**成本落实四问（新增/修改 LLM 调用必答）**：
+1. system 是否逐字固定？——动态内容（日期/标的/月份/对话）一律 `user`（`{占位}` 在 system 中替换为「见用户消息」说明，勿真内联）
+2. 能否会话化？——同 system 复用场景用确定性会话 id（如 `rr-daily-{month}`、`wl-imp-{hash}`、`wl-fund-{code}`），幂等复用 + 不跨业务污染
+3. 引导词/日期是否重复？——Reasonix 会话引导词**仅首轮发送**（guideFp 指纹去重）；日期只注入 user 一次
+4. 结构化输出是否共用 `robustJsonParse`？——新业务直接 import core/jsonParse，勿复制
+
+**已踩过的坑（勿重犯）**：
+- system 内联 `{conversation}`/日期 → 前缀缓存永远 miss（watchlist.import 前身）
+- system 4 变体（cbRate 旧版：banks/日历/搜索注记全内联）→ 收敛为仅 searchNote 2 变体
+- 会话 append 累积污染（固定 id 会话多轮后旧内容残留）→ 按内容哈希的 id（`wl-imp-{hash}`）天然隔离
+- 搜索模式不注入日期 → 模型按训练知识理解「本月」；日期注入 user 且当天固定
+- 模板改版后设置数据里旧模板残留（seed 幂等不覆盖）→ 改模板后必须 `POST /api/prompts/<id>/reset`
+- Reasonix 引导词每轮重复 → 首轮发 + 指纹去重（省 ~200-400 token/轮）
+
+**验证手段**：
+- LLM 用量切面（§4.0 三层标注）看 module 覆盖；会话列表（Agent 会话管理页）看会话是否按预期复用
+- 缓存命中实验：同一会话连续 ask，对比 usage 中 prompt tokens（命中后大幅下降）
+- 单测：`chatSession.test.ts` 会话语义/归档；`knowledgeSession.test.ts` 引导词指纹去重
+
 ## 5. 外部数据源经验
 
 - **知乎爬虫（多内容目标，2026-08 实测）**：
