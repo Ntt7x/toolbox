@@ -166,6 +166,9 @@ export const api = {
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
       jsonInit("POST", {}),
     ),
+  /** 根据财报分析优化入选理由（LLM；成功后更新专题内该股理由） */
+  watchlistOptimizeReason: (id: string, code: string, reason?: string) =>
+    request<{ ok: boolean; reason?: string; topic?: WatchlistTopic; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
   watchlistFundamentalTaskStatus: (id: string, taskId: string) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,

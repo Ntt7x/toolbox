@@ -309,6 +309,7 @@ const MODULE_LABELS: Record<string, string> = {
   "cb-rate": "央行利率分析",
   "treasury-fx": "国债汇率分析",
   "watchlist.fundamental": "专题自选股·财报分析",
+  "watchlist.reason-optimize": "专题自选股·理由优化",
   "watchlist.import": "专题自选股·Chat导入",
   "reverse-repo.daily": "逆回购·每日探查",
   "reverse-repo.monthly-update": "逆回购·月度更新",

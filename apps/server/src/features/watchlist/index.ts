@@ -20,7 +20,7 @@ import {
 import { createTask, getTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
-import { fundamentalAnalysis, importFromChat, resolveStockName } from "./service.js";
+import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
 import { getFundSnapshots } from "../../core/fund.js";
 
@@ -143,6 +143,23 @@ export function register(app: Hono): void {
       { timeoutMs: 10 * 60 * 1000 },
     );
     return c.json(getTask<WatchlistTopic>(taskId), 202);
+  });
+
+  // 根据财报分析优化入选理由（LLM；先须有 fundamental 缓存）
+  app.post(`${API_PREFIX}/tools/watchlist/:id/optimize-reason`, async (c) => {
+    const id = c.req.param("id");
+    const t = getTopic(id);
+    if (!t) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const raw = (await c.req.json().catch(() => null)) as { code?: unknown; reason?: unknown } | null;
+    const code = typeof raw?.code === "string" ? raw.code.trim() : "";
+    if (!code) return c.json({ ok: false, message: "缺少股票代码" }, 400);
+    const stock = t.stocks.find((s) => s.code === code);
+    const reason = typeof raw?.reason === "string" ? raw.reason : stock?.reason;
+    const r = await optimizeReason(code, { reason, name: stock?.name });
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    // 更新专题内该股理由（addStocks 同 code 覆盖）
+    const updated = updateTopic(id, { addStocks: [{ code, name: stock?.name, reason: r.reason ?? "" }] });
+    return c.json({ ok: true, reason: r.reason, topic: updated });
   });
 
   // Chat 补充：分享链接 → 提取对话 → LLM 整理 → 追加个股到指定专题（后台任务）

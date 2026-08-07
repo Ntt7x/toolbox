@@ -69,7 +69,7 @@ const thTd: CSSProperties = { border: "1px solid #e2e8f0", padding: "0.45rem 0.5
 const th: CSSProperties = { ...thTd, background: "#f1f5f9", fontWeight: 600 };
 
 /** 财报分析结果卡片（LLM 输出，含 dataMode 标注） */
-function FundamentalCard({ r, onClose }: { r: WatchlistFundamentalResult; onClose: () => void }) {
+function FundamentalCard({ r, onClose, onOptimize }: { r: WatchlistFundamentalResult; onClose: () => void; onOptimize?: () => void }) {
   const kv = (label: string, v?: string) =>
     v ? (
       <div style={{ marginBottom: "0.45rem" }}>
@@ -86,6 +86,15 @@ function FundamentalCard({ r, onClose }: { r: WatchlistFundamentalResult; onClos
           {r.fromCache ? " · 缓存" : ""}
         </span>
         <button style={btnGhost} onClick={onClose} type="button">关闭</button>
+        {onOptimize && (
+          <button
+            style={{ ...btnGhost, background: "#16a34a", color: "#fff", borderColor: "#16a34a" }}
+            onClick={onOptimize}
+            type="button"
+          >
+            ✨ 优化入选理由
+          </button>
+        )}
       </div>
       {kv("概览", r.summary)}
       {kv("财务数据", r.financials)}
@@ -163,6 +172,28 @@ export default function WatchlistTool() {
   }, []);
 
 ;
+
+  /** 根据财报分析优化入选理由（LLM；成功后更新专题内该股理由） */
+  const [optimizingCode, setOptimizingCode] = useState<string | null>(null);
+  const optimizeReasonForStock = async (stock: WatchlistStock | undefined) => {
+    if (!topic || !stock) return;
+    if (optimizingCode) return; // 串行保护：一次只跑一个优化
+    setOptimizingCode(stock.code);
+    setErr(null);
+    try {
+      const r = await api.watchlistOptimizeReason(topic.id, stock.code, stock.reason);
+      if (r.ok && r.topic) {
+        setTopic(r.topic);
+        await refreshList();
+      } else {
+        setErr(r.message ?? "优化失败");
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setOptimizingCode(null);
+    }
+  };
 
   /** 加载近期热点新闻（已迁移到「新闻中心」页面，移除） */
 
@@ -319,16 +350,16 @@ export default function WatchlistTool() {
   const addStock = async () => {
     if (!topic) return;
     let code = addCode.trim();
-    // 名称补全兜底：未填代码但填了名称 → 搜索第一个结果自动填
-    if (!code && addName.trim() && addKind === "stock") {
+    // 统一输入框：非代码格式（如输入名称）→ 按名称搜索第一个结果自动填（股票）
+    if (!/^(sh|sz|hk|bj)?\d{5,6}$/i.test(code) && addKind === "stock" && code) {
       try {
-        const r = await api.watchlistSearchStock(addName.trim());
+        const r = await api.watchlistSearchStock(code);
         if (r.ok && r.items.length > 0) {
           code = r.items[0].code;
           setAddCode(code);
-          if (!addName.trim()) setAddName(r.items[0].name);
+          if (!addName) setAddName(r.items[0].name);
         } else {
-          setErr(`未找到「${addName.trim()}」对应的股票，请直接输入代码`);
+          setErr(`未找到「${code}」对应的股票，请直接输入代码`);
           return;
         }
       } catch (e) {
@@ -844,10 +875,11 @@ export default function WatchlistTool() {
                 <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
                   <input
                     style={{ ...input, width: "100%", boxSizing: "border-box" }}
-                    placeholder={addKind === "fund" ? "代码 161725" : "代码或名称（如 600519 / 茅台）"}
+                    placeholder={addKind === "fund" ? "代码 161725" : "代码或名称（如 600519 / 茅台，自动识别）"}
                     value={addCode}
                     onChange={(e) => {
                       setAddCode(e.target.value);
+                      setAddName("");
                       setCandsOpen(false);
                       searchStockCands(e.target.value);
                     }}
@@ -856,12 +888,36 @@ export default function WatchlistTool() {
                       if (e.key === "Enter" && candsOpen && stockCands.length > 0) {
                         const c = stockCands[0];
                         setAddCode(c.code);
-                        if (!addName.trim()) setAddName(c.name);
+                        setAddName(c.name);
                         setCandsOpen(false);
                         e.preventDefault();
                       }
                     }}
                   />
+                  {/* 已识别名称反馈（统一输入框：代码/名称皆可，识别结果即时展示） */}
+                  {addName && addKind === "stock" && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        background: "#dcfce7",
+                        color: "#15803d",
+                        fontSize: "0.72rem",
+                        fontWeight: 600,
+                        padding: "0.1rem 0.5rem",
+                        borderRadius: 999,
+                        pointerEvents: "none",
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      🏷️ {addName}
+                    </span>
+                  )}
                   {candsOpen && stockCands.length > 0 && (
                     <div
                       style={{
@@ -907,7 +963,6 @@ export default function WatchlistTool() {
                     </div>
                   )}
                 </div>
-                <input style={{ ...input, width: 110 }} placeholder="名称(可选)" value={addName} onChange={(e) => setAddName(e.target.value)} />
                 <input
                   style={{ ...input, flex: 1, minWidth: 180 }}
                   placeholder="入选理由（必填）"
@@ -1054,7 +1109,12 @@ export default function WatchlistTool() {
               {/* 财报分析详情 */}
               {Object.entries(fundamentals).map(([code, r]) =>
                 r.ok ? (
-                  <FundamentalCard key={code} r={r} onClose={() => setFundamentals((f) => { const n = { ...f }; delete n[code]; return n; })} />
+                  <FundamentalCard
+                    key={code}
+                    r={r}
+                    onClose={() => setFundamentals((f) => { const n = { ...f }; delete n[code]; return n; })}
+                    onOptimize={() => void optimizeReasonForStock(topic?.stocks.find((s) => s.code === code))}
+                  />
                 ) : null,
               )}
             </div>

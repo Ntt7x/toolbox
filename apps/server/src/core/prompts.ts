@@ -391,6 +391,17 @@ const WATCHLIST_IMPORT_PROMPT = `你是投资专题整理助手。任务：阅�
 注意：code 必须为 6 位数字；若对话中没有明确入选个股，stocks 输出空数组；
 严禁编造对话中不存在的股票。`;
 
+/** 专题自选股：根据财报分析优化入选理由（system 固定；标的/理由/财报内容在 user） */
+const WATCHLIST_REASON_OPTIMIZE_PROMPT = `你是投资专题助理。根据给定股票的【财报分析】内容，优化其【入选理由】。
+
+要求：
+- 理由 30~60 字：结合财报分析中的核心亮点（营收/利润/增长/行业地位等）给出入选逻辑，关键风险简短带过
+- 不得编造财报分析内容中不存在的事实
+- 输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{ "reason": "优化后的入选理由" }
+
+股票代码/名称/原入选理由/财报分析内容见用户消息。`;
+
 /** 知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}） */
 /** 医学知识库 × 直调：问答 system（知识库检索结果 + 问题 → 答案） */
 export const MEDICAL_KB_ASK = `你是医学知识库问答助手。用户会提供【问题】和【知识库检索结果】。
@@ -424,6 +435,7 @@ const PROMPT_META: Record<string, [string, string]> = {
   "reverse-repo.monthly-update": ["交易", "买断式逆回购余额"],
   "watchlist.fundamental": ["交易", "专题自选股"],
   "watchlist.import": ["交易", "专题自选股"],
+  "watchlist.reason-optimize": ["交易", "专题自选股"],
   "knowledge.extract": ["知识库", "知识库"],
   "knowledge.ask": ["知识库", "知识库"],
   "medical-kb.ask": ["医学知识库", "医学知识库"],
@@ -548,6 +560,13 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.watchlist.import",
     description: "专题自选股：Chat 分享链接导入（对话内容 → 专题名称/介绍/个股+理由；{conversation}）",
     defaultTemplate: WATCHLIST_IMPORT_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "watchlist.reason-optimize",
+    key: "prompt.watchlist.reason-optimize",
+    description: "专题自选股：根据财报分析优化入选理由（system 固定）",
+    defaultTemplate: WATCHLIST_REASON_OPTIMIZE_PROMPT,
     render: (t) => t,
   },
   {

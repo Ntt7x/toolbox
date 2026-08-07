@@ -5,6 +5,7 @@
 // ============================================================
 
 import { chatSessionAsk, createChatSession } from "../../core/chatSession.js";
+import { chat } from "../../core/llm.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
@@ -190,4 +191,35 @@ export async function importFromChat(shareUrl: string, signal?: AbortSignal, top
     if (updated) return updated;
   }
   return topic;
+}
+
+// ============================================================
+// 根据财报分析优化入选理由（读取 fundamental 缓存 → LLM 优化）
+// ============================================================
+
+export async function optimizeReason(
+  code: string,
+  opts: { reason?: string; name?: string; signal?: AbortSignal } = {},
+): Promise<{ ok: boolean; reason?: string; message?: string }> {
+  const stockCode = code.trim();
+  // 财报分析缓存（须先运行过财报分析）
+  const cached = kvGet<WatchlistFundamentalResult & { _at?: string }>(`${FUNDAMENTAL_PREFIX}${stockCode}`);
+  const fundamentalText = cached && cached.ok && cached.summary ? cached.summary : "";
+  if (!fundamentalText) return { ok: false, message: "暂无财报分析结果，请先对个股运行财报分析" };
+
+  // 成本原则：system 固定模板；标的/理由/财报内容放 user
+  const system = getPromptTemplate("watchlist.reason-optimize");
+  const user = `股票代码：${stockCode}${cached?.name || opts.name ? `（${cached?.name || opts.name}）` : ""}\n原入选理由：${opts.reason?.trim() || "（无）"}\n财报分析内容：\n${fundamentalText.slice(0, 4000)}`;
+  const result = await chat(
+    [
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: user },
+    ],
+    { temperature: 0.3, module: "watchlist.reason-optimize", ...(opts.signal ? { signal: opts.signal } : {}) },
+  );
+  if (!result.ok) return { ok: false, message: result.message };
+  const parsed = robustJsonParse(result.content.trim());
+  const reason = typeof parsed?.reason === "string" && parsed.reason.trim() ? parsed.reason.trim() : null;
+  if (!reason) return { ok: false, message: "LLM 输出无法解析为理由，请重试" };
+  return { ok: true, reason };
 }
