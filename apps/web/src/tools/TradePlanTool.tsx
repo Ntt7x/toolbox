@@ -59,13 +59,21 @@ export default function TradePlanTool() {
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => {
+    // 默认下一个交易日：周六/周日 → 下周一
+    const n = new Date();
+    const d = n.getDay();
+    if (d === 0) n.setDate(n.getDate() + 1);
+    else if (d === 6) n.setDate(n.getDate() + 2);
+    return n.toISOString().slice(0, 10);
+  });
   const [items, setItems] = useState<TradePlanItem[]>([]);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<TradePlanCheckResult | null>(null);
   const [dayMsg, setDayMsg] = useState<string | null>(null);
   const [days, setDays] = useState<TradePlanDay[]>([]);
   const [viewDay, setViewDay] = useState<TradePlanDay | null>(null);
+  const [calView, setCalView] = useState(false);
 
   const loadStrategies = useCallback(async () => {
     try {
@@ -200,7 +208,7 @@ export default function TradePlanTool() {
   return (
     <div style={{ maxWidth: 1240, margin: "0 auto", fontSize: "0.88rem" }}>
       <div style={{ marginBottom: "0.8rem" }}>
-        <h2 style={{ margin: "0 0 0.2rem" }}>📋 交易规划</h2>
+        <h2 style={{ margin: "0 0 0.2rem" }}>📋 策略仓位管理</h2>
         <div style={{ color: "#64748b", fontSize: "0.82rem" }}>
           多策略管理：配置策略保护仓位不失控；每日输入交易计划，自动校验是否符合策略与仓位控制
         </div>
@@ -309,7 +317,10 @@ export default function TradePlanTool() {
                         {s.name}
                       </span>
                     )}
-                    <input style={{ ...input, width: 64 }} placeholder="上限%" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                      <input style={{ ...input, width: 52 }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                      <span style={{ fontSize: "0.78rem", color: "#64748b" }}>%</span>
+                    </div>
                     <input style={{ ...input, width: 76 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
                     <input style={{ ...input, width: 76 }} placeholder="成本价" type="number" min={0} value={s.initCost ?? ""} onChange={(e) => setStockAt(i, { initCost: Number(e.target.value) || 0 })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} type="button">✕</button>
@@ -340,19 +351,23 @@ export default function TradePlanTool() {
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
                     </select>
-                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="number" min={0} placeholder="金额（元）" value={it.amount || ""} onChange={(e) => setItemAt(i, { amount: Number(e.target.value) || 0 })} />
+                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="金额（元）" value={it.amount ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: Number(e.target.value.replace(/[,，\s]/g, "")) || 0 })} />
                     <input style={{ ...input, flex: 1, minWidth: 70, padding: "0.4rem 0.55rem" }} placeholder="备注（可选）" value={it.note ?? ""} onChange={(e) => setItemAt(i, { note: e.target.value })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setItems((arr) => arr.filter((_, j) => j !== i))} type="button">✕</button>
                   </div>
                 ))}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.4rem", alignItems: "center" }}>
                   <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.84rem" }} onClick={() => setItems((arr) => [...arr, { code: "", action: "add", amount: 0 }])} type="button">＋ 添加操作</button>
-                  <button style={{ ...btn, background: "#0891b2" }} onClick={() => void runCheck(false)} disabled={checking || items.length === 0 || stockOptions.length === 0} type="button">
-                    {checking ? "分析中…" : "🔍 分析校验"}
-                  </button>
-                  <button style={btn} onClick={() => void runCheck(true)} disabled={checking || items.length === 0 || stockOptions.length === 0} type="button">
+                  <button
+                    style={{ ...btn, background: result && !result.ok ? "#94a3b8" : "var(--primary)" }}
+                    onClick={() => void runCheck(true)}
+                    disabled={checking || items.length === 0 || stockOptions.length === 0 || (result !== null && !result.ok)}
+                    title={result && !result.ok ? "违反策略仓位管理，无法保存" : "保存为日度计划"}
+                    type="button"
+                  >
                     💾 保存为日度计划
                   </button>
+                  <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>计划调整后自动校验，保存前请先通过校验</span>
                   {dayMsg && <span style={{ color: dayMsg.startsWith("❌") ? "#dc2626" : "#16a34a", fontSize: "0.82rem" }}>{dayMsg}</span>}
                 </div>
 
@@ -361,27 +376,53 @@ export default function TradePlanTool() {
 
               {/* 历史 */}
               <div style={card}>
-                <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>🗂️ 历史日度计划</div>
-                {days.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无记录，保存后自动累积</div>}
-                {days.map((d) => (
-                  <div key={d.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 600 }}>{d.date}</span>
-                    <span style={{ color: d.result.ok ? "#16a34a" : "#dc2626", fontSize: "0.8rem" }}>
-                      {d.result.ok ? "✅ 通过" : `⚠️ ${d.result.alerts.filter((a) => a.level === "error").length} 项告警`}
-                    </span>
-                    <span style={{ color: "#64748b", fontSize: "0.78rem" }}>
-                      {d.items.map((it) => {
-                        const st = strategy?.stocks.find((x) => x.code === it.code);
-                        return `${st?.name ? st.name + " " : ""}${it.code} ${it.action === "add" ? "加" : "减"}${cny(it.amount)}`;
-                      }).join("；")}
-                    </span>
-                    <span style={{ flex: 1 }} />
-                    <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => setViewDay(viewDay?.id === d.id ? null : d)} type="button">
-                      {viewDay?.id === d.id ? "收起" : "查看"}
-                    </button>
-                    <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => void deleteOne(d.id)} type="button">删除</button>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                  <span style={{ fontWeight: 700 }}>🗂️ 历史日度计划</span>
+                  <span style={{ flex: 1 }} />
+                  <div style={{ display: "inline-flex", background: "#f1f5f9", borderRadius: 8, padding: 2 }}>
+                    {([["list", "📋 列表"], ["cal", "🗓️ 日历"]] as const).map(([v, l]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setCalView(v === "cal")}
+                        style={{
+                          padding: "0.2rem 0.6rem", borderRadius: 6, border: "none", fontSize: "0.78rem", cursor: "pointer",
+                          background: (v === "cal") === calView ? "#fff" : "transparent", color: (v === "cal") === calView ? "#2563eb" : "#64748b", fontWeight: (v === "cal") === calView ? 600 : 400,
+                          boxShadow: (v === "cal") === calView ? "0 1px 2px rgba(15,23,42,0.08)" : "none",
+                        }}
+                      >
+                        {l}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                </div>
+
+                {calView ? (
+                  <MonthCalendar days={days} selected={date} onSelect={setDate} />
+                ) : (
+                  <>
+                    {days.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>暂无记录，保存后自动累积</div>}
+                    {days.map((d) => (
+                      <div key={d.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600 }}>{d.date}</span>
+                        <span style={{ color: d.result.ok ? "#16a34a" : "#dc2626", fontSize: "0.8rem" }}>
+                          {d.result.ok ? "✅ 通过" : `⚠️ ${d.result.alerts.filter((a) => a.level === "error").length} 项告警`}
+                        </span>
+                        <span style={{ color: "#64748b", fontSize: "0.78rem" }}>
+                          {d.items.map((it) => {
+                            const st = strategy?.stocks.find((x) => x.code === it.code);
+                            return `${st?.name ? st.name + " " : ""}${it.code} ${it.action === "add" ? "加" : "减"}${cny(it.amount)}`;
+                          }).join("；")}
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        <button style={{ ...btn, background: "#0891b2", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => setViewDay(viewDay?.id === d.id ? null : d)} type="button">
+                          {viewDay?.id === d.id ? "收起" : "查看"}
+                        </button>
+                        <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.6rem", fontSize: "0.76rem" }} onClick={() => void deleteOne(d.id)} type="button">删除</button>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             </>
           )}
@@ -392,6 +433,92 @@ export default function TradePlanTool() {
 }
 
 /** 股票代码/名称搜索补全输入（名称 → 代码候选，复用专题自选股 search-stock） */
+/** 交易日历视图：当月网格 + 有计划的日期标记（绿=通过/红=告警），点击日期查看当日操作汇总 */
+function MonthCalendar({ days, selected, onSelect }: { days: TradePlanDay[]; selected: string; onSelect: (d: string) => void }) {
+  const [month, setMonth] = useState(selected.slice(0, 7) || new Date().toISOString().slice(0, 7));
+  const byDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days]);
+
+  const [y, m] = month.split("-").map(Number);
+  const firstDay = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const pad = (v: number) => String(v).padStart(2, "0");
+  const dateStr = (d: number) => `${y}-${pad(m)}-${pad(d)}`;
+
+  const prev = () => setMonth(m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`);
+  const next = () => setMonth(m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`);
+  const selectedDay = byDate.get(selected);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+        <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={prev} type="button">‹</button>
+        <span style={{ fontWeight: 700, flex: 1, textAlign: "center" }}>{month}</span>
+        <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={next} type="button">›</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, textAlign: "center", marginBottom: "0.4rem" }}>
+        {["日", "一", "二", "三", "四", "五", "六"].map((w) => (
+          <div key={w} style={{ fontSize: "0.72rem", color: "#94a3b8", padding: "0.15rem 0" }}>{w}</div>
+        ))}
+        {Array.from({ length: firstDay }).map((_, i) => <div key={"e" + i} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const d = i + 1;
+          const ds = dateStr(d);
+          const day = byDate.get(ds);
+          const isSel = ds === selected;
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => onSelect(ds)}
+              style={{
+                position: "relative",
+                padding: "0.35rem 0",
+                borderRadius: 8,
+                border: `1.5px solid ${isSel ? "var(--primary)" : "transparent"}`,
+                background: isSel ? "var(--primary-soft)" : day ? (day.result.ok ? "#f0fdf4" : "#fef2f2") : "#fff",
+                color: isSel ? "var(--primary)" : "#1e293b",
+                fontWeight: isSel ? 700 : 500,
+                fontSize: "0.84rem",
+                cursor: "pointer",
+              }}
+              title={day ? `${ds}：${day.items.map((it) => `${it.code} ${it.action === "add" ? "加" : "减"}${it.amount}`).join("；")}` : ds}
+            >
+              {d}
+              {day && (
+                <span
+                  style={{
+                    position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)",
+                    width: 6, height: 6, borderRadius: "50%", background: day.result.ok ? "#16a34a" : "#dc2626",
+                  }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {/* 选中日期操作汇总 */}
+      {selectedDay ? (
+        <div style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 8, padding: "0.5rem 0.7rem", fontSize: "0.8rem" }}>
+          <div style={{ fontWeight: 700, marginBottom: "0.3rem" }}>
+            {selected} {selectedDay.result.ok ? "✅ 通过" : "⚠️ 有告警"}
+          </div>
+          {selectedDay.items.map((it, i) => (
+            <div key={i} style={{ padding: "0.15rem 0", color: "#475569" }}>
+              {it.code} {it.action === "add" ? "加仓" : "减仓"} {cny(it.amount)}
+              {it.note ? `（${it.note}）` : ""}
+            </div>
+          ))}
+          <div style={{ color: "#64748b", marginTop: "0.2rem", fontSize: "0.76rem" }}>
+            当日加仓 {cny(selectedDay.result.totals.addTotal)} · 执行后仓位 {selectedDay.result.totals.positionPct.toFixed(1)}%
+          </div>
+        </div>
+      ) : (
+        <div style={{ color: "#94a3b8", fontSize: "0.78rem", textAlign: "center", padding: "0.4rem 0" }}>{selected} 无交易计划</div>
+      )}
+    </div>
+  );
+}
+
 function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v: string) => void; onPick: (code: string, name?: string) => void }) {
   const [cands, setCands] = useState<{ code: string; name: string }[]>([]);
   const [focus, setFocus] = useState(false);
@@ -414,7 +541,7 @@ function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v
   };
 
   return (
-    <div style={{ position: "relative", flex: 2, minWidth: 160 }}>
+    <div style={{ position: "relative", flex: 1.3, minWidth: 140 }}>
       <input
         style={{ ...input, width: "100%" }}
         placeholder="代码 / 名称（搜索补全）"

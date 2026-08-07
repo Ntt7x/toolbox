@@ -33,12 +33,26 @@ export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]):
   const dailyAddLimit = config.dailyAddLimit || 0;
 
   // 汇总每标的变动
-  const byCode = new Map<string, { add: number; reduce: number }>();
+  const byCode = new Map<string, { add: number; reduce: number; count: number }>();
   for (const it of items) {
-    const acc = byCode.get(it.code) ?? { add: 0, reduce: 0 };
+    const acc = byCode.get(it.code) ?? { add: 0, reduce: 0, count: 0 };
     if (it.action === "add") acc.add += it.amount;
     else acc.reduce += it.amount;
+    acc.count += 1;
     byCode.set(it.code, acc);
+  }
+
+  // 6. 一个标的一天只能一个操作（重复 code 报错）
+  for (const [code, acc] of byCode) {
+    if (acc.count > 1) {
+      const stock = config.stocks.find((s) => s.code === code);
+      alerts.push({
+        level: "error",
+        code,
+        message: `标的 ${stock?.name || code} 在日度计划中出现 ${acc.count} 次，请合并为一个交易操作`,
+        detail: "同一标的一天只能完成一个加仓或减仓操作",
+      });
+    }
   }
 
   // 1. 标的合法性

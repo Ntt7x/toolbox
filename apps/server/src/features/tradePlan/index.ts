@@ -23,14 +23,14 @@ import {
 registerDataSource({
   kind: "kv",
   name: "tradePlan:",
-  page: "交易规划",
+  page: "策略仓位管理",
   tag: "交易数据",
   description: "交易规划：策略配置（tradePlan:strategy:）与日度交易计划（tradePlan:day:<策略>:）",
 });
 
 export const meta: ToolMeta = {
   id: "trade-plan",
-  name: "交易规划",
+  name: "策略仓位管理",
   description: "多策略配置（总仓位/标的/单日加仓上限/起始持仓），校验日度交易计划是否符合仓位控制，给出提醒与告警",
   path: "/tools/trade-plan",
 };
@@ -122,6 +122,10 @@ export function register(app: Hono): void {
     const items = parseItems(raw?.items);
     if (!items || items.length === 0) return c.json({ ok: false, message: "计划条目无效（需至少一条）" }, 400);
     const result = checkTradePlan(st, items);
+    // 5. 违反策略仓位管理（有 error 级告警）→ 拒绝保存
+    if (!result.ok) {
+      return c.json({ ok: false, message: "计划违反策略仓位管理，无法保存", result, rejectReason: result.alerts.find((a) => a.level === "error")?.message }, 400);
+    }
     const day = createDay(st.id, date, items, result);
     return c.json({ ok: true, result, day });
   });
