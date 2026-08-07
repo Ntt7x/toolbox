@@ -1840,3 +1840,21 @@ export interface TradePlanDeleteResult {
   ok: boolean;
   message?: string;
 }
+
+/** 日历总计划：某天所有策略的操作汇总 */
+export interface TradePlanCalendarDay {
+  date: string;
+  strategies: {
+    id: string;
+    name: string;
+    items: TradePlanItem[];
+    result: TradePlanCheckResult;
+  }[];
+}
+
+/** 日历总计划响应 */
+export interface TradePlanCalendarResult {
+  ok: boolean;
+  month: string;
+  days: TradePlanCalendarDay[];
+}

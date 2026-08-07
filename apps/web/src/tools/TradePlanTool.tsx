@@ -75,6 +75,7 @@ export default function TradePlanTool() {
   const [days, setDays] = useState<TradePlanDay[]>([]);
   const [viewDay, setViewDay] = useState<TradePlanDay | null>(null);
   const [calView, setCalView] = useState(false);
+  const [allCalOpen, setAllCalOpen] = useState(false);
 
   const loadStrategies = useCallback(async () => {
     setListLoading(true);
@@ -234,6 +235,22 @@ export default function TradePlanTool() {
         </div>
       )}
 
+      {/* #1 全部策略总计划日历（跨策略） */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span style={{ fontWeight: 700 }}>📅 全部策略总计划</span>
+          <button
+            style={{ ...btnGhost, padding: "0.3rem 0.8rem", fontSize: "0.8rem" }}
+            onClick={() => setAllCalOpen((v) => !v)}
+            type="button"
+          >
+            {allCalOpen ? "收起" : "展开"}
+          </button>
+          <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>跨策略查看每天的交易计划</span>
+        </div>
+        {allCalOpen && <AllCalendar />}
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "1rem", alignItems: "start" }}>
         {/* 左：策略列表 */}
         <div style={card}>
@@ -333,8 +350,18 @@ export default function TradePlanTool() {
                         {s.name}
                       </span>
                     )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                      <input style={{ ...input, width: 64, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} placeholder="上限" type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={s.maxWeightPct ?? 0}
+                        onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })}
+                        style={{ width: 62, accentColor: "#2563eb" }}
+                        title="单标的上限（占总仓位百分比）"
+                      />
+                      <input style={{ ...input, width: 44, borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#ef4444" : "#cbd5e1" }} type="number" min={0} max={100} value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} />
                       <span style={{ fontSize: "0.78rem", color: "#64748b" }}>%</span>
                     </div>
                     <input style={{ ...input, width: 92 }} placeholder="起始数量" type="number" min={0} value={s.initShares ?? ""} onChange={(e) => setStockAt(i, { initShares: Number(e.target.value) || 0 })} />
@@ -373,7 +400,23 @@ export default function TradePlanTool() {
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
                     </select>
-                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="金额（元）" value={it.amount ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: Number(e.target.value.replace(/[,，\s]/g, "")) || 0 })} />
+                    <input style={{ ...input, width: 100, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="金额（元）" value={it.amount ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: Number(e.target.value.replace(/[,，\s]/g, "")) || 0 })} />
+                    {/* #3 金额百分比滑块：占总仓位百分比 → 自动算金额 */}
+                    {strategy.totalCapital > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={it.amount > 0 ? Math.min(100, Math.round((it.amount / strategy.totalCapital) * 100)) : 0}
+                          onChange={(e) => setItemAt(i, { amount: Math.round((strategy.totalCapital * Number(e.target.value)) / 100) })}
+                          style={{ width: 72, accentColor: "#2563eb" }}
+                          title="拖动设置占策略总仓位的百分比，自动计算金额"
+                        />
+                        <span style={{ fontSize: "0.72rem", color: "#64748b", width: 38 }}>{it.amount > 0 ? Math.round((it.amount / strategy.totalCapital) * 100) : 0}%</span>
+                      </div>
+                    )}
                     <input style={{ ...input, flex: 1, minWidth: 70, padding: "0.4rem 0.55rem" }} placeholder="备注（可选）" value={it.note ?? ""} onChange={(e) => setItemAt(i, { note: e.target.value })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setItems((arr) => arr.filter((_, j) => j !== i))} type="button">✕</button>
                   </div>
@@ -541,6 +584,97 @@ function MonthCalendar({ days, selected, onSelect }: { days: TradePlanDay[]; sel
   );
 }
 
+/** 全部策略总计划日历：跨策略聚合，某天显示所有策略的操作 */
+function AllCalendar() {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [data, setData] = useState<{ date: string; strategies: { id: string; name: string; items: TradePlanItem[]; result: TradePlanCheckResult }[] }[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [selected, setSelected] = useState("");
+
+  useEffect(() => {
+    setData(null);
+    setErr(null);
+    void api.tradePlanCalendar(month).then((r) => {
+      setData(r.days);
+      if (r.days.length > 0) setSelected(r.days[0].date);
+    }).catch((e) => setErr(errMsg(e)));
+  }, [month]);
+
+  const byDate = useMemo(() => new Map((data ?? []).map((d) => [d.date, d])), [data]);
+  const [y, m] = month.split("-").map(Number);
+  const firstDay = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const pad = (v: number) => String(v).padStart(2, "0");
+  const dateStr = (d: number) => `${y}-${pad(m)}-${pad(d)}`;
+  const selectedDay = byDate.get(selected);
+
+  return (
+    <div style={{ marginTop: "0.7rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.7rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+        <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={() => setMonth(m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`)} type="button">‹</button>
+        <span style={{ fontWeight: 700, flex: 1, textAlign: "center" }}>{month}</span>
+        <button style={{ ...btn, background: "#f1f5f9", color: "#475569", padding: "0.25rem 0.6rem", fontSize: "0.8rem" }} onClick={() => setMonth(m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`)} type="button">›</button>
+      </div>
+      {err && <div style={{ color: "#dc2626", fontSize: "0.82rem", marginBottom: "0.4rem" }}>❌ {err}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, textAlign: "center", marginBottom: "0.4rem" }}>
+        {["日", "一", "二", "三", "四", "五", "六"].map((w) => (
+          <div key={w} style={{ fontSize: "0.72rem", color: "#94a3b8", padding: "0.15rem 0" }}>{w}</div>
+        ))}
+        {Array.from({ length: firstDay }).map((_, i) => <div key={"e" + i} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const d = i + 1;
+          const ds = dateStr(d);
+          const day = byDate.get(ds);
+          const hasErr = day?.strategies.some((s) => !s.result.ok);
+          const isSel = ds === selected;
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setSelected(ds)}
+              style={{
+                position: "relative",
+                padding: "0.35rem 0",
+                borderRadius: 8,
+                border: `1.5px solid ${isSel ? "var(--primary)" : "transparent"}`,
+                background: isSel ? "var(--primary-soft)" : day ? (hasErr ? "#fef2f2" : "#f0fdf4") : "#fff",
+                color: isSel ? "var(--primary)" : "#1e293b",
+                fontWeight: isSel ? 700 : 500,
+                fontSize: "0.84rem",
+                cursor: "pointer",
+              }}
+              title={day ? `${ds}：${day.strategies.map((s) => `${s.name} ${s.items.length}项`).join("；")}` : ds}
+            >
+              {d}
+              {day && (
+                <span style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 6, height: 6, borderRadius: "50%", background: hasErr ? "#dc2626" : "#16a34a" }} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {/* 选中日：各策略操作汇总 */}
+      {selectedDay ? (
+        <div style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 8, padding: "0.5rem 0.7rem", fontSize: "0.8rem" }}>
+          <div style={{ fontWeight: 700, marginBottom: "0.3rem" }}>{selected} 全部策略计划</div>
+          {selectedDay.strategies.map((s) => (
+            <div key={s.id} style={{ padding: "0.25rem 0", borderBottom: "1px solid #f1f5f9" }}>
+              <div style={{ fontWeight: 600, color: s.result.ok ? "#16a34a" : "#dc2626" }}>
+                {s.name} {s.result.ok ? "✅" : "⚠️"}
+              </div>
+              <div style={{ color: "#475569" }}>
+                {s.items.map((it, i) => `${it.code} ${it.action === "add" ? "加仓" : "减仓"} ${cny(it.amount)}${it.note ? `（${it.note}）` : ""}`).join("；")}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ color: "#94a3b8", fontSize: "0.78rem", textAlign: "center", padding: "0.4rem 0" }}>{selected || month} 无任何策略计划</div>
+      )}
+    </div>
+  );
+}
+
 function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v: string) => void; onPick: (code: string, name?: string) => void }) {
   const [cands, setCands] = useState<{ code: string; name: string }[]>([]);
   const [focus, setFocus] = useState(false);
@@ -563,7 +697,7 @@ function StockCodeInput({ code, onChange, onPick }: { code: string; onChange: (v
   };
 
   return (
-    <div style={{ position: "relative", flex: 1.1, minWidth: 120 }}>
+    <div style={{ position: "relative", flex: 0.85, minWidth: 100 }}>
       <input
         style={{ ...input, width: "100%" }}
         placeholder="代码 / 名称（搜索补全）"

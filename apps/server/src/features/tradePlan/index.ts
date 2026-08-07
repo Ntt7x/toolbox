@@ -5,7 +5,7 @@
 // ============================================================
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { API_PREFIX, type ToolMeta } from "@toolbox/shared";
+import { API_PREFIX, type ToolMeta, type TradePlanCheckResult, type TradePlanItem } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { checkTradePlan } from "./compute.js";
 import {
@@ -145,6 +145,26 @@ export function register(app: Hono): void {
     const st = getStrategy(c.req.param("id")!);
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
     return c.json({ ok: true, days: listDays(st.id) });
+  });
+
+  // 日历总计划（跨策略聚合，按月）
+  app.get(`${API_PREFIX}/tools/trade-plan/calendar`, (c: Context) => {
+    const q = c.req.query("month") ?? todayStr().slice(0, 7);
+    const month = /^\d{4}-\d{2}$/.test(q) ? q : todayStr().slice(0, 7);
+    const days: { date: string; strategies: { id: string; name: string; items: TradePlanItem[]; result: TradePlanCheckResult }[] }[] = [];
+    for (const st of listStrategies()) {
+      for (const d of listDays(st.id)) {
+        if (!d.date.startsWith(month)) continue;
+        let entry = days.find((x) => x.date === d.date);
+        if (!entry) {
+          entry = { date: d.date, strategies: [] };
+          days.push(entry);
+        }
+        entry.strategies.push({ id: st.id, name: st.name, items: d.items, result: d.result });
+      }
+    }
+    days.sort((a, b) => (a.date < b.date ? -1 : 1));
+    return c.json({ ok: true, month, days });
   });
 
   // 删除日度计划

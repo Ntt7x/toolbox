@@ -5,6 +5,7 @@
   type CbRateResponse,
   type FundSnapshot,
   type GridPlanRequest,
+  type TradePlanCalendarResult,
   type TradePlanCheckResponse,
   type TradePlanDayListResult,
   type TradePlanDeleteResult,
@@ -192,7 +193,10 @@ export const api = {
     request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day", jsonInit("POST", { date, items })),
   tradePlanDays: (strategyId: string) =>
     request<TradePlanDayListResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/days"),
-  tradePlanDeleteDay: (strategyId: string, dayId: string) =>
+  /** 日历总计划（跨策略按月聚合） */
+  tradePlanCalendar: (month: string) =>
+    request<TradePlanCalendarResult>("/tools/trade-plan/calendar?month=" + encodeURIComponent(month)),
+    tradePlanDeleteDay: (strategyId: string, dayId: string) =>
     request<TradePlanDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day/" + encodeURIComponent(dayId), jsonInit("DELETE", {})),
     chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),

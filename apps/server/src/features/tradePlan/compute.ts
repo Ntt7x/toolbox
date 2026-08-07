@@ -93,7 +93,7 @@ export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]):
         level: "error",
         code,
         message: `减仓金额超过 ${code} 当前持仓`,
-        detail: `当前持仓市值 ${CNY(cur)}，减仓 ${CNY(v.reduce)}，超出 ${CNY(v.reduce - cur)}`,
+        detail: `当前持仓市值 ${CNY(cur)}，减仓 ${CNY(v.reduce)}，超出 ${CNY(v.reduce - cur)}；建议减仓不超过 ${CNY(cur)}`,
       });
       marketValue = Math.max(0, marketValue);
     }
@@ -141,7 +141,7 @@ export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]):
     alerts.push({
       level: "error",
       message: "执行后总市值超过总仓位",
-      detail: `执行后总市值 ${CNY(totalMarketValue)} > 总仓位 ${CNY(totalCapital)}，超出 ${CNY(totalMarketValue - totalCapital)}`,
+      detail: `执行后总市值 ${CNY(totalMarketValue)} > 总仓位 ${CNY(totalCapital)}，超出 ${CNY(totalMarketValue - totalCapital)}；建议减少加仓金额 ${CNY(totalMarketValue - totalCapital)} 或调整标的配置`,
     });
   } else if (totalCapital > 0 && addTotal > 0) {
     alerts.push({
