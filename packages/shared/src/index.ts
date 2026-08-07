@@ -604,6 +604,9 @@ export interface LlmUsageSummary {
     cacheMissTokens: number;
     /** 缓存命中率（0~1；无输入时 0） */
     cacheRate: number;
+    /** 估算费用（DeepSeek 公开价近似；USD 与 CNY） */
+    costUsd: number;
+    costCny: number;
     /** 按调用模式聚合（direct 直调 / chat-session 自研会话 / reasonix ACP 会话） */
     byMode: { mode: LlmCallMode; label: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
     /** 按场景聚合（business 业务 / system 系统 / test 测试）；旧数据按 module 推断 */
@@ -611,7 +614,7 @@ export interface LlmUsageSummary {
   };
   byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[];
   /** 逐日（倒序）；byModule 为该日各模块明细（单日扇形图用） */
-  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
+  byDay: { day: string; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number; costCny: number; byModule: { module: string; label: string; scene: LlmUsageScene; calls: number; totalTokens: number; cacheHitTokens: number; cacheMissTokens: number; cacheRate: number }[] }[];
 }
 
 /** DeepSeek 平台余额查询结果 */
@@ -1256,6 +1259,8 @@ export interface WatchlistTopic {
   name: string;
   /** 专题介绍（主题逻辑/选股思路，可选） */
   description?: string;
+  /** 分组名（缺省未分组；列表按此分组展示） */
+  group?: string;
   createdAt: string;
   updatedAt: string;
   stocks: WatchlistStock[];
@@ -1267,6 +1272,8 @@ export interface WatchlistSummary {
   name: string;
   /** 专题介绍（列表悬浮展示用） */
   description?: string;
+  /** 分组名（缺省未分组；列表按此分组展示） */
+  group?: string;
   stockCount: number;
   updatedAt: string;
 }
@@ -1280,6 +1287,8 @@ export interface WatchlistCreateRequest {
   name: string;
   /** 专题介绍（可选） */
   description?: string;
+  /** 分组名（可选） */
+  group?: string;
 }
 
 export interface WatchlistCreateResult {
@@ -1292,6 +1301,8 @@ export interface WatchlistUpdateRequest {
   name?: string;
   /** 专题介绍（传空字符串可清空） */
   description?: string;
+  /** 分组名（传空字符串可清空；缺省未分组） */
+  group?: string;
   addStocks?: WatchlistStock[];
   removeCodes?: string[];
   /** 新顺序（code 数组，stocks 将按此重排；顺序 = 优先级） */

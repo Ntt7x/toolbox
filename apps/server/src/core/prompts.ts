@@ -402,6 +402,20 @@ const WATCHLIST_REASON_OPTIMIZE_PROMPT = `你是投资专题助理。根据给�
 
 股票代码/名称/原入选理由/财报分析内容见用户消息。`;
 
+/** 专题自选股：根据专题与已有个股生成延续思考提示词（system 固定；专题信息在 user） */
+const WATCHLIST_EXTEND_PROMPT = `你是投资研究助理。根据用户提供的【专题信息】（名称/介绍/已有个股与入选理由），生成一段可直接粘贴到 DeepSeek Chat 的「延续思路 / 扩展思考」提示词。
+
+要求（生成的中文提示词需包含）：
+1. 专题核心逻辑回顾（1-2 句，让新会话快速进入状态）
+2. 已有个股概览（列主要标的名，不展开理由）
+3. 扩展思考方向（3-5 个具体问题：新标的线索、逻辑深化验证、组合风险再评估、数据/事件催化等）
+4. 明确要求输出格式（如"分点列出 + 可执行建议"）
+- 生成的提示词用第二人称「你」口吻，自包含（对方无需看过本专题信息）
+- 输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{ "prompt": "生成的完整提示词" }
+
+专题信息见用户消息。`;
+
 /** 知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}） */
 /** 医学知识库 × 直调：问答 system（知识库检索结果 + 问题 → 答案） */
 export const MEDICAL_KB_ASK = `你是医学知识库问答助手。用户会提供【问题】和【知识库检索结果】。
@@ -436,6 +450,7 @@ const PROMPT_META: Record<string, [string, string]> = {
   "watchlist.fundamental": ["交易", "专题自选股"],
   "watchlist.import": ["交易", "专题自选股"],
   "watchlist.reason-optimize": ["交易", "专题自选股"],
+  "watchlist.extend": ["交易", "专题自选股"],
   "knowledge.extract": ["知识库", "知识库"],
   "knowledge.ask": ["知识库", "知识库"],
   "medical-kb.ask": ["医学知识库", "医学知识库"],
@@ -567,6 +582,13 @@ const PROMPTS: PromptDef[] = [
     key: "prompt.watchlist.reason-optimize",
     description: "专题自选股：根据财报分析优化入选理由（system 固定）",
     defaultTemplate: WATCHLIST_REASON_OPTIMIZE_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "watchlist.extend",
+    key: "prompt.watchlist.extend",
+    description: "专题自选股：生成延续思路/扩展思考提示词（system 固定）",
+    defaultTemplate: WATCHLIST_EXTEND_PROMPT,
     render: (t) => t,
   },
   {

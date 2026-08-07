@@ -20,7 +20,7 @@ import {
 import { createTask, getTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
-import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName } from "./service.js";
+import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName, extendPrompt } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
 import { getFundSnapshots } from "../../core/fund.js";
 
@@ -100,7 +100,7 @@ export function register(app: Hono): void {
     const raw = (await c.req.json().catch(() => null)) as WatchlistCreateRequest | null;
     const name = raw?.name?.trim() ?? "";
     if (!name) return c.json({ ok: false, message: "缺少专题名称" }, 400);
-    const topic = createTopic(name, raw?.description);
+    const topic = createTopic(name, raw?.description, raw?.group);
     return c.json({ ok: true, topic }, 201);
   });
 
@@ -143,6 +143,16 @@ export function register(app: Hono): void {
       { timeoutMs: 10 * 60 * 1000 },
     );
     return c.json(getTask<WatchlistTopic>(taskId), 202);
+  });
+
+  // 生成延续思路/扩展思考提示词（专题信息 → LLM；返回可粘贴 DeepSeek Chat 的提示词）
+  app.post(`${API_PREFIX}/tools/watchlist/:id/extend-prompt`, async (c) => {
+    const id = c.req.param("id");
+    const t = getTopic(id);
+    if (!t) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const r = await extendPrompt(t);
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json({ ok: true, prompt: r.prompt });
   });
 
   // 根据财报分析优化入选理由（LLM；先须有 fundamental 缓存）
@@ -201,6 +211,7 @@ export function register(app: Hono): void {
     const topic = updateTopic(c.req.param("id"), {
       name: raw.name,
       description: raw.description,
+      group: raw.group,
       addStocks: Array.isArray(raw.addStocks) ? raw.addStocks : undefined,
       removeCodes: Array.isArray(raw.removeCodes) ? raw.removeCodes : undefined,
       reorderCodes: Array.isArray(raw.reorderCodes) ? raw.reorderCodes : undefined,

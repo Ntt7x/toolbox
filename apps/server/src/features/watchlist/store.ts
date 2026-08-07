@@ -57,12 +57,13 @@ export function getTopic(id: string): WatchlistTopic | null {
 }
 
 /** 新建专题（同名允许，用 id 区分；description 可选） */
-export function createTopic(name: string, description?: string): WatchlistTopic {
+export function createTopic(name: string, description?: string, group?: string): WatchlistTopic {
   const now = new Date().toISOString();
   const topic: WatchlistTopic = {
     id: genTopicId(),
     name: name.trim(),
     ...(description && description.trim() ? { description: description.trim() } : {}),
+    ...(group && group.trim() ? { group: group.trim().slice(0, 20) } : {}),
     createdAt: now,
     updatedAt: now,
     stocks: [],
@@ -77,6 +78,7 @@ export function updateTopic(
   patch: {
     name?: string;
     description?: string;
+    group?: string;
     addStocks?: WatchlistStock[];
     removeCodes?: string[];
     reorderCodes?: string[];
@@ -85,6 +87,9 @@ export function updateTopic(
   const t = getTopic(id);
   if (!t) return null;
   const stocks = t.stocks.slice();
+  if (patch.name !== undefined) t.name = patch.name.trim().slice(0, 30) || t.name;
+  if (patch.description !== undefined) { const d = patch.description.trim(); if (d) t.description = d; else delete t.description; }
+  if (patch.group !== undefined) { const g = patch.group.trim().slice(0, 20); if (g) t.group = g; else delete t.group; }
   if (Array.isArray(patch.addStocks)) {
     for (const s of patch.addStocks) {
       const ns = normalizeStock(s);

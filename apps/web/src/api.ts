@@ -140,8 +140,8 @@ export const api = {
     request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
   // 专题自选股（专题 CRUD + 个股财报分析）
   watchlistList: () => request<WatchlistListResult>("/tools/watchlist"),
-  watchlistCreate: (name: string, description?: string) =>
-    request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", description ? { name, description } : { name })),
+  watchlistCreate: (name: string, description?: string, group?: string) =>
+    request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", { name, ...(description ? { description } : {}), ...(group ? { group } : {}) })),
   watchlistDetail: (id: string) => request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
   watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
     request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
@@ -169,6 +169,9 @@ export const api = {
   /** 根据财报分析优化入选理由（LLM；成功后更新专题内该股理由） */
   watchlistOptimizeReason: (id: string, code: string, reason?: string) =>
     request<{ ok: boolean; reason?: string; topic?: WatchlistTopic; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
+  /** 生成延续思路/扩展思考提示词（LLM；返回可粘贴 DeepSeek Chat 的提示词） */
+  watchlistExtendPrompt: (id: string) =>
+    request<{ ok: boolean; prompt?: string; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", {})),
   watchlistFundamentalTaskStatus: (id: string, taskId: string) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental/task/${encodeURIComponent(taskId)}`,

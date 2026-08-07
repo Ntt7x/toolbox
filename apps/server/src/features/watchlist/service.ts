@@ -223,3 +223,31 @@ export async function optimizeReason(
   if (!reason) return { ok: false, message: "LLM 输出无法解析为理由，请重试" };
   return { ok: true, reason };
 }
+
+// ============================================================
+// 生成延续思路 / 扩展思考提示词（专题信息 → LLM → 可直接粘贴 DeepSeek Chat 的提示词）
+// ============================================================
+
+export async function extendPrompt(
+  topic: { name: string; description?: string; stocks: { code: string; name?: string; reason?: string }[] },
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ ok: boolean; prompt?: string; message?: string }> {
+  const stocksText =
+    topic.stocks.length > 0
+      ? topic.stocks.map((s) => `- ${s.code} ${s.name ?? ""}${s.reason ? `：${s.reason}` : ""}`).join("\n")
+      : "（暂无个股）";
+  const user = `专题名称：${topic.name}\n专题介绍：${topic.description?.trim() || "（无）"}\n已有个股与理由：\n${stocksText}`;
+  const system = getPromptTemplate("watchlist.extend");
+  const result = await chat(
+    [
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: user },
+    ],
+    { temperature: 0.5, module: "watchlist.extend", ...(opts.signal ? { signal: opts.signal } : {}) },
+  );
+  if (!result.ok) return { ok: false, message: result.message };
+  const parsed = robustJsonParse(result.content.trim());
+  const prompt = typeof parsed?.prompt === "string" && parsed.prompt.trim() ? parsed.prompt.trim() : null;
+  if (!prompt) return { ok: false, message: "LLM 输出无法解析为提示词，请重试" };
+  return { ok: true, prompt };
+}

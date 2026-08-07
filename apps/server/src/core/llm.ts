@@ -310,6 +310,7 @@ const MODULE_LABELS: Record<string, string> = {
   "treasury-fx": "国债汇率分析",
   "watchlist.fundamental": "专题自选股·财报分析",
   "watchlist.reason-optimize": "专题自选股·理由优化",
+  "watchlist.extend": "专题自选股·延续思考",
   "watchlist.import": "专题自选股·Chat导入",
   "reverse-repo.daily": "逆回购·每日探查",
   "reverse-repo.monthly-update": "逆回购·月度更新",
@@ -427,6 +428,11 @@ function localDay(iso: string): string {
 }
 
 /** 用量汇总（总数 + 按模块 + 按天；按天含当日模块明细，供单日扇形图） */
+// DeepSeek 公开定价近似（deepseek-chat，USD/百万 token；2026-08）：输入 0.27 / 缓存命中 0.07 / 输出 1.10；汇率 7.2
+const DS_PRICE = { inputUsd: 0.27, cacheHitUsd: 0.07, outputUsd: 1.1, usdCny: 7.2 };
+function estimateCostUsd(hit: number, miss: number, completion: number): number {
+  return (hit * DS_PRICE.cacheHitUsd + miss * DS_PRICE.inputUsd + completion * DS_PRICE.outputUsd) / 1e6;
+}
 export function getLlmUsageSummary(): LlmUsageSummary {
   const entries = readUsageEntries();
   const total = { calls: entries.length, promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
@@ -439,6 +445,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     {
       calls: number;
       totalTokens: number;
+      completionTokens: number;
       cacheHitTokens: number;
       cacheMissTokens: number;
       cacheRate: number;
@@ -473,11 +480,12 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     m.cacheMissTokens += e.cacheMissTokens ?? 0;
     byModule.set(e.module, m);
     const day = localDay(e.ts);
-    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, byModule: new Map() };
+    const d = byDay.get(day) ?? { calls: 0, totalTokens: 0, completionTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0, byModule: new Map() };
     d.calls++;
     d.totalTokens += e.promptTokens + e.completionTokens;
     d.cacheHitTokens += e.cacheHitTokens ?? 0;
     d.cacheMissTokens += e.cacheMissTokens ?? 0;
+    d.completionTokens = (d.completionTokens ?? 0) + (e.completionTokens ?? 0);
     const dm = d.byModule.get(e.module) ?? { calls: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheRate: 0 };
     dm.calls++;
     dm.totalTokens += e.promptTokens + e.completionTokens;
@@ -495,6 +503,8 @@ export function getLlmUsageSummary(): LlmUsageSummary {
     total: {
       ...total,
       cacheRate: rate(total.cacheHitTokens, total.cacheMissTokens),
+      costUsd: estimateCostUsd(total.cacheHitTokens, total.cacheMissTokens, total.completionTokens),
+      costCny: estimateCostUsd(total.cacheHitTokens, total.cacheMissTokens, total.completionTokens) * DS_PRICE.usdCny,
       byMode: modes
         .filter((mo) => byMode.has(mo))
         .map((mo) => {
@@ -521,6 +531,7 @@ export function getLlmUsageSummary(): LlmUsageSummary {
         cacheHitTokens: v.cacheHitTokens,
         cacheMissTokens: v.cacheMissTokens,
         cacheRate: rate(v.cacheHitTokens, v.cacheMissTokens),
+        costCny: estimateCostUsd(v.cacheHitTokens, v.cacheMissTokens, v.completionTokens ?? 0) * DS_PRICE.usdCny,
         byModule: [...v.byModule.entries()]
           .map(([module, m]) => ({ module, label: moduleLabel(module), scene: sceneOf.get(module) ?? "business", ...m, cacheRate: rate(m.cacheHitTokens, m.cacheMissTokens) }))
           .sort(sortDesc),

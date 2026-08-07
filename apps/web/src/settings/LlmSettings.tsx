@@ -280,6 +280,7 @@ export default function LlmSettings() {
               { label: "输出", value: ((usage?.total.completionTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
               { label: "合计", value: ((usage?.total.totalTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
               { label: "缓存命中", value: ((usage?.total.cacheRate ?? 0) * 100).toFixed(1), unit: "%", sub: `${((usage?.total.cacheHitTokens ?? 0) / 1000).toFixed(1)}k / ${((usage?.total.cacheMissTokens ?? 0) / 1000).toFixed(1)}k 输入` },
+              { label: "估算费用", value: `¥${(usage?.total.costCny ?? 0).toFixed(2)}`, unit: "≈", sub: `$${(usage?.total.costUsd ?? 0).toFixed(2)} · 按公开价近似` },
             ].map((s) => (
               <div key={s.label} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "0.6rem 0.85rem" }}>
                 <div style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 500 }}>{s.label}</div>

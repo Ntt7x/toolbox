@@ -118,6 +118,7 @@ export default function WatchlistTool() {
   // 新建专题
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newGroup, setNewGroup] = useState("");
   // 新建面板折叠 + 内部 tab（manual / chat）
   const [showCreate, setShowCreate] = useState(false);
   const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
@@ -193,6 +194,38 @@ export default function WatchlistTool() {
     } finally {
       setOptimizingCode(null);
     }
+  };
+
+  /** 生成延续思路/扩展思考提示词（专题信息 → LLM → 可粘贴 DeepSeek Chat） */
+  const [extending, setExtending] = useState(false);
+  const [extendResult, setExtendResult] = useState<string | null>(null);
+  const [extendCopied, setExtendCopied] = useState(false);
+  const extendTopic = async () => {
+    if (!topic || extending) return;
+    setExtending(true);
+    setErr(null);
+    try {
+      const r = await api.watchlistExtendPrompt(topic.id);
+      if (r.ok && r.prompt) setExtendResult(r.prompt);
+      else setErr(r.message ?? "生成失败");
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setExtending(false);
+    }
+  };
+  const copyExtendPrompt = async () => {
+    if (!extendResult) return;
+    try {
+      await navigator.clipboard.writeText(extendResult);
+      setExtendCopied(true);
+      setTimeout(() => setExtendCopied(false), 2000);
+    } catch { /* 忽略 */ }
+  };
+  const openExtendChat = () => {
+    if (!extendResult) return;
+    void navigator.clipboard.writeText(extendResult).catch(() => {});
+    window.open("https://chat.deepseek.com/", "_blank");
   };
 
   /** 加载近期热点新闻（已迁移到「新闻中心」页面，移除） */
@@ -279,10 +312,11 @@ export default function WatchlistTool() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await api.watchlistCreate(name, newDesc.trim() || undefined);
+      const r = await api.watchlistCreate(name, newDesc.trim() || undefined, newGroup.trim() || undefined);
       if (r.ok) {
         setNewName("");
         setNewDesc("");
+        setNewGroup("");
         setShowCreate(false);
         setSelectedId(r.topic.id);
         await refreshList();
@@ -634,6 +668,12 @@ export default function WatchlistTool() {
                     value={newDesc}
                     onChange={(e) => setNewDesc(e.target.value)}
                   />
+                  <input
+                    style={{ ...input, width: "100%", boxSizing: "border-box", marginBottom: "0.35rem", fontSize: "0.8rem" }}
+                    placeholder="分组（可选，如：消费 / 科技；留空=未分组）"
+                    value={newGroup}
+                    onChange={(e) => setNewGroup(e.target.value)}
+                  />
                   <button style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem" }} onClick={() => void createTopic()} disabled={loading} type="button">
                     ✓ 创建专题
                   </button>
@@ -675,7 +715,21 @@ export default function WatchlistTool() {
           )}
 
           {topics.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>还没有专题，先新建或导入一个。</div>}
-          {topics.map((t) => (
+          {/* 按分组渲染（组内保持原顺序；未分组最后） */}
+          {(() => {
+            const groups = new Map<string, { label: string; items: typeof topics }>();
+            for (const t of topics) {
+              const g = (t.group || "").trim() || "未分组";
+              if (!groups.has(g)) groups.set(g, { label: g, items: [] });
+              groups.get(g)!.items.push(t);
+            }
+            const entries = [...groups.entries()].sort((a, b) => (a[0] === "未分组" ? 1 : b[0] === "未分组" ? -1 : a[0].localeCompare(b[0], "zh")));
+            return entries.map(([g, v]) => (
+              <div key={g} style={{ marginBottom: "0.35rem" }}>
+                <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#64748b", padding: "0.3rem 0.5rem 0.15rem", letterSpacing: 0.3 }}>
+                  📁 {g} <span style={{ color: "#94a3b8", fontWeight: 400 }}>{v.items.length}</span>
+                </div>
+                {v.items.map((t) => (
             <div
               key={t.id}
               onClick={() => setSelectedId(t.id)}
@@ -733,7 +787,10 @@ export default function WatchlistTool() {
                 </div>
               ) : null}
             </div>
-          ))}
+              ))}
+              </div>
+            ));
+          })()}
         </div>
 
         {/* 右：专题详情 */}
@@ -744,6 +801,29 @@ export default function WatchlistTool() {
             <div>
               {/* 标题 + 操作 */}
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.3rem" }}>
+                {/* 分组选择（已有分组 + 未分组；改后即存） */}
+                <select
+                  style={{ ...input, width: 126, fontSize: "0.8rem", padding: "0.38rem 0.5rem" }}
+                  value={topic.group || "未分组"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTopic({ ...topic, group: v === "未分组" ? undefined : v });
+                    void api.watchlistUpdate(topic.id, { group: v === "未分组" ? "" : v }).then((r) => { if (r.ok) { setTopic(r.topic); void refreshList(); } }).catch(() => {});
+                  }}
+                  title="专题分组（列表按此分组展示）"
+                >
+                  {(() => {
+                    const seen = new Set<string>();
+                    const groups: string[] = [];
+                    for (const t of topics) { const g = (t.group || "").trim(); if (g && !seen.has(g)) { seen.add(g); groups.push(g); } }
+                    return (
+                      <>
+                        {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+                        <option value="未分组">未分组</option>
+                      </>
+                    );
+                  })()}
+                </select>
                 <input
                   style={{ ...input, fontWeight: 700, fontSize: "1.05rem", flex: 1 }}
                   value={topic.name}
@@ -846,6 +926,10 @@ export default function WatchlistTool() {
                 const down = stockQs.filter((q) => q.pct! < 0).length;
                 const flat = stockQs.length - up - down;
                 const avg = stockQs.reduce((a, q) => a + (q.pct ?? 0), 0) / stockQs.length;
+                // 顺序加权平均（列表顺序=用户排序优先级）：线性权重 w_i = n - i（第 1 名权重最高），
+                // 无参数、可解释——越靠前的个股对专题加权表现贡献越大
+                const wSum = stockQs.reduce((a, _q, i) => a + (stockQs.length - i), 0);
+                const wAvg = stockQs.reduce((a, q, i) => a + (q.pct ?? 0) * (stockQs.length - i), 0) / wSum;
                 const latest = stockQs.reduce((a, q) => (q.ts && q.ts > a ? q.ts : a), "");
                 return (
                   <div style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem", padding: "0.45rem 0.7rem", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, fontSize: "0.82rem", color: "#0c4a6e" }}>
@@ -856,10 +940,41 @@ export default function WatchlistTool() {
                     <span>
                       平均 <b style={{ color: avg > 0 ? "#dc2626" : avg < 0 ? "#16a34a" : "#334155" }}>{avg > 0 ? "+" : ""}{avg.toFixed(2)}%</b>
                     </span>
+                    <span title="按列表顺序线性加权（权重 = 名次倒数），越靠前的个股贡献越大；体现用户排序优先级">
+                      顺序加权 <b style={{ color: wAvg > 0 ? "#dc2626" : wAvg < 0 ? "#16a34a" : "#334155" }}>{wAvg > 0 ? "+" : ""}{wAvg.toFixed(2)}%</b>
+                    </span>
                     {latest && <span style={{ color: "#94a3b8", fontSize: "0.72rem" }}>更新 {new Date(latest).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
+                    <button
+                      style={{ marginLeft: "auto", padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#7c3aed", color: "#fff", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer" }}
+                      onClick={() => void extendTopic()}
+                      disabled={extending}
+                      type="button"
+                      title="根据专题与已有个股，生成延续思路/扩展思考的 DeepSeek Chat 提示词"
+                    >
+                      {extending ? "生成中…" : "🧠 延续思考"}
+                    </button>
                   </div>
                 );
               })()}
+
+              {/* 延续思考提示词结果（生成后可复制 / 跳转 DeepSeek Chat） */}
+              {extendResult && (
+                <div style={{ marginBottom: "0.8rem", padding: "0.8rem 1rem", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+                    <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>🧠 延续思考提示词</span>
+                    <span style={{ flex: 1 }} />
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={copyExtendPrompt} type="button">
+                      {extendCopied ? "✅ 已复制" : "📋 复制"}
+                    </button>
+                    <button style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={openExtendChat} type="button">
+                      💬 去 DeepSeek Chat
+                    </button>
+                  </div>
+                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "0.82rem", lineHeight: 1.6, color: "#4c1d95", margin: 0, maxHeight: "40vh", overflowY: "auto" }}>
+                    {extendResult}
+                  </pre>
+                </div>
+              )}
 
               {/* 添加个股 */}
               <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.8rem" }}>
