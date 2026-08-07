@@ -15,6 +15,7 @@ import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
 import KnowledgeHubTool from "./tools/KnowledgeHubTool";
+import TradePlanTool from "./tools/TradePlanTool";
 import NewsCenterTool from "./tools/NewsCenterTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
@@ -34,6 +35,7 @@ const toolPages: Record<string, ComponentType> = {
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
+  "trade-plan": TradePlanTool,
   "knowledge-hub": KnowledgeHubTool,
   "news-center": NewsCenterTool,
 };
@@ -60,7 +62,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
-  { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist"] },
+  { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-plan"] },
   { label: "工具", toolIds: ["news-center", "deepseek-share", "zhihu-crawler", "books", "knowledge-hub"] },
 ];
 

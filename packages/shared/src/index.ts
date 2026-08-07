@@ -1656,3 +1656,135 @@ export interface ZhihuImportResult {
   instance?: string;
   message?: string;
 }
+
+
+// ============================================================
+// 交易规划（trade-plan）
+// ============================================================
+
+/** 交易标的风险配置（保护单标的不过度集中） */
+export interface TradePlanStockCfg {
+  code: string;
+  name?: string;
+  /** 单标的上限：占总仓位百分比（0~100，可选；不配则不受单标的上限约束） */
+  maxWeightPct?: number;
+}
+
+/** 起始持仓（用户初始仓位情况） */
+export interface TradePlanPosition {
+  code: string;
+  /** 持仓数量 */
+  shares: number;
+  /** 成本价 → 持仓市值 = shares × cost（近似） */
+  cost: number;
+}
+
+/** 交易策略配置 */
+export interface TradePlanConfig {
+  /** 总仓位（元）——策略总资金规模，保护仓位不失控 */
+  totalCapital: number;
+  /** 单日加仓上限（元）——当日所有加仓合计不得超过 */
+  dailyAddLimit: number;
+  /** 交易标的列表（策略限定的可交易标的） */
+  stocks: TradePlanStockCfg[];
+  /** 起始持仓情况 */
+  initialPositions: TradePlanPosition[];
+  updatedAt: string;
+}
+
+/** 日度计划条目 */
+export interface TradePlanItem {
+  code: string;
+  /** 加仓 / 减仓 */
+  action: "add" | "reduce";
+  /** 金额（元） */
+  amount: number;
+  note?: string;
+}
+
+/** 告警级别 */
+export type TradePlanAlertLevel = "error" | "warn" | "info";
+
+/** 单条校验结果 */
+export interface TradePlanAlert {
+  level: TradePlanAlertLevel;
+  message: string;
+  /** 关联标的代码（可选） */
+  code?: string;
+  /** 详细计算说明（可选） */
+  detail?: string;
+}
+
+/** 执行后单标的状态 */
+export interface TradePlanAfterPosition {
+  code: string;
+  name?: string;
+  shares: number;
+  avgCost: number;
+  /** 执行后市值（元） */
+  marketValue: number;
+  /** 占总仓位百分比 */
+  weightPct: number;
+  /** 本次加仓金额 */
+  addAmount: number;
+}
+
+/** 校验汇总 */
+export interface TradePlanCheckTotals {
+  /** 当日加仓合计（元） */
+  addTotal: number;
+  /** 执行后总市值（元） */
+  totalMarketValue: number;
+  /** 执行后总仓位占比 % */
+  positionPct: number;
+  /** 剩余可用仓位（元，totalCapital - totalMarketValue） */
+  remaining: number;
+}
+
+/** 日度计划校验结果 */
+export interface TradePlanCheckResult {
+  /** 是否全部通过（无 error 级告警） */
+  ok: boolean;
+  alerts: TradePlanAlert[];
+  after: TradePlanAfterPosition[];
+  totals: TradePlanCheckTotals;
+}
+
+/** 日度计划（含校验快照） */
+export interface TradePlanDay {
+  id: string;
+  date: string;
+  items: TradePlanItem[];
+  result: TradePlanCheckResult;
+  createdAt: string;
+}
+
+/** 配置保存/读取响应 */
+export interface TradePlanConfigResult {
+  ok: boolean;
+  config: TradePlanConfig;
+  message?: string;
+}
+
+/** 日度计划校验/创建响应 */
+export interface TradePlanCheckResponse {
+  ok: boolean;
+  result: TradePlanCheckResult;
+  /** 校验但未保存（check 接口）时为 true */
+  previewOnly?: boolean;
+  /** 已保存的计划（创建接口返回） */
+  day?: TradePlanDay;
+  message?: string;
+}
+
+/** 历史列表响应 */
+export interface TradePlanDayListResult {
+  ok: boolean;
+  days: TradePlanDay[];
+}
+
+/** 删除响应 */
+export interface TradePlanDeleteResult {
+  ok: boolean;
+  message?: string;
+}

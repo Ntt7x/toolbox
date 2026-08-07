@@ -32,6 +32,7 @@ import * as localDataFeature from "./features/localData/index.js";
 import * as zhihuCrawlerFeature from "./features/zhihuCrawler/index.js";
 import * as knowledgeHubFeature from "./features/knowledgeHub/index.js";
 import * as newsCenterFeature from "./features/newsCenter/index.js";
+import * as tradePlanFeature from "./features/tradePlan/index.js";
 import * as browserChatFeature from "./features/browserChat/index.js";
 
 const app = new Hono();
@@ -61,6 +62,7 @@ const tools: ToolMeta[] = [
   zhihuCrawlerFeature.meta,
   knowledgeHubFeature.meta,
   newsCenterFeature.meta,
+  tradePlanFeature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -90,6 +92,7 @@ agentSessionsFeature.register(app);
 localDataFeature.register(app);
 zhihuCrawlerFeature.register(app);
 browserChatFeature.register(app);
+tradePlanFeature.register(app);
 knowledgeHubFeature.register(app);
 // 新闻中心：注册东财源 + 路由
 newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);

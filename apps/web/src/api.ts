@@ -5,6 +5,11 @@
   type CbRateResponse,
   type FundSnapshot,
   type GridPlanRequest,
+  type TradePlanCheckResponse,
+  type TradePlanConfig,
+  type TradePlanDayListResult,
+  type TradePlanDeleteResult,
+  type TradePlanItem,
   type GridPlanResult,
   type GridPlanHistoryDeleteResult,
   type GridPlanHistoryDetailResult,
@@ -162,7 +167,21 @@ export const api = {
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
     /** DeepSeek Chat 自动填入（服务端 playwright 打开浏览器并填提示词；未登录会弹窗登录一次） */
-  chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
+  /** 交易规划：策略配置 */
+  tradePlanConfig: () =>
+    request<{ ok: boolean; config: TradePlanConfig }>("/tools/trade-plan/config"),
+  tradePlanSaveConfig: (config: TradePlanConfig) =>
+    request<{ ok: boolean; config: TradePlanConfig; message?: string }>("/tools/trade-plan/config", jsonInit("PUT", config)),
+  /** 交易规划：校验（preview）与日度计划 */
+  tradePlanCheck: (items: TradePlanItem[]) =>
+    request<TradePlanCheckResponse>("/tools/trade-plan/check", jsonInit("POST", { items })),
+  tradePlanCreateDay: (date: string, items: TradePlanItem[]) =>
+    request<TradePlanCheckResponse>("/tools/trade-plan/day", jsonInit("POST", { date, items })),
+  tradePlanDays: () =>
+    request<TradePlanDayListResult>("/tools/trade-plan/days"),
+  tradePlanDeleteDay: (id: string) =>
+    request<TradePlanDeleteResult>("/tools/trade-plan/day/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+    chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(
