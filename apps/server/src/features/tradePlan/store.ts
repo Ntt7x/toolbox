@@ -7,10 +7,11 @@ import {
   type TradePlanCheckResult,
   type TradePlanDay,
   type TradePlanItem,
+  type TradePlanPosition,
   type TradePlanStrategy,
   type TradePlanStrategySummary,
 } from "@toolbox/shared";
-import { kvGet, kvSet, kvDelete, kvCount, kvListRaw } from "../../core/kvStore.js";
+import { kvGet, kvSet, kvDelete, kvCount } from "../../core/kvStore.js";
 
 const STRATEGY_PREFIX = "tradePlan:strategy:";
 const STRATEGY_LIST = "tradePlan:strategies:list";
@@ -27,6 +28,8 @@ export function listStrategies(): TradePlanStrategySummary[] {
   for (const id of ids) {
     const st = kvGet<TradePlanStrategy>(STRATEGY_PREFIX + id);
     if (st && typeof st.name === "string") {
+      const positions = Array.isArray(st.positions) ? st.positions : [];
+      const totalMv = positions.reduce((a, p) => a + (p.quantity || 0) * (p.avgCost || 0), 0);
       out.push({
         id: st.id,
         name: st.name,
@@ -34,6 +37,7 @@ export function listStrategies(): TradePlanStrategySummary[] {
         dailyAddLimit: st.dailyAddLimit,
         stockCount: Array.isArray(st.stocks) ? st.stocks.length : 0,
         dayCount: kvCount(DAY_PREFIX + id + ":") > 0 ? listDayIds(id).length : 0,
+        positionPct: st.totalCapital > 0 ? Math.round((totalMv / st.totalCapital) * 1000) / 10 : 0,
         updatedAt: st.updatedAt,
       });
     }
@@ -43,7 +47,42 @@ export function listStrategies(): TradePlanStrategySummary[] {
 
 export function getStrategy(id: string): TradePlanStrategy | null {
   const st = kvGet<TradePlanStrategy>(STRATEGY_PREFIX + id);
-  return st && typeof st.name === "string" ? st : null;
+  if (!st || typeof st.name !== "string") return null;
+  // 兼容迁移：旧数据 stocks[].initShares/initCost → positions（幂等）
+  if (!Array.isArray(st.positions)) {
+    const migrated = migratePositions(st);
+    kvSet(STRATEGY_PREFIX + id, migrated);
+    return migrated;
+  }
+  return st;
+}
+
+/** 旧数据迁移：stocks[].initShares/initCost（或旧 initialPositions）→ positions，并清掉内联字段 */
+export function migratePositions(st: TradePlanStrategy): TradePlanStrategy {
+  const legacy = (st as unknown as { initialPositions?: TradePlanPosition[] }).initialPositions;
+  const positions: TradePlanPosition[] = Array.isArray(st.positions)
+    ? st.positions
+    : (legacy ?? []).map((p) => ({
+        code: p.code,
+        name: p.name,
+        quantity: (p as { shares?: number }).shares ?? p.quantity ?? 0,
+        avgCost: (p as { cost?: number }).cost ?? p.avgCost ?? 0,
+      }));
+  if (positions.length === 0 && Array.isArray(st.stocks)) {
+    for (const stk of st.stocks) {
+      const sc = stk as unknown as { initShares?: number; initCost?: number };
+      if (sc.initShares && sc.initCost) {
+        positions.push({ code: stk.code, name: stk.name, quantity: sc.initShares, avgCost: sc.initCost });
+      }
+    }
+  }
+  const cleanStocks = (Array.isArray(st.stocks) ? st.stocks : []).map((stk) => {
+    const s = { ...stk } as Record<string, unknown>;
+    delete s.initShares;
+    delete s.initCost;
+    return s as unknown as TradePlanStrategy["stocks"][number];
+  });
+  return { ...st, stocks: cleanStocks, positions };
 }
 
 /** 新建策略（默认空配置） */
@@ -55,7 +94,7 @@ export function createStrategy(name: string): TradePlanStrategy {
     totalCapital: 0,
     dailyAddLimit: 0,
     stocks: [],
-    initialPositions: [],
+    positions: [],
     updatedAt: now,
     createdAt: now,
   };
@@ -66,15 +105,24 @@ export function createStrategy(name: string): TradePlanStrategy {
   return st;
 }
 
-/** 更新策略（名称/配置） */
-export function updateStrategy(id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stocks?: TradePlanStrategy["stocks"]; initialPositions?: TradePlanStrategy["initialPositions"] }): TradePlanStrategy | null {
+/** 更新策略（名称/配置/当前仓位） */
+export function updateStrategy(
+  id: string,
+  patch: {
+    name?: string;
+    totalCapital?: number;
+    dailyAddLimit?: number;
+    stocks?: TradePlanStrategy["stocks"];
+    positions?: TradePlanStrategy["positions"];
+  },
+): TradePlanStrategy | null {
   const st = getStrategy(id);
   if (!st) return null;
   if (patch.name !== undefined && patch.name.trim()) st.name = patch.name.trim().slice(0, 30);
   if (patch.totalCapital !== undefined) st.totalCapital = patch.totalCapital;
   if (patch.dailyAddLimit !== undefined) st.dailyAddLimit = patch.dailyAddLimit;
   if (patch.stocks !== undefined) st.stocks = patch.stocks;
-  if (patch.initialPositions !== undefined) st.initialPositions = patch.initialPositions;
+  if (patch.positions !== undefined) st.positions = patch.positions;
   st.updatedAt = new Date().toISOString();
   kvSet(STRATEGY_PREFIX + id, st);
   return st;
@@ -84,7 +132,6 @@ export function updateStrategy(id: string, patch: { name?: string; totalCapital?
 export function deleteStrategy(id: string): boolean {
   if (!getStrategy(id)) return false;
   kvDelete(STRATEGY_PREFIX + id);
-  // 清理该策略全部日度计划
   for (const dayId of listDayIds(id)) kvDelete(DAY_PREFIX + id + ":" + dayId);
   kvDelete(DAY_LIST_PREFIX + id);
   const list = (kvGet<string[]>(STRATEGY_LIST) ?? []).filter((x) => x !== id);
@@ -108,7 +155,13 @@ export function listDays(strategyId: string): TradePlanDay[] {
 }
 
 /** 创建日度计划（含校验快照；同日再次创建覆盖） */
-export function createDay(strategyId: string, date: string, items: TradePlanItem[], result: TradePlanCheckResult): TradePlanDay | null {
+export function createDay(
+  strategyId: string,
+  date: string,
+  items: TradePlanItem[],
+  result: TradePlanCheckResult,
+  extra?: { applied?: boolean; before?: TradePlanPosition[]; after?: TradePlanPosition[]; appliedAt?: string },
+): TradePlanDay | null {
   if (!getStrategy(strategyId)) return null;
   const existing = listDays(strategyId).find((d) => d.date === date);
   if (existing) kvDelete(DAY_PREFIX + strategyId + ":" + existing.id);
@@ -118,6 +171,10 @@ export function createDay(strategyId: string, date: string, items: TradePlanItem
     date,
     items,
     result,
+    applied: extra?.applied ?? false,
+    ...(extra?.before ? { before: extra.before } : {}),
+    ...(extra?.after ? { after: extra.after } : {}),
+    ...(extra?.appliedAt ? { appliedAt: extra.appliedAt } : {}),
     createdAt: new Date().toISOString(),
   };
   kvSet(DAY_PREFIX + strategyId + ":" + day.id, day);
@@ -130,7 +187,8 @@ export function createDay(strategyId: string, date: string, items: TradePlanItem
 /** 删除日度计划 */
 export function deleteDay(strategyId: string, dayId: string): boolean {
   const key = DAY_PREFIX + strategyId + ":" + dayId;
-  if (!kvGet<TradePlanDay>(key)) return false;
+  const day = kvGet<TradePlanDay>(key);
+  if (!day) return false;
   kvDelete(key);
   const list = listDayIds(strategyId).filter((x) => x !== dayId);
   kvSet(DAY_LIST_PREFIX + strategyId, list);
@@ -144,14 +202,14 @@ function genId(): string {
 // 兼容：旧单配置键（tradePlan:config）迁移为默认策略「默认策略」
 export function migrateLegacyConfig(): void {
   if (kvGet<string[]>(STRATEGY_LIST)?.length) return; // 已有策略
-  const legacy = kvGet<{ totalCapital?: number; dailyAddLimit?: number; stocks?: TradePlanStrategy["stocks"]; initialPositions?: TradePlanStrategy["initialPositions"] }>("tradePlan:config");
+  const legacy = kvGet<{ totalCapital?: number; dailyAddLimit?: number; stocks?: TradePlanStrategy["stocks"]; positions?: TradePlanPosition[] }>("tradePlan:config");
   if (legacy && typeof legacy.totalCapital === "number") {
     const st = createStrategy("默认策略");
     updateStrategy(st.id, {
       totalCapital: legacy.totalCapital,
       dailyAddLimit: legacy.dailyAddLimit,
       stocks: legacy.stocks,
-      initialPositions: legacy.initialPositions,
+      positions: legacy.positions,
     });
     kvDelete("tradePlan:config");
   }

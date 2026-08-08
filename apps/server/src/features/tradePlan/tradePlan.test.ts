@@ -1,27 +1,26 @@
-// 交易规划校验计算单测
+// 交易规划校验计算单测（v2：positions 语义 + applyItems 应用/回滚）
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkTradePlan } from "./compute.js";
-import type { TradePlanConfig } from "@toolbox/shared";
+import { applyItems, checkTradePlan } from "./compute.js";
+import type { TradePlanCheckConfig } from "./compute.js";
 
-const cfg: TradePlanConfig = {
+const cfg: TradePlanCheckConfig = {
   totalCapital: 100000,
   dailyAddLimit: 20000,
   stocks: [
     { code: "600519", name: "贵州茅台", maxWeightPct: 40 },
     { code: "300750", name: "宁德时代", maxWeightPct: 30 },
   ],
-  initialPositions: [{ code: "600519", shares: 20, cost: 1400 }], // 市值 28000
-  updatedAt: "",
+  positions: [{ code: "600519", name: "贵州茅台", quantity: 20, avgCost: 1400 }], // 市值 28000
 };
 
 test("合规计划：加仓在日限内、不超总仓位与标的上限 → ok", () => {
   const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 5000 }]);
   assert.equal(r.ok, true);
   assert.equal(r.totals.addTotal, 5000);
-  assert.equal(r.totals.positionPct, 33); // (28000+5000)/100000 = 33%
+  assert.ok(Math.abs(r.totals.positionPct - 33) < 0.5); // (28000+5000)/100000 ≈ 33%（股数四舍五入允许微小误差）
   const m = r.after.find((p) => p.code === "600519")!;
-  assert.equal(m.marketValue, 33000);
+  assert.ok(Math.abs(m.marketValue - 33000) < 10); // 股数四舍五入允许微小误差
   assert.equal(m.addAmount, 5000);
 });
 
@@ -67,4 +66,29 @@ test("告警按级别排序：error 在前", () => {
     { code: "600519", action: "add", amount: 10000 },
   ]);
   assert.equal(r.alerts[0].level, "error");
+});
+
+test("applyItems：加仓重算均价、减仓只减数量成本不变", () => {
+  const after = applyItems(cfg.positions, [
+    { code: "600519", action: "add", amount: 5600 }, // 20×1400=28000 → +5600=33600，数量=24，均价=33600/24=1400
+    { code: "300750", action: "reduce", amount: 1000 }, // 无持仓减仓 → 保持
+  ]);
+  const m = after.find((p) => p.code === "600519")!;
+  assert.equal(m.quantity, 24);
+  assert.equal(m.avgCost, 1400);
+});
+
+test("applyItems：加仓改变均价（非整数股数）", () => {
+  const after = applyItems([{ code: "600519", quantity: 10, avgCost: 1000 }], [{ code: "600519", action: "add", amount: 1000 }]);
+  const m = after.find((p) => p.code === "600519")!;
+  // 数量 10 → 11，均价 = (10×1000+1000)/11 = 11000/11 = 1000
+  assert.equal(m.quantity, 11);
+  assert.equal(m.avgCost, 1000);
+});
+
+test("applyItems：减仓不改变均价", () => {
+  const after = applyItems([{ code: "600519", quantity: 100, avgCost: 1200 }], [{ code: "600519", action: "reduce", amount: 12000 }]);
+  const m = after.find((p) => p.code === "600519")!;
+  assert.equal(m.quantity, 90); // 减 10 股
+  assert.equal(m.avgCost, 1200);
 });

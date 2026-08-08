@@ -1,13 +1,21 @@
 // ============================================================
 // 业务模块：交易规划（features/tradePlan）
-// 多策略：每策略独立配置（总仓位/交易标的/单日加仓上限/起始持仓）+ 日度计划。
+// 多策略：每策略独立配置（总仓位/交易标的/单日加仓上限）+ 当前仓位（positions）。
+// 日度计划保存即「应用」：自动按计划更新当前仓位（同日覆盖先回滚再重应用）。
 // 校验日度交易计划是否符合策略配置与仓位控制，给出提醒与告警（纯程序，无 LLM）。
 // ============================================================
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { API_PREFIX, type ToolMeta, type TradePlanCheckResult, type TradePlanItem } from "@toolbox/shared";
+import {
+  API_PREFIX,
+  type ToolMeta,
+  type TradePlanCheckResult,
+  type TradePlanItem,
+  type TradePlanPosition,
+  type TradePlanStockCfg,
+} from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
-import { checkTradePlan } from "./compute.js";
+import { applyItems, checkTradePlan } from "./compute.js";
 import {
   createDay,
   createStrategy,
@@ -31,7 +39,7 @@ registerDataSource({
 export const meta: ToolMeta = {
   id: "trade-plan",
   name: "策略仓位管理",
-  description: "多策略配置（总仓位/标的/单日加仓上限/起始持仓），校验日度交易计划是否符合仓位控制，给出提醒与告警",
+  description: "多策略配置（总仓位/标的/单日加仓上限）+ 当前仓位管理，校验并应用日度交易计划，给出提醒与告警",
   path: "/tools/trade-plan",
 };
 
@@ -79,7 +87,7 @@ export function register(app: Hono): void {
       totalCapital?: unknown;
       dailyAddLimit?: unknown;
       stocks?: unknown;
-      initialPositions?: unknown;
+      positions?: unknown;
     } | null;
     if (!raw || typeof raw !== "object") return c.json({ ok: false, message: "请求体无效" }, 400);
     if (typeof raw.name === "string" && raw.name.trim() && raw.name.trim() !== cur.name) {
@@ -92,13 +100,13 @@ export function register(app: Hono): void {
     if (totalCapital === undefined && raw.totalCapital !== undefined) return c.json({ ok: false, message: "总仓位必须为非负数值" }, 400);
     if (dailyAddLimit === undefined && raw.dailyAddLimit !== undefined) return c.json({ ok: false, message: "单日加仓上限必须为非负数值" }, 400);
     const stocks = raw.stocks !== undefined ? parseStocks(raw.stocks) : undefined;
-    const initialPositions = raw.initialPositions !== undefined ? parsePositions(raw.initialPositions) : undefined;
+    const positions = raw.positions !== undefined ? parsePositions(raw.positions) : undefined;
     const st = updateStrategy(id, {
       name: typeof raw.name === "string" ? raw.name : undefined,
       totalCapital,
       dailyAddLimit,
       stocks,
-      initialPositions,
+      positions,
     });
     return c.json({ ok: true, strategy: st });
   });
@@ -123,7 +131,7 @@ export function register(app: Hono): void {
     return c.json({ ok: result.ok, result, previewOnly: true });
   });
 
-  // 创建日度计划（自动校验并保存）
+  // 创建日度计划（校验 → 保存 → 自动应用更新当前仓位；同日覆盖先回滚再重应用）
   app.post(`${API_PREFIX}/tools/trade-plan/strategies/:id/day`, async (c: Context) => {
     const st = getStrategy(c.req.param("id")!);
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
@@ -131,13 +139,25 @@ export function register(app: Hono): void {
     const date = typeof raw?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : todayStr();
     const items = parseItems(raw?.items);
     if (!items || items.length === 0) return c.json({ ok: false, message: "计划条目无效（需至少一条）" }, 400);
-    const result = checkTradePlan(st, items);
-    // 5. 违反策略仓位管理（有 error 级告警）→ 拒绝保存
+
+    // 同日已应用 → 先用该日 before 快照回滚仓位，保证同日重复保存幂等
+    const existing = listDays(st.id).find((d) => d.date === date);
+    let positions = st.positions ?? [];
+    if (existing?.applied && Array.isArray(existing.before)) {
+      positions = existing.before;
+    }
+    const checkConfig = { ...st, positions };
+    const result = checkTradePlan(checkConfig, items);
+    // 违反策略仓位管理（有 error 级告警）→ 拒绝保存
     if (!result.ok) {
       return c.json({ ok: false, message: "计划违反策略仓位管理，无法保存", result, rejectReason: result.alerts.find((a) => a.level === "error")?.message }, 400);
     }
-    const day = createDay(st.id, date, items, result);
-    return c.json({ ok: true, result, day });
+    const before = positions;
+    const after = applyItems(before, items);
+    const now = new Date().toISOString();
+    const day = createDay(st.id, date, items, result, { applied: true, before, after, appliedAt: now });
+    updateStrategy(st.id, { positions: after }); // 自动更新当前仓位
+    return c.json({ ok: true, result, day, strategy: getStrategy(st.id) });
   });
 
   // 历史列表
@@ -167,39 +187,45 @@ export function register(app: Hono): void {
     return c.json({ ok: true, month, days });
   });
 
-  // 删除日度计划
+  // 删除日度计划（已应用的自动回滚当前仓位）
   app.delete(`${API_PREFIX}/tools/trade-plan/strategies/:id/day/:dayId`, (c: Context) => {
     const id = c.req.param("id");
     const dayId = c.req.param("dayId");
-    if (!id || !dayId || !deleteDay(id, dayId)) return c.json({ ok: false, message: "计划不存在" }, 404);
+    if (!id || !dayId) return c.json({ ok: false, message: "计划不存在" }, 404);
+    const st = getStrategy(id);
+    const day = listDays(id).find((d) => d.id === dayId);
+    if (!st || !day) return c.json({ ok: false, message: "计划不存在" }, 404);
+    if (day.applied && Array.isArray(day.before)) {
+      updateStrategy(id, { positions: day.before }); // 回滚到应用前仓位
+    }
+    deleteDay(id, dayId);
     return c.json({ ok: true });
   });
 }
 
 // ---------- 解析 ----------
 
-function parseStocks(raw: unknown): { code: string; name?: string; maxWeightPct?: number; initShares?: number; initCost?: number }[] {
+function parseStocks(raw: unknown): TradePlanStockCfg[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((x): x is { code?: unknown; name?: unknown; maxWeightPct?: unknown; initShares?: unknown; initCost?: unknown } => typeof x === "object" && x !== null)
+    .filter((x): x is { code?: unknown; name?: unknown; maxWeightPct?: unknown } => typeof x === "object" && x !== null)
     .map((x) => ({
       code: String(x.code ?? "").trim(),
       ...(typeof x.name === "string" && x.name.trim() ? { name: x.name.trim() } : {}),
       ...(num(x.maxWeightPct) !== undefined && num(x.maxWeightPct)! > 0 && num(x.maxWeightPct)! <= 100 ? { maxWeightPct: num(x.maxWeightPct) } : {}),
-      ...(num(x.initShares) !== undefined && num(x.initShares)! > 0 ? { initShares: num(x.initShares) } : {}),
-      ...(num(x.initCost) !== undefined && num(x.initCost)! > 0 ? { initCost: num(x.initCost) } : {}),
     }))
     .filter((x) => x.code);
 }
 
-function parsePositions(raw: unknown): { code: string; shares: number; cost: number }[] {
+function parsePositions(raw: unknown): TradePlanPosition[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((x): x is { code?: unknown; shares?: unknown; cost?: unknown } => typeof x === "object" && x !== null)
+    .filter((x): x is { code?: unknown; name?: unknown; quantity?: unknown; avgCost?: unknown } => typeof x === "object" && x !== null)
     .map((x) => ({
       code: String(x.code ?? "").trim(),
-      shares: num(x.shares) ?? 0,
-      cost: num(x.cost) ?? 0,
+      ...(typeof x.name === "string" && x.name.trim() ? { name: x.name.trim() } : {}),
+      quantity: num(x.quantity) ?? 0,
+      avgCost: num(x.avgCost) ?? 0,
     }))
     .filter((x) => x.code);
 }

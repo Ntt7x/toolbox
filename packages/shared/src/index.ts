@@ -1275,6 +1275,8 @@ export interface WatchlistSummary {
   /** 分组名（缺省未分组；列表按此分组展示） */
   group?: string;
   stockCount: number;
+  /** 当前仓位占比 %（总市值/总仓位，未配置时缺省） */
+  positionPct?: number;
   updatedAt: string;
 }
 
@@ -1668,22 +1670,18 @@ export interface TradePlanStockCfg {
   name?: string;
   /** 单标的上限：占总仓位百分比（0~100，可选；不配则不受单标的上限约束） */
   maxWeightPct?: number;
-  /** 起始持仓数量（可选；与 initCost 配合计算初始市值） */
-  initShares?: number;
-  /** 起始持仓成本价（可选；市值 = initShares × initCost） */
-  initCost?: number;
 }
 
-/** 起始持仓（用户初始仓位情况） */
+/** 当前仓位（拆分自配置：仓位现状独立管理，由日度计划应用后自动更新） */
 export interface TradePlanPosition {
   code: string;
-  /** 持仓数量 */
-  shares: number;
-  /** 成本价 → 持仓市值 = shares × cost（近似） */
-  cost: number;
+  name?: string;
+  /** 当前持仓数量 */
+  quantity: number;
+  /** 成本价 → 持仓市值 = quantity × avgCost */
+  avgCost: number;
 }
 
-/** 交易策略配置 */
 export interface TradePlanConfig {
   /** 总仓位（元）——策略总资金规模，保护仓位不失控 */
   totalCapital: number;
@@ -1691,12 +1689,11 @@ export interface TradePlanConfig {
   dailyAddLimit: number;
   /** 交易标的列表（策略限定的可交易标的） */
   stocks: TradePlanStockCfg[];
-  /** 起始持仓情况 */
-  initialPositions: TradePlanPosition[];
+  /** 当前仓位（拆分自配置） */
+  positions: TradePlanPosition[];
   updatedAt: string;
 }
 
-/** 交易策略（多策略：每策略独立配置与日度计划） */
 export interface TradePlanStrategy {
   id: string;
   /** 策略名称（如「稳健成长」） */
@@ -1707,13 +1704,12 @@ export interface TradePlanStrategy {
   dailyAddLimit: number;
   /** 交易标的列表 */
   stocks: TradePlanStockCfg[];
-  /** 起始持仓情况 */
-  initialPositions: TradePlanPosition[];
+  /** 当前仓位（与配置拆分：独立管理，由日度计划应用后自动更新） */
+  positions: TradePlanPosition[];
   updatedAt: string;
   createdAt: string;
 }
 
-/** 策略摘要（列表展示） */
 export interface TradePlanStrategySummary {
   id: string;
   name: string;
@@ -1721,6 +1717,8 @@ export interface TradePlanStrategySummary {
   dailyAddLimit: number;
   stockCount: number;
   dayCount: number;
+  /** 当前仓位占比 %（总市值/总仓位） */
+  positionPct?: number;
   updatedAt: string;
 }
 
@@ -1808,7 +1806,14 @@ export interface TradePlanDay {
   date: string;
   items: TradePlanItem[];
   result: TradePlanCheckResult;
+  /** 是否已应用（应用 = 已按本计划自动更新当前仓位） */
+  applied: boolean;
+  /** 应用前的仓位快照（同日覆盖时用于回滚） */
+  before?: TradePlanPosition[];
+  /** 应用后的仓位 */
+  after?: TradePlanPosition[];
   createdAt: string;
+  appliedAt?: string;
 }
 
 /** 配置保存/读取响应 */
@@ -1826,6 +1831,8 @@ export interface TradePlanCheckResponse {
   previewOnly?: boolean;
   /** 已保存的计划（创建接口返回） */
   day?: TradePlanDay;
+  /** 应用后最新策略（含已更新的当前仓位） */
+  strategy?: TradePlanStrategy;
   message?: string;
 }
 

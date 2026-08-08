@@ -6,28 +6,63 @@
 //  3. 加仓后单标的市场值 ≤ 标的上限（maxWeightPct × 总仓位，若配置）
 //  4. 加仓后总市值 ≤ 总仓位
 //  5. 减仓金额 ≤ 该标的当前持仓市值
-//  6. 输出执行后各标的仓位预览（市值/权重/成本）
+//  6. 同 code 同日多操作 → 合并为一个交易操作
+// 当前仓位来自 strategy.positions（拆分自配置），应用计划后由 applyItems 自动更新。
 // ============================================================
 import {
   type TradePlanAlert,
   type TradePlanAfterPosition,
   type TradePlanCheckResult,
-  type TradePlanConfig,
   type TradePlanItem,
+  type TradePlanPosition,
 } from "@toolbox/shared";
 
 const CNY = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
 
-/** 计算某标的当前持仓市值（优先标的行内联 initShares×initCost；兼容旧 initialPositions） */
-function currentValue(config: TradePlanConfig, code: string): number {
-  const st = config.stocks.find((x) => x.code === code);
-  if (st && st.initShares && st.initCost) return st.initShares * st.initCost;
-  const p = config.initialPositions.find((x) => x.code === code);
-  if (!p) return 0;
-  return p.shares * p.cost;
+export interface TradePlanCheckConfig {
+  totalCapital: number;
+  dailyAddLimit: number;
+  /** 交易标的列表 */
+  stocks: { code: string; name?: string; maxWeightPct?: number }[];
+  /** 当前仓位（数量 × 成本价） */
+  positions: TradePlanPosition[];
 }
 
-export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]): TradePlanCheckResult {
+/** 某标的当前持仓市值（数量 × 成本价） */
+function currentValue(config: TradePlanCheckConfig, code: string): number {
+  const p = config.positions.find((x) => x.code === code);
+  if (!p) return 0;
+  return (p.quantity || 0) * (p.avgCost || 0);
+}
+
+/** 应用日度计划 → 更新后的仓位（纯函数；加仓重算均价，减仓只减数量成本不变） */
+export function applyItems(positions: TradePlanPosition[], items: TradePlanItem[]): TradePlanPosition[] {
+  const out = positions.map((p) => ({ ...p, quantity: p.quantity || 0, avgCost: p.avgCost || 0 }));
+  const byCode = new Map(items.map((it) => [it.code, it]));
+  for (const [code, it] of byCode) {
+    const pos = out.find((p) => p.code === code);
+    if (!pos) {
+      if (it.action === "add" && it.amount > 0) {
+        out.push({ code, quantity: 0, avgCost: 0 }); // 成本未知 → 数量无法换算，保持 0
+      }
+      continue;
+    }
+    if (it.action === "add" && pos.avgCost > 0) {
+      const qty = pos.quantity + it.amount / pos.avgCost;
+      pos.avgCost = (pos.quantity * pos.avgCost + it.amount) / qty;
+      pos.quantity = Math.round(qty * 100) / 100;
+    } else if (it.action === "add") {
+      pos.quantity += it.amount; // 无成本（avgCost=0）时按金额累加数量，保持近似
+    } else if (it.action === "reduce" && pos.avgCost > 0) {
+      pos.quantity = Math.max(0, Math.round((pos.quantity - it.amount / pos.avgCost) * 100) / 100);
+    } else if (it.action === "reduce") {
+      pos.quantity = Math.max(0, pos.quantity - it.amount);
+    }
+  }
+  return out;
+}
+
+export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanItem[]): TradePlanCheckResult {
   const alerts: TradePlanAlert[] = [];
   const totalCapital = config.totalCapital || 0;
   const dailyAddLimit = config.dailyAddLimit || 0;
@@ -78,58 +113,52 @@ export function checkTradePlan(config: TradePlanConfig, items: TradePlanItem[]):
     });
   }
 
-  // 执行后仓位计算
+  // 执行后仓位计算（用 applyItems 得到一致的 after 表）
+  const afterPositions = applyItems(config.positions, items);
   const after: TradePlanAfterPosition[] = [];
-  for (const stock of config.stocks) {
-    const code = stock.code;
-    const v = byCode.get(code) ?? { add: 0, reduce: 0 };
-    const cur = currentValue(config, code);
-    if (cur === 0 && v.add === 0 && v.reduce === 0) continue; // 未持仓且本次无操作 → 不展示
-    let marketValue = cur + v.add - v.reduce;
+  const seenCodes = new Set<string>();
+  for (const pos of afterPositions) {
+    const stock = config.stocks.find((s) => s.code === pos.code);
+    const v = byCode.get(pos.code) ?? { add: 0, reduce: 0 };
+    const cur = currentValue(config, pos.code);
+    const marketValue = (pos.quantity || 0) * (pos.avgCost || 0);
 
     // 5. 减仓超持仓校验
     if (v.reduce > cur) {
       alerts.push({
         level: "error",
-        code,
-        message: `减仓金额超过 ${code} 当前持仓`,
+        code: pos.code,
+        message: `减仓金额超过 ${pos.code} 当前持仓`,
         detail: `当前持仓市值 ${CNY(cur)}，减仓 ${CNY(v.reduce)}，超出 ${CNY(v.reduce - cur)}；建议减仓不超过 ${CNY(cur)}`,
       });
-      marketValue = Math.max(0, marketValue);
     }
 
     const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
 
     // 3. 单标的上限
-    if (stock.maxWeightPct !== undefined && totalCapital > 0) {
+    if (stock?.maxWeightPct !== undefined && totalCapital > 0) {
       const limit = (stock.maxWeightPct / 100) * totalCapital;
       if (marketValue > limit) {
         alerts.push({
           level: "warn",
-          code,
-          message: `${stock.name || code} 执行后市值超过标的上限`,
+          code: pos.code,
+          message: `${stock.name || pos.code} 执行后市值超过标的上限`,
           detail: `执行后市值 ${CNY(marketValue)} > 标的上限 ${CNY(limit)}（总仓位的 ${stock.maxWeightPct}%），超出 ${CNY(marketValue - limit)}`,
         });
       }
     }
 
-    // 成本：优先标的行内联（initShares×initCost），兼容旧 initialPositions
-    const st0 = config.stocks.find((x) => x.code === code);
-    const pos = config.initialPositions.find((x) => x.code === code);
-    const avgCost = st0?.initCost || pos?.cost || 0;
-    const shares = avgCost > 0 ? Math.round(marketValue / avgCost) : 0;
-
-    after.push({ code, name: stock.name, shares, avgCost, marketValue, weightPct, addAmount: v.add });
+    seenCodes.add(pos.code);
+    if (cur === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
+    after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount: v.add });
   }
 
-  // 未在配置列表但计划中出现的标的（前面已告警，此处也补展示）
+  // 计划中出现但无仓位记录的标的（applyItems 已补空仓位；非法标的另行告警）
   for (const [code, v] of byCode) {
-    if (!config.stocks.some((s) => s.code === code)) {
-      const cur = currentValue(config, code);
-      const marketValue = Math.max(0, cur + v.add - v.reduce);
-      const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
-      after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add });
-    }
+    if (seenCodes.has(code)) continue;
+    const marketValue = Math.max(0, currentValue(config, code) + v.add - v.reduce);
+    const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
+    after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add });
   }
   after.sort((a, b) => b.marketValue - a.marketValue);
 
