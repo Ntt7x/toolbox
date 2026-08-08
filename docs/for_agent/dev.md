@@ -312,6 +312,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 标的搜索补全：复用 `watchlistSearchStock`；StockCodeInput 输入框内显示「名称 代码」（有名称时），用户手动输入自动清空名称（视为更换标的）——**只显示代码可读性差（备忘录教训）**
 - 类表单校验依赖：判定已配置用「存在有 code 的标的行」而非 `totalCapital !== undefined`（数字默认 0 恒非 undefined，曾导致提示永不出现）
 - 页面级冒烟：TradePlanTool 曾出现卡加载中（mount useEffect 被重构误删，curl 测 API 测不出）——凡改页面加载逻辑必须跑 `node scripts/smoke-pages.mjs`
+- **v2（2026-08-08）配置/当前仓位拆分**：`strategy.stocks` 只存标的与上限%（配置），`strategy.positions`（当前数量 quantity + 成本价 avgCost）独立管理——不再用「起始数量」概念；旧数据 getStrategy 时幂等迁移（initShares→positions，清内联字段）
+- 日度计划「保存即应用」：保存自动按计划更新 positions（加仓重算均价、减仓只减数量成本不变——`applyItems` 纯函数）；**同日覆盖**先按该日 `before` 快照回滚再重应用（幂等）；**删除已应用计划**自动回滚仓位——一致性由 before/after 快照保证
+- 大改前端组件慎用 node -e 字符串替换（CRLF/中文/反引号反复踩坑）——**直接 write_file 全量重写整个组件文件**更可靠
 
 ## 5. 外部数据源经验
 
