@@ -182,29 +182,24 @@ export default function TradePlanTool() {
     stocks[i] = { ...stocks[i], ...patch };
     setStrategy({ ...strategy, stocks });
   };
-  const setPosAt = (i: number, patch: Partial<{ code: string; name?: string; quantity: number; avgCost: number }>) => {
+  /** 按 code 更新当前仓位（标的行内联编辑用；不存在则补一条） */
+  const setPosByCode = (code: string, patch: Partial<{ quantity: number; avgCost: number }>) => {
     if (!strategy) return;
     const positions = strategy.positions.slice();
-    positions[i] = { ...positions[i], ...patch };
+    const idx = positions.findIndex((p) => p.code === code);
+    if (idx >= 0) positions[idx] = { ...positions[idx], ...patch };
+    else if (code) positions.push({ code, quantity: patch.quantity ?? 0, avgCost: patch.avgCost ?? 0 });
     setStrategy({ ...strategy, positions });
   };
-  /** 保存当前仓位（独立保存） */
-  const savePositions = async () => {
+  /** 移除标的（同步删除对应当前仓位） */
+  const removeStockAt = (i: number) => {
     if (!strategy) return;
-    const badPos = strategy.positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
-    if (badPos) {
-      setMsg(`❌ 标的 ${badPos.code} 当前数量为 ${badPos.quantity}，成本价必填`);
-      return;
-    }
-    try {
-      const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
-      if (r.ok && r.strategy) setStrategy(r.strategy);
-      savedCfgRef.current = JSON.stringify(r.strategy ?? strategy);
-      setMsg("✅ 当前仓位已保存");
-      await loadStrategies();
-    } catch (e) {
-      setMsg("❌ " + errMsg(e));
-    }
+    const code = strategy.stocks[i]?.code;
+    setStrategy({
+      ...strategy,
+      stocks: strategy.stocks.filter((_, j) => j !== i),
+      positions: code ? strategy.positions.filter((p) => p.code !== code) : strategy.positions,
+    });
   };
   const setItemAt = (i: number, patch: Partial<TradePlanItem>) => {
     const next = items.slice();
@@ -406,15 +401,19 @@ export default function TradePlanTool() {
                       </label>
                     </div>
 
-                    <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的（搜索补全；上限% 可选）</div>
+                    <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的与当前仓位（上限% 为配置；当前数量/成本价为仓位现状）</div>
                     {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，添加后限定可交易范围</div>}
-                    {strategy.stocks.map((s, i) => (
+                    {strategy.stocks.map((s, i) => {
+                      const pos = strategy.positions.find((p) => p.code === s.code);
+                      const mv = (pos?.quantity || 0) * (pos?.avgCost || 0);
+                      const pct = strategy.totalCapital > 0 ? ((mv / strategy.totalCapital) * 100).toFixed(1) : "—";
+                      return (
                       <div key={i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "0.5rem 0.6rem", marginBottom: "0.45rem", background: "#fafbfc" }}>
                         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.4rem" }}>
                           <StockCodeInput
                             code={s.code}
                             name={s.name}
-                            onPick={(code, name) => setStockAt(i, { code, name: name ?? s.name })}
+                            onPick={(code, name) => { setStockAt(i, { code, name: name ?? s.name }); setPosByCode(code, { quantity: pos?.quantity ?? 0, avgCost: pos?.avgCost ?? 0 }); }}
                             onChange={(code) => setStockAt(i, { code, name: undefined })}
                           />
                           {s.name && (
@@ -423,7 +422,7 @@ export default function TradePlanTool() {
                             </span>
                           )}
                           <span style={{ flex: 1 }} />
-                          <button style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: st.stocks.filter((_, j) => j !== i) } : st))} title="移除标的" type="button">✕</button>
+                          <button style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }} onClick={() => removeStockAt(i)} title="移除标的（同步删除当前仓位）" type="button">✕</button>
                         </div>
                         <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
@@ -441,62 +440,28 @@ export default function TradePlanTool() {
                             <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem", borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#dc2626" : "#cbd5e1" }} type="text" inputMode="numeric" value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: numInput(e.target.value) })} placeholder="--" />
                             %
                           </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                            当前数量
+                            <input style={{ ...input, width: 100, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="0" value={pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : ""} onChange={(e) => setPosByCode(s.code, { quantity: numInput(e.target.value) })} title="当前持仓数量（非零时成本价必填）" />
+                          </label>
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                            成本价
+                            <input style={{ ...input, width: 90, padding: "0.3rem 0.45rem" }} type="text" inputMode="decimal" placeholder="0.00" value={pos?.avgCost ? pos.avgCost.toFixed(2) : ""} onChange={(e) => setPosByCode(s.code, { avgCost: Number(stripLeadZeros(e.target.value)) || 0 })} />
+                          </label>
+                          {mv > 0 && (
+                            <span style={{ fontSize: "0.74rem", color: "#475569" }}>
+                              市值 {cny(mv)} · 占比 {pct}%
+                            </span>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: [...st.stocks, { code: "" }] } : st))} type="button">＋ 添加标的</button>
 
                     {!isDirty && <div style={{ color: "#94a3b8", fontSize: "0.76rem", marginTop: "0.4rem" }}>保存配置后日度计划才能按此策略校验</div>}
                   </>
                 )}
-              </div>
-
-              {/* 当前仓位（独立于配置管理） */}
-              <div style={card}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>📊 当前仓位</span>
-                  <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>独立于配置管理；保存日度计划后按计划自动更新</span>
-                  <span style={{ flex: 1 }} />
-                  <button style={btn} onClick={() => void savePositions()} type="button">💾 保存当前仓位</button>
-                </div>
-                {strategy.positions.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem", marginBottom: "0.4rem" }}>暂无持仓，可手动录入当前数量与成本价（数量非空时成本价必填）</div>}
-                {strategy.positions.length > 0 && (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-                    <thead>
-                      <tr>
-                        {["标的", "当前数量", "成本价", "持仓市值", "占比"].map((h) => (
-                          <th key={h} style={{ textAlign: "left", color: "#64748b", borderBottom: "1px solid #e2e8f0", padding: "0.3rem 0.4rem" }}>{h}</th>
-                        ))}
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {strategy.positions.map((pos, pi) => {
-                        const mv = (pos.quantity || 0) * (pos.avgCost || 0);
-                        const pct = strategy.totalCapital > 0 ? ((mv / strategy.totalCapital) * 100).toFixed(1) : "—";
-                        return (
-                          <tr key={pi}>
-                            <td style={{ padding: "0.3rem 0.4rem" }}>
-                              <input style={{ ...input, width: 150, padding: "0.3rem 0.45rem" }} placeholder="代码 / 名称" value={pos.code} onChange={(e) => setPosAt(pi, { code: e.target.value, name: undefined })} />
-                            </td>
-                            <td style={{ padding: "0.3rem 0.4rem" }}>
-                              <input style={{ ...input, width: 120, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="数量" value={pos.quantity > 0 ? pos.quantity.toLocaleString("zh-CN") : ""} onChange={(e) => setPosAt(pi, { quantity: numInput(e.target.value) })} />
-                            </td>
-                            <td style={{ padding: "0.3rem 0.4rem" }}>
-                              <input style={{ ...input, width: 110, padding: "0.3rem 0.45rem" }} type="text" inputMode="decimal" placeholder="成本价" value={pos.avgCost > 0 ? pos.avgCost.toFixed(2) : ""} onChange={(e) => setPosAt(pi, { avgCost: Number(stripLeadZeros(e.target.value)) || 0 })} />
-                            </td>
-                            <td style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>{mv > 0 ? cny(mv) : "—"}</td>
-                            <td style={{ padding: "0.3rem 0.4rem" }}>{pct}%</td>
-                            <td style={{ padding: "0.3rem 0.4rem" }}>
-                              <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} onClick={() => setStrategy((st) => (st ? { ...st, positions: st.positions.filter((_, j) => j !== pi) } : st))} type="button">✕</button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem", marginTop: "0.4rem" }} onClick={() => setStrategy((st) => (st ? { ...st, positions: [...st.positions, { code: "", quantity: 0, avgCost: 0 }] } : st))} type="button">＋ 添加持仓</button>
               </div>
 
               {/* 日度交易计划 */}
