@@ -179,23 +179,28 @@ export default function WatchlistTool() {
 
   /** 根据财报分析优化入选理由（LLM；成功后更新专题内该股理由） */
   const [optimizingCode, setOptimizingCode] = useState<string | null>(null);
+  const [optNotice, setOptNotice] = useState<{ code: string; text: string; ok: boolean | null } | null>(null); // 非侵入提示
   const optimizeReasonForStock = async (stock: WatchlistStock | undefined) => {
     if (!topic || !stock) return;
     if (optimizingCode) return; // 串行保护：一次只跑一个优化
     setOptimizingCode(stock.code);
     setErr(null);
+    setOptNotice({ code: stock.code, text: "正在根据财报分析优化理由…", ok: null });
     try {
       const r = await api.watchlistOptimizeReason(topic.id, stock.code, stock.reason);
       if (r.ok && r.topic) {
         setTopic(r.topic);
         await refreshList();
+        setOptNotice({ code: stock.code, text: "✅ 理由已优化", ok: true });
       } else {
-        setErr(r.message ?? "优化失败");
+        setOptNotice({ code: stock.code, text: "❌ " + (r.message ?? "优化失败"), ok: false });
       }
     } catch (e) {
-      setErr(errMsg(e));
+      setOptNotice({ code: stock.code, text: "❌ " + errMsg(e), ok: false });
     } finally {
       setOptimizingCode(null);
+      // 3s 后自动消失（非侵入）
+      setTimeout(() => setOptNotice((n) => (n?.code === stock.code ? null : n)), 3000);
     }
   };
 
@@ -1196,7 +1201,13 @@ export default function WatchlistTool() {
                           <div style={{ color: "#1d4ed8", fontSize: "0.72rem", lineHeight: 1.2, textDecoration: "underline" }}>{s.code} ↗</div>
                         </a>
                       </td>
-                      <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}</td>
+                      <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason}
+                        {optNotice?.code === s.code && (
+                          <div style={{ marginTop: "0.25rem", fontSize: "0.72rem", color: optNotice.ok === false ? "#b91c1c" : optNotice.ok ? "#15803d" : "#64748b" }}>
+                            {optNotice.text}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ ...thTd, fontSize: "0.75rem", textAlign: "left", whiteSpace: "nowrap" }}>
                         {q?.ok ? (
                           s.kind === "fund" ? (

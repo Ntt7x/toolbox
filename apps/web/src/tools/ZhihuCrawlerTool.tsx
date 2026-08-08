@@ -77,6 +77,16 @@ function ResultItems({
   );
 }
 
+/** 可读化知乎目标（URL → @句柄；裸句柄原样返回） */
+const humanTarget = (t: string): string => {
+  if (!t) return "";
+  const m = t.match(/zhihu\.com\/(?:people|org|company|zvideo)\/([\w-]+)/);
+  if (m) return "@" + m[1];
+  const u = t.match(/zhihu\.com\/[\w-]+$/);
+  if (u) return t.split("/").filter(Boolean).pop() ?? t;
+  return t;
+};
+
 export default function ZhihuCrawlerTool() {
   const [cookie, setCookie] = useState("");
   const [cookieOk, setCookieOk] = useState(false);
@@ -556,8 +566,8 @@ export default function ZhihuCrawlerTool() {
                 <Fragment key={h.id}>
                 <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={{ padding: "0.4rem 0.5rem" }}>
-                    <b>{h.name || h.target}</b>
-                    <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.5rem" }}>{h.target}</span>
+                    <b>{h.name || humanTarget(h.target)}</b>
+                    {h.name ? <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.5rem" }}>{humanTarget(h.target)}</span> : null}
                   </td>
                   <td style={{ padding: "0.4rem 0.5rem", color: "#64748b" }}>{h.total} 条</td>
                   <td style={{ padding: "0.4rem 0.5rem", color: "#94a3b8", fontSize: "0.72rem" }}>{new Date(h.ts).toLocaleString()}</td>

@@ -81,6 +81,9 @@ export default function TradePlanTool() {
   const [calView, setCalView] = useState(false);
   const [allCalOpen, setAllCalOpen] = useState(false);
   const [cfgCollapsed, setCfgCollapsed] = useState(false); // 配置卡折叠
+  const [editingIdx, setEditingIdx] = useState<number | null>(null); // 编辑中的标的行
+  const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("none"); // 标的列表按市值排序
+  const [newStock, setNewStock] = useState<{ code: string; name?: string; maxWeightPct?: number }>({ code: "" });
   const savedCfgRef = useRef<string>(""); // 最近保存的配置快照（未保存离开提醒）
 
   const loadStrategies = useCallback(async () => {
@@ -201,6 +204,33 @@ export default function TradePlanTool() {
       positions: code ? strategy.positions.filter((p) => p.code !== code) : strategy.positions,
     });
   };
+  /** 新增标的（插入列表第一个） */
+  const addNewStock = () => {
+    if (!strategy || !newStock.code.trim()) return;
+    const code = newStock.code.trim();
+    setStrategy({
+      ...strategy,
+      stocks: [
+        { code, name: newStock.name, ...(newStock.maxWeightPct && newStock.maxWeightPct > 0 ? { maxWeightPct: newStock.maxWeightPct } : {}) },
+        ...strategy.stocks,
+      ],
+    });
+    setNewStock({ code: "" });
+  };
+  /** 某标的当前市值 */
+  const mvOf = (code: string) => {
+    const pos = strategy?.positions.find((p) => p.code === code);
+    return (pos?.quantity || 0) * (pos?.avgCost || 0);
+  };
+  /** 展示用标的列表（排序视图仅影响展示；编辑/删除在排序视图下禁用） */
+  const viewStocks = useMemo(() => {
+    if (!strategy || sortMode === "none") return strategy?.stocks ?? [];
+    return [...strategy.stocks].sort((a, b) => {
+      const d = mvOf(b.code) - mvOf(a.code);
+      return sortMode === "desc" ? d : -d;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy, sortMode]);
   const setItemAt = (i: number, patch: Partial<TradePlanItem>) => {
     const next = items.slice();
     next[i] = { ...next[i], ...patch };
@@ -401,63 +431,72 @@ export default function TradePlanTool() {
                       </label>
                     </div>
 
-                    <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的与当前仓位（上限% 为配置；当前数量/成本价为仓位现状）</div>
-                    {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，添加后限定可交易范围</div>}
-                    {strategy.stocks.map((s, i) => {
+                    <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的与当前仓位（点击 ✏️ 编辑行；新增在下方区域完成）</div>
+                    {/* 排序切换 + 新增区 */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem", padding: "0.5rem 0.6rem", background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 8 }}>
+                      <span style={{ fontSize: "0.8rem", color: "#475569", fontWeight: 600, flexShrink: 0 }}>＋ 新增标的</span>
+                      <StockCodeInput
+                        code={newStock.code}
+                        name={newStock.name}
+                        onPick={(code, name) => setNewStock({ code, name })}
+                        onChange={(code) => setNewStock({ code, name: undefined })}
+                      />
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b", flexShrink: 0 }}>
+                        上限
+                        <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="%" value={newStock.maxWeightPct ?? ""} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: numInput(e.target.value) || undefined }))} />
+                      </label>
+                      <button style={{ ...btn, padding: "0.35rem 0.8rem", fontSize: "0.8rem" }} onClick={addNewStock} disabled={!newStock.code.trim()} type="button">添加</button>
+                      <span style={{ flex: 1 }} />
+                      <span style={{ fontSize: "0.78rem", color: "#64748b", flexShrink: 0 }}>按市值排序：</span>
+                      {([["none", "默认"], ["desc", "↓ 高→低"], ["asc", "↑ 低→高"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" onClick={() => setSortMode(v)} style={{ padding: "0.2rem 0.55rem", borderRadius: 6, border: "none", fontSize: "0.74rem", cursor: "pointer", background: sortMode === v ? "#2563eb" : "#e2e8f0", color: sortMode === v ? "#fff" : "#475569" }}>{l}</button>
+                      ))}
+                    </div>
+                    {strategy.stocks.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "0.35rem" }}>暂无标的，用上方新增区添加</div>}
+                    {viewStocks.map((s, i) => {
                       const pos = strategy.positions.find((p) => p.code === s.code);
                       const mv = (pos?.quantity || 0) * (pos?.avgCost || 0);
                       const pct = strategy.totalCapital > 0 ? ((mv / strategy.totalCapital) * 100).toFixed(1) : "—";
+                      const isEdit = editingIdx === i;
+                      const readonly = sortMode !== "none";
                       return (
-                      <div key={i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "0.5rem 0.6rem", marginBottom: "0.45rem", background: "#fafbfc" }}>
-                        <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.4rem" }}>
-                          <StockCodeInput
-                            code={s.code}
-                            name={s.name}
-                            onPick={(code, name) => { setStockAt(i, { code, name: name ?? s.name }); setPosByCode(code, { quantity: pos?.quantity ?? 0, avgCost: pos?.avgCost ?? 0 }); }}
-                            onChange={(code) => setStockAt(i, { code, name: undefined })}
-                          />
-                          {s.name && (
-                            <span style={{ flexShrink: 0, background: "var(--primary-soft)", color: "var(--primary)", fontSize: "0.74rem", fontWeight: 600, padding: "0.2rem 0.45rem", borderRadius: 6 }}>
-                              {s.name}
+                      <div key={s.code + "-" + i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "0.45rem 0.6rem", marginBottom: "0.4rem", background: isEdit ? "#f0f7ff" : "#fafbfc", borderColor: isEdit ? "#93c5fd" : "#eef2f7" }}>
+                        <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.25rem" }}>
+                          <span style={{ fontWeight: 600, fontSize: "0.85rem", color: "#1e293b" }}>{s.name ? s.name + " " + s.code : s.code}</span>
+                          {mv > 0 && (
+                            <span style={{ fontSize: "0.74rem", color: "#475569", background: "#eef2f7", padding: "0.1rem 0.4rem", borderRadius: 6 }}>
+                              {cny(mv)} · {pct}%
                             </span>
                           )}
                           <span style={{ flex: 1 }} />
-                          <button style={{ ...btn, background: "#ef4444", padding: "0.3rem 0.6rem" }} onClick={() => removeStockAt(i)} title="移除标的（同步删除当前仓位）" type="button">✕</button>
+                          <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => setEditingIdx(isEdit ? null : i)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
+                          <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再删除" : "移除标的（同步删除当前仓位）"} onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockAt(i); }} type="button">✕</button>
                         </div>
-                        <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
-                            单标的上限
-                            <input
-                              type="range"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={s.maxWeightPct ?? 0}
-                              onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })}
-                              style={{ width: 90, accentColor: "#2563eb" }}
-                              title="单标的上限（占总仓位百分比）"
-                            />
-                            <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem", borderColor: s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100) ? "#dc2626" : "#cbd5e1" }} type="text" inputMode="numeric" value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: numInput(e.target.value) })} placeholder="--" />
-                            %
-                          </label>
-                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
-                            当前数量
-                            <input style={{ ...input, width: 100, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="0" value={pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : ""} onChange={(e) => setPosByCode(s.code, { quantity: numInput(e.target.value) })} title="当前持仓数量（非零时成本价必填）" />
-                          </label>
-                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
-                            成本价
-                            <input style={{ ...input, width: 90, padding: "0.3rem 0.45rem" }} type="text" inputMode="decimal" placeholder="0.00" value={pos?.avgCost ? pos.avgCost.toFixed(2) : ""} onChange={(e) => setPosByCode(s.code, { avgCost: Number(stripLeadZeros(e.target.value)) || 0 })} />
-                          </label>
-                          {mv > 0 && (
-                            <span style={{ fontSize: "0.74rem", color: "#475569" }}>
-                              市值 {cny(mv)} · 占比 {pct}%
-                            </span>
-                          )}
-                        </div>
+                        {isEdit ? (
+                          <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.3rem" }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                              单标的上限
+                              <input type="range" min={0} max={100} step={1} value={s.maxWeightPct ?? 0} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} style={{ width: 80, accentColor: "#2563eb" }} />
+                              <input style={{ ...input, width: 50, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: numInput(e.target.value) })} placeholder="--" />%
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                              当前数量
+                              <input style={{ ...input, width: 95, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="0" value={pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : ""} onChange={(e) => setPosByCode(s.code, { quantity: numInput(e.target.value) })} />
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
+                              成本价
+                              <input style={{ ...input, width: 85, padding: "0.3rem 0.45rem" }} type="text" inputMode="decimal" placeholder="0.00" value={pos?.avgCost ? pos.avgCost.toFixed(2) : ""} onChange={(e) => setPosByCode(s.code, { avgCost: Number(stripLeadZeros(e.target.value)) || 0 })} />
+                            </label>
+                            <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>数量非零时成本价必填</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: "0.74rem", color: "#64748b" }}>
+                            单标的上限 {s.maxWeightPct !== undefined ? s.maxWeightPct + "%" : "未设"} · 当前数量 {pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : "0"} · 成本价 {pos?.avgCost ? pos.avgCost.toFixed(2) : "—"}
+                          </div>
+                        )}
                       </div>
                       );
                     })}
-                    <button style={{ ...btnGhost, padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => setStrategy((st) => (st ? { ...st, stocks: [...st.stocks, { code: "" }] } : st))} type="button">＋ 添加标的</button>
 
                     {!isDirty && <div style={{ color: "#94a3b8", fontSize: "0.76rem", marginTop: "0.4rem" }}>保存配置后日度计划才能按此策略校验</div>}
                   </>
