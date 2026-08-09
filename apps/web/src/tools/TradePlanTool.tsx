@@ -369,7 +369,7 @@ export default function TradePlanTool() {
               <div
                 key={s.id}
                 onClick={() => { if (cfgUnsaved() && !confirm("策略配置有改动尚未保存，确定切换？")) return; setSelectedId(s.id); }}
-                className={cn("mb-1.5 flex cursor-pointer items-center gap-1.5 rounded-lg border-[1.5px] px-2.5 py-2", selectedId === s.id ? "border-blue-500 bg-blue-50" : "border-slate-200 bg-white")}
+                className={cn("mb-1.5 flex cursor-pointer items-center gap-1.5 rounded-lg border-[1.5px] px-2.5 py-2", selectedId === s.id ? "border-blue-600 bg-blue-50" : "border-slate-200 bg-white")}
               >
                 <div className="min-w-0 flex-1">
                   <div className={cn("text-[0.9rem] font-bold", selectedId === s.id ? "text-blue-600" : "text-slate-800")}>{s.name}</div>
@@ -682,7 +682,7 @@ function MonthCalendar({ days, selected, onSelect }: { days: TradePlanDay[]; sel
               onClick={() => onSelect(ds)}
               className={cn(
                 "relative rounded-lg py-1.5 text-[0.84rem] font-medium",
-                isSel ? "border-[1.5px] border-blue-500 bg-blue-50 text-blue-600" : "border-[1.5px] border-transparent",
+                isSel ? "border-[1.5px] border-blue-600 bg-blue-50 text-blue-600" : "border-[1.5px] border-transparent",
                 day ? (day.result.ok ? "bg-emerald-50" : "bg-red-50") : "bg-white",
               )}
               title={day ? `${ds}：${day.items.map((it) => `${it.code} ${it.action === "add" ? "加" : "减"}${it.amount}`).join("；")}` : ds}
@@ -769,7 +769,7 @@ function AllCalendar() {
               onClick={() => setSelected(ds)}
               className={cn(
                 "relative rounded-lg py-1.5 text-[0.84rem] font-medium",
-                isSel ? "border-[1.5px] border-blue-500 bg-blue-50 text-blue-600" : "border-[1.5px] border-transparent",
+                isSel ? "border-[1.5px] border-blue-600 bg-blue-50 text-blue-600" : "border-[1.5px] border-transparent",
                 day ? (hasErr ? "bg-red-50" : "bg-emerald-50") : "bg-white",
               )}
               title={day ? `${ds}：${day.strategies.map((s) => `${s.name} ${s.items.length}项`).join("；")}` : ds}
