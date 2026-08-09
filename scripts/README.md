@@ -14,10 +14,13 @@
 scripts/
 ├── README.md        ← 本文件（唯一文档：思想 + 工具表 + 规范 + 归档）
 └── dev-utils/       所有可复用脚本
-    ├── dev.mjs               开发进程管理器（supervisor）
-    ├── proc.mjs              进程诊断/清理 CLI
-    ├── smoke-pages.mjs       页面冒烟（17 页）
-    ├── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs
+    ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
+    ├── proc.mjs              进程诊断/清理 CLI（status/list/kill/kill-port）
+    ├── smoke-pages.mjs       页面冒烟（17 页；--page <路径> 定向单页）
+    ├── test.mjs              模块单测快捷（自动定位测试文件 / 全量串行）
+    ├── commit.mjs            git 提交包装（消息引号安全，自动 add+commit）
+    ├── api-cli.mjs           API CLI（GET/POST/PUT/DELETE + JSON body）
+    └── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs / self-test.mjs
 ```
 
 ## 2. 工具速查表
@@ -40,14 +43,10 @@ scripts/
 | `self-test.mjs` | **工具自测**（patch.mjs 逻辑回归；工具改动后必跑） | `node scripts/dev-utils/self-test.mjs` |
 | `browser-probe.mjs` | 浏览器探针：launch 系统 Chrome + 选择器存在/可见/文本/aria 属性 | `node scripts/dev-utils/browser-probe.mjs <url> --check "textarea:主输入框"` |
 
-## 3. 使用规范（与 dev.md §4.8 一致）
+## 3. 使用规范
 
-1. **所有辅助脚本一律放 `scripts/dev-utils/`**，禁止根目录散放 `tmp_*.mjs`
-2. **第 2 次出现相似需求 → 先查 §4 归档表，没有就用现成工具，缺能力在 dev-utils/ 内固化**（不是又写 tmp）
-3. 一次性调试脚本 → `dev-utils/_tmp_*.mjs` 跑完即删
-4. 大段文件替换禁止 `node -e`（cmd 引号/中文/反引号地狱）→ 用 `patch.mjs`
-5. 服务端校验改完 → 重启 server + `api.mjs`/`e2e.mjs` 打 400/200 断言（dev.md §4.7）
-6. 页面大改 → `smoke-pages.mjs`；进程异常 → 先 `proc.mjs status/list` 再动手
+**强制规则以 dev.md §4.8 为准（唯一来源）**，这里只列 README 特有提醒：
+- 工具表/归档表是"第 2 次需求先查表"的查表入口；新增工具记得同步 §1 目录树 + §2 工具表（§8.1 同步义务）
 
 ## 4. 历史临时脚本归档（出现过的需求 → 去向）
 
