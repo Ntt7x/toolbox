@@ -1,17 +1,15 @@
 // ============================================================
-// 开发进程管理器 v2（scripts/dev.mjs）——统一管理 server(tsx watch) + web(vite)
+// 开发进程管理器 v2（scripts/dev-utils/dev.mjs）——统一管理 server(tsx watch) + web(vite)
 // 用法：
-//   node scripts/dev.mjs start   启动（后台常驻 supervisor；先清端口残留再拉起）
-//   node scripts/dev.mjs stop    停止（写 stop 标记 + 杀进程树 + 清端口）
-//   node scripts/dev.mjs restart 重启
-//   node scripts/dev.mjs status  端口占用与进程状态
-//   node scripts/dev.mjs kill-port <8787|5173|all>  按端口强杀（确认 node）
+//   node scripts/dev-utils/dev.mjs start   启动（后台常驻 supervisor；先清端口残留再拉起）
+//   node scripts/dev-utils/dev.mjs stop    停止（写 stop 标记 + 杀进程树 + 清端口）
+//   node scripts/dev-utils/dev.mjs restart 重启（先杀旧 supervisor 防多实例打架）
+//   node scripts/dev-utils/dev.mjs status  端口占用、supervisor 与进程状态
+//   node scripts/dev-utils/dev.mjs kill-port <8787|5173|all>  按端口强杀（确认 node）
 // 可靠性设计（v2）：
 //   - 常驻 supervisor 用 setInterval 每 5s 健康检查：server/web 进程死了且端口空闲 → 自动拉起
-//     （不依赖 exit 事件——taskkill /T 级联强杀等场景也能自愈；spawn 后 15s 宽限期防竞态）
-//   - start 前清端口残留（netstat 找 PID → tasklist 确认 node → taskkill /T /F）
-//   - stop 写 .file/dev.stop 标记，supervisor 见到后不再拉起并自行退出
-//   - 子进程日志写 .file/dev-logs/*.log（父退出不 EPIPE）
+//   - start/restart 前单实例防重：读 .file/dev.pids.json，发现旧 supervisor 存活 → 终止
+//   - 进程诊断/清理（查残留）用 scripts/dev-utils/proc.mjs
 // ============================================================
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -174,7 +172,8 @@ switch (cmd) {
     log("supervisor 运行中（每 5s 健康检查）");
     break;
   case "stop":
-    stopAll();
+    killOldSupervisor(); // 杀旧 supervisor 进程树（级联杀其 tsx/vite 子进程）
+    stopAll(); // 写 STOP_FLAG + 清端口（双保险）
     try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
     break;
   case "restart":

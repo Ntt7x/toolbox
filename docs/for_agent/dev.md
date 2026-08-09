@@ -339,7 +339,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 **scripts/ 目录结构（全部集中，根目录不放脚本）**：
 ```
 scripts/
-├── README.md                    总入口说明
+├── README.md                    总入口说明（scripts/ 根只放入口，脚本全在 dev-utils/）
 └── dev-utils/
     ├── dev.mjs                   开发进程管理器（supervisor：start/stop/restart/status/kill-port）
     ├── proc.mjs                  进程诊断/清理 CLI（status/list/kill/kill-port；查残留 supervisor/tsx）

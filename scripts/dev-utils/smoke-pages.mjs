@@ -1,9 +1,9 @@
 // ============================================================
-// 页面冒烟自测（scripts/smoke-pages.mjs）
+// 页面冒烟自测（scripts/dev-utils/smoke-pages.mjs）
 // 用 playwright-core + 本机 Chrome 打开全部前端页面，验证：
 //   - 页面能渲染（无 JS 崩溃）
 //   - 关键 API 请求全部成功（无 404/500/挂起）
-// 用法：node scripts/smoke-pages.mjs（需前端 dev 5173 + 服务端 8787 在运行）
+// 用法：node scripts/dev-utils/smoke-pages.mjs（需前端 dev 5173 + 服务端 8787 在运行）
 // 历史教训：TradePlanTool 曾因挂载 useEffect 被误删导致列表卡"加载中"（API 请求根本不发出），
 // 此类问题只能靠浏览器级冒烟发现——每次页面大改后跑一次本脚本。
 // ============================================================
