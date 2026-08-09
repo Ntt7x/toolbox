@@ -58,6 +58,7 @@ for (let i = 0; i < patches.length; i++) {
   const want = typeof p.count === "number" ? p.count : 1;
   // 尝试 find 原样 + CRLF 版
   const tryFind = content.includes(p.find) ? p.find : content.includes(p.find.replace(/\n/g, "\r\n")) ? p.find.replace(/\n/g, "\r\n") : p.find;
+  const crlfMode = tryFind !== p.find; // 匹配到 CRLF 版 → 替换文本也转 CRLF，避免混合换行
   const found = content.split(tryFind).length - 1;
   if (want === 0) {
     // count=0：仅确认存在（≥1 处）不替换
@@ -74,7 +75,7 @@ for (let i = 0; i < patches.length; i++) {
     allOk = false;
     continue;
   }
-  content = content.replace(tryFind, p.replace);
+  content = content.replace(tryFind, crlfMode ? p.replace.replace(/\n/g, "\r\n") : p.replace);
   contents.set(file, content); // 累积更新
   console.log(`  [${i + 1}] ✅ ${file}：替换 ${found} 处`);
 }

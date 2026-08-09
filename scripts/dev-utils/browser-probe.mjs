@@ -9,7 +9,9 @@
 // 输出：URL / title / 各选择器状态。注意：可能弹出真实 Chrome（headful）。
 // ============================================================
 import { chromium } from "playwright-core";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const CHROME_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -38,7 +40,10 @@ if (!exe) {
   process.exit(1);
 }
 
-const ctx = await chromium.launchPersistentContext(profile || `probe-${Date.now()}`, {
+// 未指定 profile 时用系统临时目录，结束时删除（避免残留）
+const ownProfile = !profile;
+const profileDir = profile || path.join(tmpdir(), `browser-probe-${Date.now()}`);
+const ctx = await chromium.launchPersistentContext(profileDir, {
   executablePath: exe,
   headless: false,
   args: ["--no-first-run", "--disable-blink-features=AutomationControlled"],
@@ -62,7 +67,12 @@ try {
     else console.log(`check ${sel} (${desc || ""}): ${info.visible ? "可见" : "不可见"} | ${info.text ? "文本: " + info.text : ""}${info.ariaChecked ? " | aria-checked=" + info.ariaChecked : ""}${info.ariaPressed ? " | aria-pressed=" + info.ariaPressed : ""}`);
   }
   if (screenshot) await page.screenshot({ path: screenshot, fullPage: false });
-  console.log("完成（窗口保持打开，可手动操作查看）");
+  console.log("完成（窗口保持打开，可手动操作查看；Ctrl+C 或关闭窗口后临时 profile 自动清理）");
 } finally {
-  // 不关闭窗口（诊断需要人工观察）；进程退出时由用户关闭或下次启动复用 profile
+  // 保持窗口不关（诊断需要人工观察）；进程退出时清理临时 profile
+  if (ownProfile) {
+    const cleanup = () => { try { rmSync(profileDir, { recursive: true, force: true }); } catch { /* ignore */ } };
+    process.once("exit", cleanup);
+    process.once("SIGINT", () => { cleanup(); process.exit(0); });
+  }
 }

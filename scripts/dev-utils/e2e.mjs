@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 export async function e2e(suiteName, cases) {
   let pass = 0;
   const ctx = {};
+  globalThis.__e2eCtx = ctx; // 用例内也可直接读 __e2eCtx（不强制接参）
   console.log(`═══ ${suiteName} ═══`);
   for (const c of cases) {
     try {
