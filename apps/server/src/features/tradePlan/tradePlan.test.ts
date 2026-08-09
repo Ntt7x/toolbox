@@ -150,3 +150,22 @@ test("rebasePositions：新增 code 直接加入基线", () => {
   ]);
   assert.equal(nb.find((x) => x.code === "C")?.quantity, 10);
 });
+
+test("applyItems：负数成本合法（融资/做空场景）", () => {
+  // 初始 0 股；加仓 100 股成本 -1.5 → 均价 -1.5
+  const pos = applyItems([], [{ code: "A", action: "add", amount: 100, cost: -1.5 }]);
+  assert.equal(pos.find((x) => x.code === "A")?.quantity, 100);
+  assert.equal(pos.find((x) => x.code === "A")?.avgCost, -1.5);
+});
+
+test("checkTradePlan：负成本参与金额换算（单日上限按 数量×成本 计算）", () => {
+  const cfg = {
+    id: "t", name: "t", totalCapital: 100000, dailyAddLimit: 10000,
+    stocks: [{ code: "A", maxWeightPct: 100 }],
+    positions: [{ code: "A", quantity: 100, avgCost: -1.5 }],
+  };
+  const r = checkTradePlan(cfg, [{ code: "A", action: "add", amount: 100, cost: -2 }]);
+  // 加仓金额 = 100 × (-2) = -200（负成本 → 负金额，不超上限）
+  assert.ok(r.totals.addTotal === -200, `addTotal 应 -200，实际 ${r.totals.addTotal}`);
+  assert.equal(r.ok, true); // 无 error（负数成本合法）
+});

@@ -1721,6 +1721,8 @@ export interface TradePlanStrategySummary {
   dayCount: number;
   /** 当前仓位占比 %（总市值/总仓位） */
   positionPct?: number;
+  /** 盈亏汇总（列表接口附：最新价市值/浮动盈亏；负成本标的不参与盈亏统计） */
+  pnl?: TradePlanPnl;
   updatedAt: string;
 }
 
@@ -1735,6 +1737,31 @@ export interface TradePlanStrategyResult {
   ok: boolean;
   strategy?: TradePlanStrategy;
   message?: string;
+  /** 盈亏汇总（仅详情接口 GET /strategies/:id 附行情计算） */
+  pnl?: TradePlanPnl;
+}
+
+/** 单标的盈亏（详情接口附行情计算；最新价 vs 成本价） */
+export interface TradePlanPnlByCode {
+  latestPrice?: number;
+  pnl?: number;
+  /** 盈亏率（%）；负成本时无意义为 undefined */
+  pnlPct?: number;
+  /** 成本为负（已回本）：盈亏无法计算 */
+  costNegative?: boolean;
+}
+
+/** 策略详情盈亏汇总（新增字段，不污染持久化 strategy） */
+export interface TradePlanPnl {
+  byCode: Record<string, TradePlanPnlByCode>;
+  totalPnl: number;
+  totalCost: number;
+  /** 最新价总市值（负成本标的一样计入） */
+  totalMv: number;
+  /** 负成本标的数量（盈亏不参与统计） */
+  negCount: number;
+  /** 总盈亏率（%）；无正成本持仓时为 undefined */
+  totalPnlPct?: number;
 }
 
 /** 删除策略响应（含其日度计划） */

@@ -316,6 +316,7 @@ export default function ZhihuCrawlerTool() {
               }
             }}
             disabled={authBusy}
+            className="btn btn-primary"
             style={{ padding: "0.4rem 1rem" }}
           >
             {authBusy ? "授权中…（请在弹窗内登录）" : "🖥 浏览器登录授权"}
@@ -327,6 +328,7 @@ export default function ZhihuCrawlerTool() {
               setCookieOk(r.configured);
               alert(r.configured ? "Cookie 已保存" : "保存失败");
             }}
+            className="btn"
             style={{ padding: "0.4rem 1rem" }}
           >
             保存 Cookie
@@ -355,7 +357,7 @@ export default function ZhihuCrawlerTool() {
             placeholder="知乎链接或用户主页：支持 用户/问题/回答/文章/想法 链接，或粘贴包含知乎链接的文本（自动提取）"
             style={{ flex: 1, padding: "0.5rem 0.8rem", fontSize: "0.85rem", borderRadius: 8, border: "1px solid #cbd5e1" }}
           />
-          <button onClick={handleVerify} style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}>
+          <button onClick={handleVerify} className="btn" style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}>
             识别目标
           </button>
           <button
@@ -366,6 +368,7 @@ export default function ZhihuCrawlerTool() {
               setFavorites(r.favorites);
               alert("已收藏目标");
             }}
+            className="btn"
             style={{ padding: "0.5rem 1rem", whiteSpace: "nowrap" }}
             title="收藏此爬取目标"
           >
@@ -480,12 +483,13 @@ export default function ZhihuCrawlerTool() {
           <button
             onClick={handleStart}
             disabled={!target.trim() || types.length === 0 || task.running}
+            className="btn btn-primary"
             style={{ padding: "0.5rem 1.4rem", fontSize: "0.9rem" }}
           >
             {task.running ? "抓取中…" : "🚀 开始抓取"}
           </button>
           {task.running && (
-            <button onClick={() => task.cancel()} style={{ marginLeft: "0.6rem", padding: "0.5rem 1rem" }}>
+            <button onClick={() => task.cancel()} className="btn btn-danger" style={{ marginLeft: "0.6rem", padding: "0.5rem 1rem" }}>
               停止
             </button>
           )}
@@ -608,6 +612,7 @@ export default function ZhihuCrawlerTool() {
                           setViewItems(null);
                         }
                       }}
+                      className="btn btn-danger btn-sm"
                       style={{ fontSize: "0.72rem", padding: "0.2rem 0.6rem" }}
                     >
                       删除

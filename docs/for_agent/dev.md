@@ -448,8 +448,15 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 2. 出现第 2 次相似脚本需求 → 先查 README §2 工具表 + §4 归档表 → 有现成直接用；缺能力在 dev-utils/ 固化（不是又写 tmp）
 3. 一次性调试脚本 → dev-utils/_tmp_*.mjs 跑完即删，严禁提交
 4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§7.3 教训）
+   **强化（2026-08-10 教训）**：手写替换脚本也禁止用 JS 模板字符串拼 old/new（含 `${}`/反引号/中文时匹配必失败——
+   本次 _tmp_feat.mjs 因此整脚本未写入）。含这类字符的替换**一律 patch.mjs（patch.json 驱动，纯 JSON 无转义问题）**；
+   手写脚本只用普通字符串 `'...'` + `\n` 拼接
 5. 服务端单测/全量单测用 test.mjs；提交用 commit.mjs（消息引号安全）；API 验证用 api-cli.mjs；工具改动后必跑 self-test.mjs
 6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§6.7）
+7. **CLI/安装命令前台直接跑**（2026-08-10 教训）：npx/pnpm 等交互或长输出命令不要 `node -e execSync(...)` 吞输出——
+   init 卡在交互确认但 execSync 返回 0 = 假成功。前台跑看真实输出/退出码
+8. **临时替换脚本 writeFileSync 放最后**（原子性，2026-08-10 惯例固化）：所有匹配断言通过后才写盘，
+   任一步失败 exit(1) 不污染文件（本次 _tmp_feat.mjs 靠此避免半写入）
 
 **同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §6.8 与工具实际一致（§8.1）。
 

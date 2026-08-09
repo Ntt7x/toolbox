@@ -13,9 +13,11 @@ import {
   type TradePlanItem,
   type TradePlanPosition,
   type TradePlanStockCfg,
+  type TradePlanStrategy,
 } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { applyItems, checkTradePlan } from "./compute.js";
+import { getQuoteSnapshot } from "../../core/quote.js";
 import {
   createDay,
   createStrategy,
@@ -45,9 +47,9 @@ export const meta: ToolMeta = {
   path: "/tools/trade-plan",
 };
 
-function num(v: unknown): number | undefined {
+function num(v: unknown, allowNeg = false): number | undefined {
   const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
+  return Number.isFinite(n) && (allowNeg || n >= 0) ? n : undefined;
 }
 
 export function register(app: Hono): void {
@@ -55,16 +57,62 @@ export function register(app: Hono): void {
 
   // ---------- 策略 ----------
 
-  // 策略列表
-  app.get(`${API_PREFIX}/tools/trade-plan/strategies`, (c: Context) => {
-    return c.json({ ok: true, strategies: listStrategies() });
+  // 策略列表（附盈亏：最新价市值/浮动盈亏/盈亏率，负成本合法）
+  app.get(`${API_PREFIX}/tools/trade-plan/strategies`, async (c: Context) => {
+    const list = listStrategies();
+    const out = await Promise.all(
+      list.map(async (s) => {
+        const full = getStrategy(s.id);
+        return { ...s, pnl: full ? await attachPnl(full) : null };
+      }),
+    );
+    return c.json({ ok: true, strategies: out });
   });
 
-  // 单策略详情
-  app.get(`${API_PREFIX}/tools/trade-plan/strategies/:id`, (c: Context) => {
+  // 策略详情附盈亏：最新价 vs 成本价（负成本合法，盈亏率用成本绝对值）；行情走 KV 缓存，失败静默跳过
+  async function attachPnl(st: TradePlanStrategy) {
+    const byCode: Record<string, { latestPrice?: number; pnl?: number; pnlPct?: number; costNegative?: boolean }> = {};
+    let totalPnl = 0;
+    let totalCost = 0;
+    let totalMv = 0;
+    let negCount = 0;
+    for (const p of st.positions) {
+      if ((p.quantity || 0) <= 0 || typeof p.avgCost !== "number" || isNaN(p.avgCost)) continue;
+      const costValue = p.quantity * p.avgCost;
+      try {
+        const q = await getQuoteSnapshot(p.code, {});
+        if (q.ok && q.price && q.price > 0) {
+          const mv = p.quantity * q.price;
+          totalMv += mv;
+          const pnl = mv - costValue;   // 盈亏金额（市值−成本，负成本同样可显示金额）
+          const neg = costValue < 0;
+          totalPnl += pnl;
+          if (neg) negCount++;
+          else totalCost += costValue;
+          byCode[p.code] = neg
+            ? { latestPrice: q.price, pnl, costNegative: true }   // 负成本：显示盈亏金额，盈亏率无意义
+            : { latestPrice: q.price, pnl, pnlPct: costValue !== 0 ? (pnl / costValue) * 100 : 0 };
+        } else {
+          totalMv += Math.max(costValue, 0);   // 无行情：正成本计市值兜底，负成本不计
+        }
+      } catch { totalMv += Math.max(costValue, 0); }
+    }
+    return {
+      byCode,
+      totalPnl,
+      totalCost,
+      totalMv,
+      negCount,
+      // 总盈亏率：存在负成本标的一律不显示（负成本比例无意义）；无负成本时仅正成本统计
+      totalPnlPct: negCount > 0 ? undefined : totalCost > 0 ? (totalPnl / totalCost) * 100 : undefined,
+    };
+  }
+
+  // 单策略详情（附盈亏：最新价 vs 成本价；行情走 KV 缓存，失败静默跳过）
+  app.get(`${API_PREFIX}/tools/trade-plan/strategies/:id`, async (c: Context) => {
     const st = getStrategy(c.req.param("id")!);
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
-    return c.json({ ok: true, strategy: st });
+    return c.json({ ok: true, strategy: st, pnl: await attachPnl(st) });
   });
 
   // 新建策略（名称唯一）
@@ -111,7 +159,7 @@ export function register(app: Hono): void {
     const positions = raw.positions !== undefined ? parsePositions(raw.positions) : undefined;
     // 服务端校验：当前数量非零时成本价必填（金额 = 数量 × 成本价）
     if (positions) {
-      const badPos = positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
+      const badPos = positions.find((p) => p.code && p.quantity > 0 && (typeof p.avgCost !== "number" || isNaN(p.avgCost)));   // 负数成本合法
       if (badPos) return c.json({ ok: false, message: `标的 ${badPos.code} 当前数量为 ${badPos.quantity}，成本价必填` }, 400);
     }
     // 手动保存仓位 → 固化为基线（差值法：只固化手动调整量，避免已应用日度计划重复计入，见 store.rebasePositions）
@@ -257,7 +305,7 @@ function parsePositions(raw: unknown): TradePlanPosition[] {
       code: String(x.code ?? "").trim(),
       ...(typeof x.name === "string" && x.name.trim() ? { name: x.name.trim() } : {}),
       quantity: num(x.quantity) ?? 0,
-      avgCost: num(x.avgCost) ?? 0,
+      avgCost: num(x.avgCost, true) ?? 0,   // 成本价允许负数（融资/做空场景）
     }))
     .filter((x) => x.code);
 }

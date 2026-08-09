@@ -13,6 +13,8 @@ import type {
   TradePlanStrategy,
   TradePlanStrategySummary,
   TradePlanDay,
+  TradePlanPnl,
+  TradePlanPosition,
 } from "@toolbox/shared";
 import { api, errMsg } from "../api";
 import { Button } from "@/components/ui/button";
@@ -27,14 +29,18 @@ import { cn } from "@/lib/utils";
 const alertColor: Record<TradePlanAlert["level"], string> = { error: "#dc2626", warn: "#d97706", info: "#2563eb" };
 const alertBg: Record<TradePlanAlert["level"], string> = { error: "#fef2f2", warn: "#fffbeb", info: "#eff6ff" };
 const cny = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
+/** 金额保留 2 位小数（盈亏等不截断整数）；负数带符号 */
+const cny2 = (v: number) => `${v < 0 ? "-¥" : "¥"}${Math.abs(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** 成本价显示不截断：保留 6 位并去尾零（0.1 → "0.1"，0.123456 → "0.123456"） */
+const costFmt = (v?: number) => (typeof v === "number" && !isNaN(v) ? String(+v.toFixed(6)) : "—");
 /** 日度计划条目文本：数量（股）+ 可选约金额（有成本价时）——避免把数量当金额显示 */
 /** Base UI Slider onValueChange 的 value 可能是 number（单值）或数组，统一取数值 */
 const sliderNum = (v: number | readonly number[]): number => (typeof v === "number" ? v : (v[0] ?? 0));
 const itemText = (it: TradePlanItem, price?: number) => {
   const cost = it.cost ?? price;
-  const money = cost && cost > 0 ? it.amount * cost : 0;
+  const money = typeof cost === "number" && !isNaN(cost) ? it.amount * cost : 0;   // 负/零成本合法
   const act = it.action === "add" ? "加仓" : "减仓";
-  return `${it.name ? it.name + " " : ""}${it.code} ${act} ${it.amount.toLocaleString("zh-CN")} 股${money > 0 ? ` ≈ ${cny(money)}` : ""}`;
+  return `${it.name ? it.name + " " : ""}${it.code} ${act} ${it.amount.toLocaleString("zh-CN")} 股${money !== 0 ? ` ≈ ${cny2(money)}` : ""}`;
 };
 /** 消除前导零（如 "007" → "7"；避免输入框/计算异常） */
 const stripLeadZeros = (v: string) => v.replace(/^0+(?=\d)/, "");
@@ -67,7 +73,7 @@ function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", pl
         type="text"
         inputMode="decimal"
         className={cn("h-8 px-2 text-sm", width)}
-        value={text ?? (value > 0 ? value.toLocaleString("zh-CN") : "")}
+        value={text ?? (value !== 0 ? value.toLocaleString("zh-CN") : "")}   // 负数成本/金额也显示（原 value>0 时 -1.5 显示空）
         onChange={(e) => setText(e.target.value)}
         onBlur={() => { if (text !== null) commit(parsed()); }}
         placeholder={placeholder}
@@ -84,6 +90,7 @@ export default function TradePlanTool() {
   const [strategies, setStrategies] = useState<TradePlanStrategySummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [strategy, setStrategy] = useState<TradePlanStrategy | null>(null);
+  const [pnl, setPnl] = useState<TradePlanPnl | null>(null);   // 盈亏（详情接口附行情）
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -137,12 +144,14 @@ export default function TradePlanTool() {
       if (r.ok && r.strategy) {
         setStrategy(r.strategy);
         savedCfgRef.current = JSON.stringify(r.strategy);
+        setPnl(r.pnl ?? null);   // 盈亏（详情接口附行情计算）
       }
       setResult(null);
       setViewDay(null);
       setItems([]);
       void loadDays(selectedId);
     }).catch(() => {});
+ 
   }, [selectedId]);
 
   const loadDays = useCallback(async (sid: string) => {
@@ -160,7 +169,7 @@ export default function TradePlanTool() {
       setCfgMsg("❌ 标的 " + (bad.code || "（未填代码）") + " 的仓位上限需在 0-100% 之间");
       return;
     }
-    const badPos = s.positions.find((x) => x.code && x.quantity > 0 && !(x.avgCost > 0));
+    const badPos = s.positions.find((x) => x.code && x.quantity > 0 && (typeof x.avgCost !== "number" || isNaN(x.avgCost)));   // 负数成本合法
     if (badPos) {
       setCfgMsg("❌ 标的 " + badPos.code + " 当前数量为 " + badPos.quantity + "，成本价必填");
       return;
@@ -280,6 +289,22 @@ export default function TradePlanTool() {
     scheduleAutoCheck(next);
   };
 
+  /** 持仓标的最新价（pnl 详情接口附行情；无则 undefined） */
+  const latestPriceOf = (code: string) => pnl?.byCode[code]?.latestPrice;
+  /** 按最新价计算市值（无行情 fallback 成本价）——总市值按当前价格，成本无影响 */
+  const marketValueOf = (p: TradePlanPosition) => p.quantity * (latestPriceOf(p.code) ?? p.avgCost ?? 0);
+  /** 本地重算盈亏（成本/数量变化即时反映；用 pnl 的最新价，负成本 pnlPct undefined） */
+  const pnlOfCode = (code: string) => {
+    const price = latestPriceOf(code);
+    const pos = strategy?.positions.find((x) => x.code === code);
+    if (!price || !pos || pos.quantity <= 0) return undefined;
+    const costValue = pos.quantity * (pos.avgCost ?? 0);
+    const mv = pos.quantity * price;
+    const pnlv = mv - costValue;
+    if (costValue < 0) return { latestPrice: price, pnl: pnlv, costNegative: true };   // 负成本：显示盈亏金额，盈亏率无意义
+    return { latestPrice: price, pnl: pnlv, pnlPct: costValue !== 0 ? (pnlv / costValue) * 100 : 0 };
+  };
+
   const changeDate = (d: string) => {
     setDate(d);
     // 该日期已有计划 → 载入供修改（保存=同日覆盖）；无计划 → 空输入
@@ -375,17 +400,7 @@ export default function TradePlanTool() {
         </div>
       )}
 
-      {/* 全部策略总计划日历（跨策略） */}
-      <Card className="mb-3" id="all-cal-card">
-        <CardContent className="flex items-center gap-2 p-4">
-          <span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-cyan-500 align-middle" /><span className="font-bold">📅 全部策略总计划</span>
-          <Button variant="secondary" size="sm" onClick={() => setAllCalOpen((v) => !v)} type="button">
-            {allCalOpen ? "收起" : "展开"}
-          </Button>
-          <span className="text-[0.78rem] text-slate-400">跨策略查看每天的交易计划</span>
-        </CardContent>
-        {allCalOpen && <CardContent className="pt-0"><AllCalendar /></CardContent>}
-      </Card>
+      {/* 全部策略总计划已收敛到左栏「总仓位概览」功能区（2026-08-10） */}
 
       <div className="grid items-start gap-4" style={{ gridTemplateColumns: "280px 1fr" }}>
         {/* 左：总仓位概览功能区 + 策略列表 */}
@@ -420,9 +435,14 @@ export default function TradePlanTool() {
                   </div>
                 );
               })()}
-              <Button variant="secondary" size="sm" className="mt-2 w-full" type="button" onClick={() => { setAllCalOpen(true); document.getElementById("all-cal-card")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
-                📅 全部策略总计划
+              <Button variant="secondary" size="sm" className="mt-2 w-full" type="button" onClick={() => setAllCalOpen((v) => !v)}>
+                {allCalOpen ? "▾ 收起全部策略总计划" : "📅 全部策略总计划"}
               </Button>
+              {allCalOpen && (
+                <div className="mt-2">
+                  <AllCalendar />
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -450,7 +470,13 @@ export default function TradePlanTool() {
                 <div className="min-w-0 flex-1">
                   <div className={cn("text-[0.9rem] font-bold", selectedId === s.id ? "text-blue-600" : "text-slate-800")}>{s.name}</div>
                   <div className="text-[0.76rem] leading-snug text-slate-500">
-                    仓位 {cny(s.totalCapital)} · {s.stockCount} 标的 · {s.dayCount} 计划 · 当前 {s.positionPct !== undefined ? `${s.positionPct}%` : "—"}
+                    仓位 {cny(s.totalCapital)} · 当前市值 {s.pnl ? cny(s.pnl.totalMv) : "—"}
+                    {s.pnl && s.pnl.negCount > 0 ? (
+                      <> · 浮动盈亏 <span className={s.pnl.totalPnl > 0 ? "font-semibold text-red-600" : "font-semibold text-emerald-600"}>{s.pnl.totalPnl > 0 ? "+" : ""}{cny2(s.pnl.totalPnl)}（—）</span></>
+                    ) : s.pnl && s.pnl.totalCost > 0 ? (
+                      <> · 浮动盈亏 <span className={s.pnl.totalPnl > 0 ? "font-semibold text-red-600" : "font-semibold text-emerald-600"}>{s.pnl.totalPnl > 0 ? "+" : ""}{cny2(s.pnl.totalPnl)}（{s.pnl.totalPnlPct?.toFixed(2) ?? "—"}%）</span></>
+                    ) : null}{" "}
+                    · {s.stockCount} 标的 · {s.dayCount} 计划
                   </div>
                 </div>
                 <Button variant="ghost" size="sm" className="text-slate-400 hover:bg-red-50 hover:text-red-600" onClick={(e) => { e.stopPropagation(); void deleteSt(s.id, s.name); }} title="删除策略" type="button">✕</Button>
@@ -501,7 +527,7 @@ export default function TradePlanTool() {
                       <div className="mb-1.5 text-[0.82rem] font-semibold text-slate-500">交易标的与当前仓位（点击 ✏️ 编辑行；新增在下方区域完成）</div>
                       {/* 当前仓位概览：彩色信息卡 + 占比色阶进度条 */}
                       {(() => {
-                        const totalMv = strategy.positions.reduce((a, p) => a + (p.quantity || 0) * (p.avgCost || 0), 0);
+                        const totalMv = strategy.positions.reduce((a, p) => a + marketValueOf(p), 0);   // 按最新价（memo：总市值按当前价格）
                         const pctNum = strategy.totalCapital > 0 ? (totalMv / strategy.totalCapital) * 100 : 0;
                         const pct = strategy.totalCapital > 0 ? pctNum.toFixed(1) : "—";
                         const held = strategy.positions.filter((p) => (p.quantity || 0) > 0).length;
@@ -516,11 +542,28 @@ export default function TradePlanTool() {
                             <div className={`${card} border-indigo-100 bg-indigo-50/70`}>
                               <div className="text-[0.72rem] text-indigo-700/70">当前总市值</div>
                               <div className="text-[0.95rem] font-bold text-indigo-700">{cny(totalMv)}</div>
+                              {(() => {
+                                let tp = 0, tc = 0, neg = false;
+                                for (const x of strategy.positions) { const o = pnlOfCode(x.code); if (o) { tp += o.pnl; if (o.costNegative) neg = true; else tc += x.quantity * (x.avgCost ?? 0); } }
+                                if (tp === 0 && tc === 0 && !neg) return null;
+                                if (neg) return (
+                                  <div className={`text-[0.74rem] font-semibold ${tp > 0 ? "text-red-600" : tp < 0 ? "text-emerald-600" : "text-slate-500"}`}>
+                                    浮动盈亏 {tp > 0 ? "+" : ""}{cny2(tp)}（—）
+                                  </div>
+                                );
+                                if (tc <= 0) return null;
+                                return (
+                                  <div className={`text-[0.74rem] font-semibold ${tp > 0 ? "text-red-600" : tp < 0 ? "text-emerald-600" : "text-slate-500"}`}>
+                                    浮动盈亏 {tp > 0 ? "+" : ""}{cny2(tp)}（{((tp / Math.abs(tc)) * 100).toFixed(2)}%）
+                                  </div>
+                                );
+                              })()}
                             </div>
                             <div className={`${card} border-slate-100 bg-slate-50`}>
                               <div className="text-[0.72rem] text-slate-500">总仓位占比</div>
                               <div className="text-[0.95rem] font-bold" style={{ color: barColor }}>{pct}%</div>
-                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200/70">
+                              {/* 进度条底色加深（memo：进度条增加底色） */}
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
                                 <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, pctNum)}%`, background: barColor }} />
                               </div>
                             </div>
@@ -559,7 +602,7 @@ export default function TradePlanTool() {
                       {strategy.stocks.length === 0 && <div className="mb-1 text-[0.8rem] text-slate-400">暂无标的，用上方新增区添加</div>}
                       {viewStocks.map((s, i) => {
                         const pos = strategy.positions.find((p) => p.code === s.code);
-                        const mv = (pos?.quantity || 0) * (pos?.avgCost || 0);
+                        const mv = pos ? marketValueOf(pos) : 0;   // 按最新价
                         const pct = strategy.totalCapital > 0 ? ((mv / strategy.totalCapital) * 100).toFixed(1) : "—";
                         const isEdit = editingCode === s.code;
                         return (
@@ -567,6 +610,13 @@ export default function TradePlanTool() {
                             <div className="mb-1 flex items-center gap-1.5">
                               <span className="text-[0.85rem] font-semibold text-slate-800">{s.name ? s.name + " " + s.code : s.code}</span>
                               {mv > 0 && <Badge variant="secondary" className="text-[0.76rem]">{cny(mv)} · {pct}%</Badge>}
+                              {(() => { const o = pnlOfCode(s.code); if (!o) return null; if (o.costNegative) return (
+                                <Badge className={`border-amber-200 bg-amber-50 text-amber-700 text-[0.74rem]`}>最新 {o.latestPrice.toFixed(2)} · {o.pnl! > 0 ? "盈" : o.pnl! < 0 ? "亏" : "平"} {cny2(Math.abs(o.pnl!))}（—）</Badge>
+                              ); return (
+                                <Badge className={`text-[0.74rem] ${o.pnl! > 0 ? "border-red-200 bg-red-50 text-red-700" : o.pnl! < 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                                  最新 {o.latestPrice.toFixed(2)} · {o.pnl! > 0 ? "盈" : o.pnl! < 0 ? "亏" : "平"} {cny2(Math.abs(o.pnl!))}（{o.pnlPct != null ? o.pnlPct.toFixed(2) + "%" : "—"}）
+                                </Badge>
+                              ); })()}
                               <span className="flex-1" />
                               <Button variant="secondary" size="sm" className="h-6 px-2 text-[0.76rem]" onClick={() => setEditingCode(isEdit ? null : s.code)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</Button>
                               <Button variant="destructive" size="sm" className="h-6 px-2 text-[0.76rem]" title="移除标的（同步删除当前仓位）" onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</Button>
@@ -584,13 +634,13 @@ export default function TradePlanTool() {
                                 </label>
                                 <label className="flex items-center gap-1.5 text-[0.76rem] text-slate-500">
                                   成本价
-                                  <StepInput value={pos?.avgCost ?? 0} onChange={(v) => setPosByCode(s.code, { avgCost: v })} step={0.01} width="w-20" placeholder="0.00" />
+                                  <StepInput value={pos?.avgCost ?? 0} onChange={(v) => setPosByCode(s.code, { avgCost: v })} step={0.01} min={-999999} width="w-20" placeholder="0.00" />
                                 </label>
                                 <span className="text-[0.72rem] text-slate-400">数量非零时成本价必填</span>
                               </div>
                             ) : (
                               <div className="text-[0.76rem] text-slate-500">
-                                单标的上限 {s.maxWeightPct !== undefined ? s.maxWeightPct + "%" : "未设"} · 当前数量 {pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : "0"} · 成本价 {pos?.avgCost ? pos.avgCost.toFixed(2) : "—"}
+                                单标的上限 {s.maxWeightPct !== undefined ? s.maxWeightPct + "%" : "未设"} · 当前数量 {pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : "0"} · 成本价 {costFmt(pos?.avgCost)}
                               </div>
                             )}
                           </div>
@@ -641,17 +691,17 @@ export default function TradePlanTool() {
                       )}
                       {(() => {
                         const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
-                        const cost = it.cost && it.cost > 0 ? it.cost : price;
+                        const cost = typeof it.cost === "number" && !isNaN(it.cost) ? it.cost : price;   // 负/零成本合法
                         const est = it.amount * cost;
                         return (
-                          <span className={cn("w-24 flex-shrink-0 text-[0.72rem]", cost > 0 ? "text-slate-500" : "text-amber-700")}>
-                            {cost > 0 ? `≈ ${cny(est)}` : "未设成本价"}
+                          <span className={cn("w-24 flex-shrink-0 text-[0.72rem]", typeof cost === "number" && !isNaN(cost) ? "text-slate-500" : "text-amber-700")}>
+                            {typeof cost === "number" && !isNaN(cost) ? `≈ ${cny2(est)}` : "未设成本价"}
                           </span>
                         );
                       })()}
                       {strategy.totalCapital > 0 && (() => {
                         const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
-                        const cost = it.cost && it.cost > 0 ? it.cost : price;
+                        const cost = typeof it.cost === "number" && !isNaN(it.cost) ? it.cost : price;   // 负/零成本合法
                         if (cost <= 0) return null;
                         const pct = it.amount > 0 ? Math.min(100, Math.round((it.amount * cost / strategy.totalCapital) * 100)) : 0;
                         return (
@@ -670,8 +720,8 @@ export default function TradePlanTool() {
                     <Button
                       className={cn(result && !result.ok && "bg-slate-400")}
                       onClick={() => void runCheck(true)}
-                      disabled={checking || items.length === 0 || stockOptions.length === 0 || (result !== null && !result.ok)}
-                      title={result && !result.ok ? "违反策略仓位管理，无法保存" : "保存并应用为日度计划"}
+                      disabled={checking || items.length === 0 || items.some((it) => !it.code) || stockOptions.length === 0 || (result !== null && !result.ok)}
+                      title={result && !result.ok ? "违反策略仓位管理，无法保存" : items.some((it) => !it.code) ? "请先为每个操作选择交易标的" : "保存并应用为日度计划"}
                       type="button"
                     >
                       💾 保存并应用
@@ -1006,8 +1056,8 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
                 <TableCell>{cny(p.marketValue)}</TableCell>
                 <TableCell>{p.weightPct.toFixed(1)}%</TableCell>
                 <TableCell>{p.shares.toLocaleString("zh-CN")}</TableCell>
-                <TableCell>{p.avgCost > 0 ? p.avgCost.toFixed(2) : "—"}</TableCell>
-                <TableCell>{p.addAmount > 0 ? cny(p.addAmount) : "—"}</TableCell>
+                <TableCell>{costFmt(p.avgCost)}</TableCell>
+                <TableCell>{p.addAmount !== 0 ? cny2(p.addAmount) : "—"}</TableCell>
               </TableRow>
             ))}
           </TableBody>
