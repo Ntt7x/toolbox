@@ -4,6 +4,9 @@
 
 | 脚本 | 用途 | 典型用法 |
 |---|---|---|
+| `dev.mjs` | **开发进程管理器**（supervisor：健康检查自动拉起、单实例防重、端口清理） | `node scripts/dev-utils/dev.mjs start\|stop\|restart\|status\|kill-port <port>` |
+| `proc.mjs` | **进程诊断/清理 CLI**（查残留 supervisor/tsx/vite、杀进程树/端口） | `node scripts/dev-utils/proc.mjs status\|list\|kill <pid>\|kill-port <port>` |
+| `smoke-pages.mjs` | **页面冒烟**（17 页 playwright，页面大改后必跑） | `node scripts/dev-utils/smoke-pages.mjs` |
 | `api.mjs` | 通用 API 客户端（fetch+json 包装、非 2xx 抛错） | `import { call, get, post, put, del } from "./api.mjs"` |
 | `memo.mjs` | 改进备忘录 CLI（读 open / 批量 done / 新增） | `node scripts/dev-utils/memo.mjs list` / `done <id>...` / `add <text>` |
 | `kv.mjs` | KV/DB 检查（只读 SQLite，前缀过滤/统计/取值） | `node scripts/dev-utils/kv.mjs list tradePlan:` / `count <前缀>` / `get <key>` |

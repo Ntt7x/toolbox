@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // playwright-core 位于 apps/server 依赖树（项目根未提升），经绝对路径 require
 const require = createRequire(import.meta.url);
-const pwPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../apps/server/node_modules/playwright-core");
+const pwPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../apps/server/node_modules/playwright-core");
 const { chromium } = require(pwPath);
 
 const WEB = process.env.SMOKE_WEB ?? "http://localhost:5173";

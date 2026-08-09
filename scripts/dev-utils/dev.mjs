@@ -18,7 +18,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const NODE = process.execPath;
 const STATE_FILE = path.join(root, ".file", "dev.pids.json");
 const STOP_FLAG = path.join(root, ".file", "dev.stop");
@@ -122,14 +122,40 @@ function stopAll() {
     if (s.child && !s.child.killed) { log(`停止 ${name} (PID ${s.child.pid})`); killPidTree(s.child.pid); s.child = null; }
   }
   cleanupPorts();
-  try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
   log("已停止（supervisor 将退出）");
 }
 
 function status() {
+  const sp = readSupervisorPid();
+  log(`supervisor: ${sp ? `PID ${sp}${isAlivePid(sp) ? "（存活）" : "（已退出，残留记录）"}` : "无"}`);
   for (const p of PORTS) {
     const pid = pidOnPort(p);
     log(`端口 ${p}: ${pid ? `被 PID ${pid} 占用${isNodePid(pid) ? "（node）" : "（非 node！）"}` : "空闲"}`);
+  }
+}
+
+// ---------- 单实例防重（历史教训：多个 supervisor 并存互相打架） ----------
+
+function readSupervisorPid() {
+  try { return JSON.parse(fs.readFileSync(STATE_FILE, "utf8")).pid ?? null; } catch { return null; }
+}
+
+function writeSupervisorPid() {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+}
+
+function isAlivePid(pid) {
+  if (!pid) return false;
+  const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`], { encoding: "utf8" });
+  return /node\.exe/i.test(r.stdout);
+}
+
+/** start/restart 前：发现旧 supervisor 存活 → 终止（防止双 supervisor 健康检查互相打架） */
+function killOldSupervisor() {
+  const old = readSupervisorPid();
+  if (old && old !== process.pid && isAlivePid(old)) {
+    log(`检测到旧 supervisor (PID ${old}) → 终止（防多实例打架）`);
+    killPidTree(old);
   }
 }
 
@@ -139,21 +165,26 @@ const argPort = process.argv[3];
 switch (cmd) {
   case "start":
     try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
+    killOldSupervisor();
     cleanupPorts();
     startServer();
     startWeb();
+    writeSupervisorPid();
     setInterval(healthCheck, 5000); // 常驻 supervisor（保持 event loop）
     log("supervisor 运行中（每 5s 健康检查）");
     break;
   case "stop":
     stopAll();
+    try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
     break;
   case "restart":
+    killOldSupervisor(); // 先杀旧 supervisor（STATE_FILE 此时仍记录旧 PID）
     stopAll();
     try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
     cleanupPorts();
     startServer();
     startWeb();
+    writeSupervisorPid();
     setInterval(healthCheck, 5000);
     log("supervisor 运行中（每 5s 健康检查）");
     break;

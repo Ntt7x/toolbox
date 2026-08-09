@@ -39,13 +39,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 ## 3.1 开发进程管理（scripts/dev.mjs，2026-08-07 起强制）
 
 - **禁止手动在后台任务里直接起 `tsx watch` / `vite`**（历史多次 EADDRINUSE/残留进程/服务静默挂掉，排查耗时）。
-- 一律用 `node scripts/dev.mjs start|stop|restart|status|kill-port <port|all>`：
+- 一律用 `node scripts/dev-utils/dev.mjs start|stop|restart|status|kill-port <port|all>`：
   - `start`：先清 8787/5173 端口残留（netstat 找 PID → tasklist 确认 node → taskkill /T /F），再拉起 server+web；
     常驻 supervisor 每 5s 健康检查——进程退出或「进程存活但端口空闲」（tsx 子服务挂掉）都自动重启（≤8 次）；
   - `stop`：写 `.file/dev.stop` 标记（supervisor 不再拉起并自行退出）+ 杀进程树 + 清端口；
   - 子进程日志在 `.file/dev-logs/{server,web}.log`（排查服务崩溃看这里）；
-- 排查步骤：`node scripts/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
-- 后台运行 start 用 PowerShell 语法：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH; cd D:\Agent\toolbox; node scripts/dev.mjs start`。
+- 排查步骤：`node scripts/dev-utils/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
+- 后台运行 start 用 PowerShell 语法：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH; cd D:\Agent\toolbox; node scripts/dev-utils/dev.mjs start`。
 
 ## 3. 环境与工具注意（Windows）
 
@@ -311,7 +311,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 前端自动校验：600ms debounce（输入停止后自动跑 check，**不设手动校验按钮**）；save 被 error 阻断并弹错误级 alert
 - 标的搜索补全：复用 `watchlistSearchStock`；StockCodeInput 输入框内显示「名称 代码」（有名称时），用户手动输入自动清空名称（视为更换标的）——**只显示代码可读性差（备忘录教训）**
 - 类表单校验依赖：判定已配置用「存在有 code 的标的行」而非 `totalCapital !== undefined`（数字默认 0 恒非 undefined，曾导致提示永不出现）
-- 页面级冒烟：TradePlanTool 曾出现卡加载中（mount useEffect 被重构误删，curl 测 API 测不出）——凡改页面加载逻辑必须跑 `node scripts/smoke-pages.mjs`
+- 页面级冒烟：TradePlanTool 曾出现卡加载中（mount useEffect 被重构误删，curl 测 API 测不出）——凡改页面加载逻辑必须跑 `node scripts/dev-utils/smoke-pages.mjs`
 - **v2（2026-08-08）配置/当前仓位拆分**：`strategy.stocks` 只存标的与上限%（配置），`strategy.positions`（当前数量 quantity + 成本价 avgCost）独立管理——不再用「起始数量」概念；旧数据 getStrategy 时幂等迁移（initShares→positions，清内联字段）
 - 日度计划「保存即应用」：保存自动按计划更新 positions（加仓重算均价、减仓只减数量成本不变——`applyItems` 纯函数）；**同日覆盖**先按该日 `before` 快照回滚再重应用（幂等）；**删除已应用计划**自动回滚仓位——一致性由 before/after 快照保证
 - 大改前端组件慎用 node -e 字符串替换（CRLF/中文/反引号反复踩坑）——**直接 write_file 全量重写整个组件文件**更可靠
@@ -332,9 +332,22 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **教训（本次踩坑）**：「重复标的」「数量非零成本必填」起初只在前端校验，用户指出后才补服务端——任何「不允许/必须」的规则都先问：服务端拦了吗？没拦就是漏洞。
 
-**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改完必须跑 node scripts/smoke-pages.mjs。
+**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改完必须跑 node scripts/dev-utils/smoke-pages.mjs。
 
 ### 4.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
+
+**scripts/ 目录结构（全部集中，根目录不放脚本）**：
+```
+scripts/
+├── README.md                    总入口说明
+└── dev-utils/
+    ├── dev.mjs                   开发进程管理器（supervisor：start/stop/restart/status/kill-port）
+    ├── proc.mjs                  进程诊断/清理 CLI（status/list/kill/kill-port；查残留 supervisor/tsx）
+    ├── smoke-pages.mjs           页面冒烟（17 页 playwright；页面大改后必跑）
+    ├── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs   见 README
+    ├── README.md                 工具表 + 规则
+    └── ARCHIVE.md                历史临时脚本归档
+```
 
 **所有开发辅助脚本一律集中放 scripts/dev-utils/**（API 客户端 / 备忘录 CLI / KV 检查 / E2E 脚手架），禁止在仓库根目录散放 tmp_*.mjs（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）。
 
@@ -435,7 +448,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 6.4 页面级冒烟自测（2026-08-08 起）
 
-- 脚本：`node scripts/smoke-pages.mjs`（需 dev 5173 + 8787 在运行）——playwright 打开全部 17 个前端页面，检查 JS 崩溃 + API 非 2xx，ALL-PASS 才可提交
+- 脚本：`node scripts/dev-utils/smoke-pages.mjs`（需 dev 5173 + 8787 在运行）——playwright 打开全部 17 个前端页面，检查 JS 崩溃 + API 非 2xx，ALL-PASS 才可提交
 - **历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**必须跑浏览器级冒烟**
 - 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
 
