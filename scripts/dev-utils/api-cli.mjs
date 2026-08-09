@@ -14,7 +14,15 @@ if (!method || !p) {
   console.error(`用法: node scripts/dev-utils/api-cli.mjs <GET|POST|PUT|DELETE> <path> [json-body]\nBASE: ${BASE}`);
   process.exit(1);
 }
-const body = bodyRaw ? JSON.parse(bodyRaw) : undefined;
+let body;
+if (bodyRaw) {
+  try {
+    body = JSON.parse(bodyRaw);
+  } catch {
+    console.error(`❌ body 不是合法 JSON：${bodyRaw.slice(0, 60)}`);
+    process.exit(1);
+  }
+}
 // BASE 已含 /api，path 直接拼接（如 /health 或 health）
 const fullPath = p.startsWith("/") ? p : "/" + p;
 try {

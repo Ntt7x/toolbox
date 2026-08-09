@@ -60,5 +60,17 @@ if (!tests) {
   process.exit(1);
 }
 console.log(`跑 ${tests.length} 个测试文件${arg ? `（${arg}）` : "（全量）"}`);
-const r = spawnSync(process.execPath, [TSX, "--test", ...tests], { stdio: "inherit" });
-process.exit(r.status ?? 1);
+// 全量时逐文件串行：多个测试文件共享同一 SQLite DB，node:test 默认并行会写锁
+// （曾出现 "database is locked"）；单文件直接跑。
+let status = 0;
+if (tests.length === 1) {
+  status = spawnSync(process.execPath, [TSX, "--test", ...tests], { stdio: "inherit" }).status ?? 1;
+} else {
+  for (const t of tests) {
+    const name = path.relative(SERVER_TESTS, t);
+    console.log(`\n── ${name} ──`);
+    const r = spawnSync(process.execPath, [TSX, "--test", t], { stdio: "inherit" });
+    if ((r.status ?? 1) !== 0) status = r.status ?? 1;
+  }
+}
+process.exit(status);

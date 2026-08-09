@@ -23,6 +23,8 @@ export function getDb(): DatabaseSync {
   db = new DatabaseSync(DB_PATH);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
+  // 并发写等待（并行跑多测试文件共享同一 DB 时避免 "database is locked"）
+  db.exec("PRAGMA busy_timeout = 5000");
   return db;
 }
 

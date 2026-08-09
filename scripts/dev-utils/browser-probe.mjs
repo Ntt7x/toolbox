@@ -8,10 +8,15 @@
 //   --screenshot <path> 可选截图；--profile <dir> 指定 profile（默认临时）。
 // 输出：URL / title / 各选择器状态。注意：可能弹出真实 Chrome（headful）。
 // ============================================================
-import { chromium } from "playwright-core";
+import { createRequire } from "node:module";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+// playwright-core 位于 apps/server 依赖树（项目根未提升），经绝对路径 require（同 smoke-pages）
+const require = createRequire(import.meta.url);
+const pwPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../apps/server/node_modules/playwright-core");
+const { chromium } = require(pwPath);
 
 const CHROME_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -25,13 +30,15 @@ const url = args.find((a) => /^https?:\/\//.test(a));
 const checks = [];
 let screenshot = null;
 let profile = undefined;
+let headless = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--check" && args[i + 1]) checks.push(args[++i]);
   if (args[i] === "--screenshot" && args[i + 1]) screenshot = args[++i];
   if (args[i] === "--profile" && args[i + 1]) profile = args[++i];
+  if (args[i] === "--headless") headless = true;
 }
 if (!url) {
-  console.error("用法: node scripts/dev-utils/browser-probe.mjs <url> [--check \"选择器:描述\"]... [--screenshot <path>] [--profile <dir>]");
+  console.error("用法: node scripts/dev-utils/browser-probe.mjs <url> [--check \"选择器:描述\"]... [--screenshot <path>] [--profile <dir>] [--headless]");
   process.exit(1);
 }
 const exe = CHROME_CANDIDATES.find((p) => existsSync(p));
@@ -45,7 +52,7 @@ const ownProfile = !profile;
 const profileDir = profile || path.join(tmpdir(), `browser-probe-${Date.now()}`);
 const ctx = await chromium.launchPersistentContext(profileDir, {
   executablePath: exe,
-  headless: false,
+  headless,
   args: ["--no-first-run", "--disable-blink-features=AutomationControlled"],
 });
 try {
@@ -67,7 +74,12 @@ try {
     else console.log(`check ${sel} (${desc || ""}): ${info.visible ? "可见" : "不可见"} | ${info.text ? "文本: " + info.text : ""}${info.ariaChecked ? " | aria-checked=" + info.ariaChecked : ""}${info.ariaPressed ? " | aria-pressed=" + info.ariaPressed : ""}`);
   }
   if (screenshot) await page.screenshot({ path: screenshot, fullPage: false });
-  console.log("完成（窗口保持打开，可手动操作查看；Ctrl+C 或关闭窗口后临时 profile 自动清理）");
+  if (headless) {
+    await ctx.close().catch(() => {});
+    console.log("完成（headless，已自动关闭）");
+  } else {
+    console.log("完成（窗口保持打开，可手动操作查看；Ctrl+C 或关闭窗口后临时 profile 自动清理）");
+  }
 } finally {
   // 保持窗口不关（诊断需要人工观察）；进程退出时清理临时 profile
   if (ownProfile) {
