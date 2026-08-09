@@ -315,6 +315,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **v2（2026-08-08）配置/当前仓位拆分**：`strategy.stocks` 只存标的与上限%（配置），`strategy.positions`（当前数量 quantity + 成本价 avgCost）独立管理——不再用「起始数量」概念；旧数据 getStrategy 时幂等迁移（initShares→positions，清内联字段）
 - 日度计划「保存即应用」：保存自动按计划更新 positions（加仓重算均价、减仓只减数量成本不变——`applyItems` 纯函数）；**同日覆盖**先按该日 `before` 快照回滚再重应用（幂等）；**删除已应用计划**自动回滚仓位——一致性由 before/after 快照保证
 - 大改前端组件慎用 node -e 字符串替换（CRLF/中文/反引号反复踩坑）——**直接 write_file 全量重写整个组件文件**更可靠
+- **v3（2026-08-08）日度计划按数量（股）操作**：`TradePlanItem.amount` 语义从金额改为股数，金额 = 股数 × 成本价（当前仓位 positions.avgCost）；未设成本价的标的直接 error「无法换算金额」；applyItems 数量直接加减（成本价不变）；单测/E2E 同步（加仓 4 股→addTotal 5600、覆盖/删除回滚）
+- 列表编辑/删除**用 code 定位而非 index**（排序视图/重渲染下 index 会错位导致按钮失效——备忘录教训）；排序视图仍禁用编辑防串改
 
 ## 5. 外部数据源经验
 

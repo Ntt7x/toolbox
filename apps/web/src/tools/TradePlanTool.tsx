@@ -81,7 +81,7 @@ export default function TradePlanTool() {
   const [calView, setCalView] = useState(false);
   const [allCalOpen, setAllCalOpen] = useState(false);
   const [cfgCollapsed, setCfgCollapsed] = useState(false); // 配置卡折叠
-  const [editingIdx, setEditingIdx] = useState<number | null>(null); // 编辑中的标的行
+  const [editingCode, setEditingCode] = useState<string | null>(null); // 编辑中的标的代码
   const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("none"); // 标的列表按市值排序
   const [newStock, setNewStock] = useState<{ code: string; name?: string; maxWeightPct?: number }>({ code: "" });
   const savedCfgRef = useRef<string>(""); // 最近保存的配置快照（未保存离开提醒）
@@ -194,20 +194,23 @@ export default function TradePlanTool() {
     else if (code) positions.push({ code, quantity: patch.quantity ?? 0, avgCost: patch.avgCost ?? 0 });
     setStrategy({ ...strategy, positions });
   };
-  /** 移除标的（同步删除对应当前仓位） */
-  const removeStockAt = (i: number) => {
+  /** 移除标的（按 code 定位，同步删除对应当前仓位） */
+  const removeStockByCode = (code: string) => {
     if (!strategy) return;
-    const code = strategy.stocks[i]?.code;
     setStrategy({
       ...strategy,
-      stocks: strategy.stocks.filter((_, j) => j !== i),
-      positions: code ? strategy.positions.filter((p) => p.code !== code) : strategy.positions,
+      stocks: strategy.stocks.filter((x) => x.code !== code),
+      positions: strategy.positions.filter((p) => p.code !== code),
     });
   };
-  /** 新增标的（插入列表第一个） */
+  /** 新增标的（插入列表第一个；不允许重复 code） */
   const addNewStock = () => {
     if (!strategy || !newStock.code.trim()) return;
     const code = newStock.code.trim();
+    if (strategy.stocks.some((x) => x.code === code)) {
+      setMsg(`❌ 标的 ${code} 已在策略中，不允许重复添加`);
+      return;
+    }
     setStrategy({
       ...strategy,
       stocks: [
@@ -432,6 +435,24 @@ export default function TradePlanTool() {
                     </div>
 
                     <div style={{ fontWeight: 600, color: "#475569", marginBottom: "0.35rem", fontSize: "0.82rem" }}>交易标的与当前仓位（点击 ✏️ 编辑行；新增在下方区域完成）</div>
+                    {/* 当前仓位概览 */}
+                    <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+                      {(() => {
+                        const totalMv = strategy.positions.reduce((a, p) => a + (p.quantity || 0) * (p.avgCost || 0), 0);
+                        const pct = strategy.totalCapital > 0 ? ((totalMv / strategy.totalCapital) * 100).toFixed(1) : "—";
+                        const held = strategy.positions.filter((p) => (p.quantity || 0) > 0).length;
+                        return (
+                          <>
+                            <span style={{ fontSize: "0.76rem", color: "#475569", background: "#eef2f7", padding: "0.2rem 0.55rem", borderRadius: 6 }}>当前总市值 {cny(totalMv)}</span>
+                            <span style={{ fontSize: "0.76rem", color: "#475569", background: "#eef2f7", padding: "0.2rem 0.55rem", borderRadius: 6 }}>总仓位占比 {pct}%</span>
+                            <span style={{ fontSize: "0.76rem", color: "#475569", background: "#eef2f7", padding: "0.2rem 0.55rem", borderRadius: 6 }}>持仓 {held} / {strategy.stocks.length} 标的</span>
+                            {strategy.totalCapital > 0 && (
+                              <span style={{ fontSize: "0.76rem", color: "#64748b" }}>剩余可用 {cny(Math.max(0, strategy.totalCapital - totalMv))}</span>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
                     {/* 排序切换 + 新增区 */}
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem", padding: "0.5rem 0.6rem", background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 8 }}>
                       <span style={{ fontSize: "0.8rem", color: "#475569", fontWeight: 600, flexShrink: 0 }}>＋ 新增标的</span>
@@ -457,7 +478,7 @@ export default function TradePlanTool() {
                       const pos = strategy.positions.find((p) => p.code === s.code);
                       const mv = (pos?.quantity || 0) * (pos?.avgCost || 0);
                       const pct = strategy.totalCapital > 0 ? ((mv / strategy.totalCapital) * 100).toFixed(1) : "—";
-                      const isEdit = editingIdx === i;
+                      const isEdit = editingCode === s.code;
                       const readonly = sortMode !== "none";
                       return (
                       <div key={s.code + "-" + i} style={{ border: "1px solid #eef2f7", borderRadius: 10, padding: "0.45rem 0.6rem", marginBottom: "0.4rem", background: isEdit ? "#f0f7ff" : "#fafbfc", borderColor: isEdit ? "#93c5fd" : "#eef2f7" }}>
@@ -469,8 +490,8 @@ export default function TradePlanTool() {
                             </span>
                           )}
                           <span style={{ flex: 1 }} />
-                          <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => setEditingIdx(isEdit ? null : i)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
-                          <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再删除" : "移除标的（同步删除当前仓位）"} onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockAt(i); }} type="button">✕</button>
+                          <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => setEditingCode(isEdit ? null : s.code)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
+                          <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再删除" : "移除标的（同步删除当前仓位）"} onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</button>
                         </div>
                         {isEdit ? (
                           <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.3rem" }}>
@@ -529,23 +550,37 @@ export default function TradePlanTool() {
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
                     </select>
-                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="金额（元）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
-                    {/* 金额百分比滑块：占总仓位百分比 → 自动算金额 */}
-                    {strategy.totalCapital > 0 && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={it.amount > 0 ? Math.min(100, Math.round((it.amount / strategy.totalCapital) * 100)) : 0}
-                          onChange={(e) => setItemAt(i, { amount: Math.round((strategy.totalCapital * Number(e.target.value)) / 100) })}
-                          style={{ width: 72, accentColor: "#2563eb" }}
-                          title="拖动设置占策略总仓位的百分比，自动计算金额"
-                        />
-                        <span style={{ fontSize: "0.72rem", color: "#64748b", width: 38 }}>{it.amount > 0 ? Math.round((it.amount / strategy.totalCapital) * 100) : 0}%</span>
-                      </div>
-                    )}
+                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="数量（股）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
+                    {(() => {
+                      const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
+                      const est = it.amount * price;
+                      return (
+                        <span style={{ fontSize: "0.72rem", color: price > 0 ? "#64748b" : "#b45309", width: 96, flexShrink: 0 }}>
+                          {price > 0 ? `≈ ${cny(est)}` : "未设成本价"}
+                        </span>
+                      );
+                    })()}
+                    {/* 金额百分比滑块：占总仓位百分比 → 金额 → 股数（按成本价换算） */}
+                    {strategy.totalCapital > 0 && (() => {
+                      const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
+                      if (price <= 0) return null;
+                      const pct = it.amount > 0 ? Math.min(100, Math.round((it.amount * price / strategy.totalCapital) * 100)) : 0;
+                      return (
+                        <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={pct}
+                            onChange={(e) => setItemAt(i, { amount: Math.round((strategy.totalCapital * Number(e.target.value)) / 100 / price) })}
+                            style={{ width: 72, accentColor: "#2563eb" }}
+                            title="按占策略总仓位的百分比换算金额后折算股数"
+                          />
+                          <span style={{ fontSize: "0.72rem", color: "#64748b", width: 38 }}>{pct}%</span>
+                        </div>
+                      );
+                    })()}
                     <input style={{ ...input, flex: 1, minWidth: 70, padding: "0.4rem 0.55rem" }} placeholder="备注（可选）" value={it.note ?? ""} onChange={(e) => setItemAt(i, { note: e.target.value })} />
                     <button style={{ ...btn, background: "#ef4444", padding: "0.4rem 0.6rem" }} onClick={() => setItems((arr) => arr.filter((_, j) => j !== i))} type="button">✕</button>
                   </div>

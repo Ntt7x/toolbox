@@ -1742,12 +1742,12 @@ export interface TradePlanStrategyDeleteResult {
 }
 
 
-/** 日度计划条目 */
+/** 日度计划条目（加/减仓以数量为单位） */
 export interface TradePlanItem {
   code: string;
   /** 加仓 / 减仓 */
   action: "add" | "reduce";
-  /** 金额（元） */
+  /** 数量（股）；金额 = 数量 × 成本价（当前仓位） */
   amount: number;
   note?: string;
 }

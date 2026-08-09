@@ -1,11 +1,13 @@
 // ============================================================
 // 交易规划：校验计算（纯函数，无 LLM、无 IO）
-// 校验日度交易计划是否符合策略配置与仓位控制：
+// 日度交易计划的加/减仓操作以【数量（股）】为单位（TradePlanItem.amount = 股数），
+// 金额 = 数量 × 成本价（来自当前仓位 positions.avgCost；未设成本价无法换算 → 告警）。
+// 校验规则：
 //  1. 标的必须在策略标的列表内
-//  2. 当日加仓合计 ≤ 单日加仓上限
+//  2. 当日加仓金额合计 ≤ 单日加仓上限（金额 = 股数 × 成本价）
 //  3. 加仓后单标的市场值 ≤ 标的上限（maxWeightPct × 总仓位，若配置）
 //  4. 加仓后总市值 ≤ 总仓位
-//  5. 减仓金额 ≤ 该标的当前持仓市值
+//  5. 减仓数量 ≤ 该标的当前持仓数量
 //  6. 同 code 同日多操作 → 合并为一个交易操作
 // 当前仓位来自 strategy.positions（拆分自配置），应用计划后由 applyItems 自动更新。
 // ============================================================
@@ -28,36 +30,29 @@ export interface TradePlanCheckConfig {
   positions: TradePlanPosition[];
 }
 
-/** 某标的当前持仓市值（数量 × 成本价） */
-function currentValue(config: TradePlanCheckConfig, code: string): number {
+/** 某标的成本价（无持仓/无成本返回 0） */
+function priceOf(config: TradePlanCheckConfig, code: string): number {
   const p = config.positions.find((x) => x.code === code);
-  if (!p) return 0;
-  return (p.quantity || 0) * (p.avgCost || 0);
+  return p?.avgCost ?? 0;
 }
 
-/** 应用日度计划 → 更新后的仓位（纯函数；加仓重算均价，减仓只减数量成本不变） */
+/** 某标的当前数量（股） */
+function qtyOf(config: TradePlanCheckConfig, code: string): number {
+  const p = config.positions.find((x) => x.code === code);
+  return p?.quantity ?? 0;
+}
+
+/** 应用日度计划 → 更新后的仓位（纯函数；数量直接加减，成本价不变——按当前成本近似买入价） */
 export function applyItems(positions: TradePlanPosition[], items: TradePlanItem[]): TradePlanPosition[] {
   const out = positions.map((p) => ({ ...p, quantity: p.quantity || 0, avgCost: p.avgCost || 0 }));
-  const byCode = new Map(items.map((it) => [it.code, it]));
-  for (const [code, it] of byCode) {
-    const pos = out.find((p) => p.code === code);
+  for (const it of items) {
+    const pos = out.find((p) => p.code === it.code);
     if (!pos) {
-      if (it.action === "add" && it.amount > 0) {
-        out.push({ code, quantity: 0, avgCost: 0 }); // 成本未知 → 数量无法换算，保持 0
-      }
+      if (it.action === "add" && it.amount > 0) out.push({ code: it.code, quantity: it.amount, avgCost: 0 });
       continue;
     }
-    if (it.action === "add" && pos.avgCost > 0) {
-      const qty = pos.quantity + it.amount / pos.avgCost;
-      pos.avgCost = (pos.quantity * pos.avgCost + it.amount) / qty;
-      pos.quantity = Math.round(qty * 100) / 100;
-    } else if (it.action === "add") {
-      pos.quantity += it.amount; // 无成本（avgCost=0）时按金额累加数量，保持近似
-    } else if (it.action === "reduce" && pos.avgCost > 0) {
-      pos.quantity = Math.max(0, Math.round((pos.quantity - it.amount / pos.avgCost) * 100) / 100);
-    } else if (it.action === "reduce") {
-      pos.quantity = Math.max(0, pos.quantity - it.amount);
-    }
+    if (it.action === "add") pos.quantity = Math.round((pos.quantity + it.amount) * 100) / 100;
+    else pos.quantity = Math.max(0, Math.round((pos.quantity - it.amount) * 100) / 100);
   }
   return out;
 }
@@ -67,7 +62,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
   const totalCapital = config.totalCapital || 0;
   const dailyAddLimit = config.dailyAddLimit || 0;
 
-  // 汇总每标的变动
+  // 汇总每标的变动（股数）
   const byCode = new Map<string, { add: number; reduce: number; count: number }>();
   for (const it of items) {
     const acc = byCode.get(it.code) ?? { add: 0, reduce: 0, count: 0 };
@@ -98,18 +93,29 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
   }
 
-  // 2. 单日加仓上限
-  const addTotal = [...byCode.values()].reduce((a, v) => a + v.add, 0);
+  // 成本价检查：操作标的须已设成本价（金额 = 数量 × 成本价）
+  const missingPrice = [...byCode.keys()].filter((code) => priceOf(config, code) <= 0);
+  for (const code of missingPrice) {
+    alerts.push({
+      level: "error",
+      code,
+      message: `标的 ${code} 未设置成本价，无法换算金额`,
+      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请先在「当前仓位」填写该标的的成本价",
+    });
+  }
+
+  // 2. 单日加仓上限（金额 = 加仓股数 × 成本价）
+  const addTotal = [...byCode.entries()].reduce((a, [code, v]) => a + v.add * priceOf(config, code), 0);
   if (dailyAddLimit > 0 && addTotal > dailyAddLimit) {
     alerts.push({
       level: "error",
-      message: "当日加仓合计超过单日加仓上限",
+      message: "当日加仓金额合计超过单日加仓上限",
       detail: `当日加仓 ${CNY(addTotal)} > 单日上限 ${CNY(dailyAddLimit)}，超出 ${CNY(addTotal - dailyAddLimit)}`,
     });
   } else if (dailyAddLimit > 0 && addTotal > 0) {
     alerts.push({
       level: "info",
-      message: `当日加仓合计 ${CNY(addTotal)}，占单日上限 ${dailyAddLimit > 0 ? `${((addTotal / dailyAddLimit) * 100).toFixed(0)}%` : "—"}`,
+      message: `当日加仓合计 ${CNY(addTotal)}，占单日上限 ${((addTotal / dailyAddLimit) * 100).toFixed(0)}%`,
     });
   }
 
@@ -120,16 +126,17 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
   for (const pos of afterPositions) {
     const stock = config.stocks.find((s) => s.code === pos.code);
     const v = byCode.get(pos.code) ?? { add: 0, reduce: 0 };
-    const cur = currentValue(config, pos.code);
+    const price = priceOf(config, pos.code);
+    const curQty = qtyOf(config, pos.code);
     const marketValue = (pos.quantity || 0) * (pos.avgCost || 0);
 
-    // 5. 减仓超持仓校验
-    if (v.reduce > cur) {
+    // 5. 减仓超持仓校验（按股数）
+    if (v.reduce > curQty) {
       alerts.push({
         level: "error",
         code: pos.code,
-        message: `减仓金额超过 ${pos.code} 当前持仓`,
-        detail: `当前持仓市值 ${CNY(cur)}，减仓 ${CNY(v.reduce)}，超出 ${CNY(v.reduce - cur)}；建议减仓不超过 ${CNY(cur)}`,
+        message: `减仓数量超过 ${pos.code} 当前持仓`,
+        detail: `当前持仓 ${curQty} 股，减仓 ${v.reduce} 股，超出 ${v.reduce - curQty} 股；建议减仓不超过 ${curQty} 股`,
       });
     }
 
@@ -149,16 +156,18 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
 
     seenCodes.add(pos.code);
-    if (cur === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
-    after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount: v.add });
+    const addAmount = v.add * price;
+    if (curQty === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
+    after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount });
   }
 
   // 计划中出现但无仓位记录的标的（applyItems 已补空仓位；非法标的另行告警）
   for (const [code, v] of byCode) {
     if (seenCodes.has(code)) continue;
-    const marketValue = Math.max(0, currentValue(config, code) + v.add - v.reduce);
+    const price = priceOf(config, code);
+    const marketValue = Math.max(0, (qtyOf(config, code) + v.add - v.reduce) * price);
     const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
-    after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add });
+    after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add * price });
   }
   after.sort((a, b) => b.marketValue - a.marketValue);
 
@@ -170,7 +179,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     alerts.push({
       level: "error",
       message: "执行后总市值超过总仓位",
-      detail: `执行后总市值 ${CNY(totalMarketValue)} > 总仓位 ${CNY(totalCapital)}，超出 ${CNY(totalMarketValue - totalCapital)}；建议减少加仓金额 ${CNY(totalMarketValue - totalCapital)} 或调整标的配置`,
+      detail: `执行后总市值 ${CNY(totalMarketValue)} > 总仓位 ${CNY(totalCapital)}，超出 ${CNY(totalMarketValue - totalCapital)}；建议减少加仓或调整标的配置`,
     });
   } else if (totalCapital > 0 && addTotal > 0) {
     alerts.push({
