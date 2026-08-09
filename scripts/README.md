@@ -41,6 +41,7 @@ scripts/
 | `patch.mjs` | 文件文本替换执行器：patch.json 驱动，dry-run/原子写盘，CRLF 感知（**替代 node -e 长替换**） | `node scripts/dev-utils/patch.mjs <patch.json> [--apply]` |
 
 | `self-test.mjs` | **工具自测**（patch.mjs 逻辑回归；工具改动后必跑） | `node scripts/dev-utils/self-test.mjs` |
+| `check-change.mjs` | **改动健康检查**（文件数/行数/触及分层→建议验证级别；提交前跑，dev.md §6.8） | `node scripts/dev-utils/check-change.mjs [--base main]` |
 | `browser-probe.mjs` | 浏览器探针：launch 系统 Chrome + 选择器存在/可见/文本/aria 属性 | `node scripts/dev-utils/browser-probe.mjs <url> --check "textarea:主输入框"` |
 
 ## 3. 使用规范
