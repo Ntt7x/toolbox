@@ -47,7 +47,11 @@ function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", pl
     const n = numInput(text ?? "");
     return Number.isFinite(n) ? n : 0;
   };
-  const stepFn = (dir: 1 | -1) => () => commit(parsed() + dir * step);
+  const stepFn = (dir: 1 | -1) => () => {
+    // 基值 = 输入中的 text（若有）否则当前 value——避免未输入时从 0 步进
+    const base = text !== null ? parsed() : value;
+    commit(base + dir * step);
+  };
   return (
     <span className="inline-flex items-center gap-0.5">
       <Input
