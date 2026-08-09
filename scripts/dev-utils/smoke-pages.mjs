@@ -1,11 +1,16 @@
 // ============================================================
 // 页面冒烟自测（scripts/dev-utils/smoke-pages.mjs）
 // 用 playwright-core + 本机 Chrome 打开全部前端页面，验证：
-//   - 页面能渲染（无 JS 崩溃）
+//   - 页面渲染出预期内容（body 含 expect 标志词，且非 404 占位页）
 //   - 关键 API 请求全部成功（无 404/500/挂起）
-// 用法：node scripts/dev-utils/smoke-pages.mjs（需前端 dev 5173 + 服务端 8787 在运行）
-// 历史教训：TradePlanTool 曾因挂载 useEffect 被误删导致列表卡"加载中"（API 请求根本不发出），
-// 此类问题只能靠浏览器级冒烟发现——每次页面大改后跑一次本脚本。
+//   - 无 JS 崩溃
+// 用法：
+//   node scripts/dev-utils/smoke-pages.mjs                全量
+//   node scripts/dev-utils/smoke-pages.mjs --page /tools/x  定向单页（§5.1 L2）
+// 需前端 dev 5173 + 服务端 8787 在运行（dev.mjs start）。
+// 历史教训：
+//   - TradePlanTool 挂载 useEffect 被误删 → 列表卡"加载中"（API 请求根本不发出）→ 浏览器级冒烟才能发现
+//   - 旧版只查 API 状态不查内容 → /admin/deps（不存在路由）404 占位页也 PASS，静默放行 → 必须断言页面内容
 // ============================================================
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -18,27 +23,31 @@ const { chromium } = require(pwPath);
 
 const WEB = process.env.SMOKE_WEB ?? "http://localhost:5173";
 
-// --page <path>：定向冒烟（只测一个页面，配合 §6.4 L2 小改动验证；不传则全量 17 页）
+// --page <path>：定向冒烟（只测一个页面，配合 §5.1 L2；不传则全量）
 const onlyPage = process.argv.includes("--page") ? process.argv[process.argv.indexOf("--page") + 1] : null;
+
+// 每页断言：body 文本包含 expect（页面级标题/标志词），且不得出现「页面不存在」（404 占位页反断言）
 const PAGES = [
-  "/",
-  "/tools/grid-plan",
-  "/tools/kelly",
-  "/tools/cb-rate",
-  "/tools/treasury-fx",
-  "/tools/reverse-repo",
-  "/tools/watchlist",
-  "/tools/trade-plan",
-  "/tools/deepseek-share",
-  "/tools/zhihu-crawler",
-  "/tools/books",
-  "/tools/knowledge-hub",
-  "/tools/news-center",
-  "/settings/llm",
-  "/settings/local-data",
-  "/settings/memo",
-  "/admin/deps",
+  { path: "/", expect: "工作台" },
+  { path: "/tools/grid-plan", expect: "交易网格计划" },
+  { path: "/tools/kelly", expect: "凯利仓位助手" },
+  { path: "/tools/cb-rate", expect: "央行利率分析" },
+  { path: "/tools/treasury-fx", expect: "国债汇率分析" },
+  { path: "/tools/reverse-repo", expect: "逆回购" },
+  { path: "/tools/watchlist", expect: "专题自选股" },
+  { path: "/tools/trade-plan", expect: "策略仓位管理" },
+  { path: "/tools/deepseek-share", expect: "提取历史" },
+  { path: "/tools/zhihu-crawler", expect: "知乎爬虫" },
+  { path: "/tools/books", expect: "书籍下载" },
+  { path: "/tools/knowledge-hub", expect: "知识库中心" },
+  { path: "/tools/news-center", expect: "新闻中心" },
+  { path: "/settings/llm", expect: "用量" },
+  { path: "/settings/local-data", expect: "数据源" },
+  { path: "/settings/memo", expect: "改进备忘录" },
+  { path: "/settings/arch-graph", expect: "架构图" },
+  { path: "/settings/agent-sessions", expect: "会话" },
 ];
+const NOT_FOUND_TEXT = "页面不存在";
 
 const CHROME = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -52,7 +61,11 @@ const browser = await chromium.launch({ headless: true, executablePath: CHROME, 
 const page = await browser.newPage();
 let fail = 0;
 
-for (const path of onlyPage ? [onlyPage] : PAGES) {
+const targets = onlyPage
+  ? (PAGES.find((p) => p.path === onlyPage) ? [PAGES.find((p) => p.path === onlyPage)] : [{ path: onlyPage, expect: null }])
+  : PAGES;
+
+for (const { path, expect } of targets) {
   const problems = [];
   page.on("response", (r) => {
     if (r.url().includes("/api/") && r.status() >= 400) problems.push(`${r.status()} ${r.url().slice(0, 110)}`);
@@ -61,6 +74,11 @@ for (const path of onlyPage ? [onlyPage] : PAGES) {
   try {
     await page.goto(WEB + path, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForTimeout(3500);
+    if (expect) {
+      const body = await page.evaluate(() => document.body.innerText);
+      if (!body.includes(expect)) problems.push(`内容缺失：未找到「${expect}」`);
+      if (body.includes(NOT_FOUND_TEXT)) problems.push("命中 404 占位页（页面不存在）");
+    }
   } catch (e) {
     problems.push("加载失败: " + e.message.slice(0, 100));
   }
@@ -75,5 +93,5 @@ for (const path of onlyPage ? [onlyPage] : PAGES) {
   }
 }
 await browser.close();
-console.log(fail === 0 ? "\nALL-PASS" : `\nFAIL-${fail}`);
+console.log(fail === 0 ? `\nALL-PASS（${targets.length} 页）` : `\nFAIL-${fail}`);
 process.exit(fail === 0 ? 0 : 1);

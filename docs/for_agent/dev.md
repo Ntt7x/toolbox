@@ -35,24 +35,24 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 │   └── src/
 │       ├── index.ts           装配层：cors + health + tools 收集 + 挂载路由 + 启动
 │       ├── core/              下层公共模块（能力，不依赖业务）：llm / chatSession / reasonix / knowledge /
-│       │                       knowledgeSession / knowledgeMcp / mcpConfig / quote / deepseekShare /
-│       │                       prompts / jsonParse / routes / tasks / sse / db / tableStore / kvStore /
-│       │                       settingsStore / dataRegistry
+│       │                       knowledgeSession / knowledgeMcp / mcpConfig / prompts / jsonParse / quote /
+│       │                       deepseekShare / browser / fund / httpProxy / dependencyGraph / routes / tasks /
+│       │                       sse / db / tableStore / kvStore / settingsStore / dataRegistry
 │       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / treasuryFx / reverseRepo /
-│                               watchlist / kelly / rehab(医学知识库) / memo / books / deepseekShareTool /
-│                               agentSessions / localData
+│                               watchlist / kelly / tradePlan / knowledgeHub / newsCenter / browserChat /
+│                               zhihuCrawler / books / memo / deepseekShareTool / agentSessions / localData
 ├── apps/web/          Vite + React 19 + react-router-dom
 │   └── src/
 │       ├── App.tsx            侧边栏分组菜单 MENU_GROUPS + toolPages 映射 + 路由
-│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / ReverseRepoTool / MedicalKbTool…）
-│       └── settings/          设置页（LlmSettings / AgentSessions / LocalData / MemoTool）
+│       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / ReverseRepoTool / KnowledgeHubTool…）
+│       └── settings/          设置页（LlmSettings / AgentSessions / LocalData / MemoTool / ArchGraph）
 └── docs/for_agent/    本目录：agent 规范沉淀
     ├── dev.md                总纲（AGENTS.md 强制加载）：架构/流程/强制规则/验证/历史
     └── domains/              专业领域经验（按需加载，dev.md 内指针）：reasonix / features / data-sources
 ```
 
 **分层铁律**：依赖方向 `features → core`，core 之间互不依赖；业务逻辑不进 core。
-新增工具 = 建 `features/xxx/`（导出 `meta` + `register(app)`）→ shared 加契约 → web 建 `tools/XxxTool.tsx` 并注册进 `toolPages` + `MENU_GROUPS`（设置/交易/小工具分组）。
+新增工具 = 建 `features/xxx/`（导出 `meta` + `register(app)`）→ shared 加契约 → web 建 `tools/XxxTool.tsx` 并注册进 `toolPages` + `MENU_GROUPS`（分组：后台 / 交易 / 工具，见 §5.2 菜单三件套）。
 
 ## 2. 开发流程（契约驱动）
 
@@ -118,7 +118,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
 - **L1 单测**：服务端逻辑改动必跑相关模块单测（`node scripts/dev-utils/test.mjs <模块>`，自动定位 .test.ts；空参数=全量串行）
 - **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
-- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，17 页 playwright）：仅以下场景必跑
+- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，18 页 playwright，含页面内容断言）：仅以下场景必跑
 
 **L3 全量冒烟触发时机（严格执行，避免浪费）**：
 - 用户明确要求全量测试时
@@ -148,6 +148,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**涉及页面加载逻辑时必须跑浏览器级冒烟**
 - 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
+- **冒烟必须断言页面内容（2026-08-09 教训）**：旧版 smoke-pages 只查 API 状态与 JS 崩溃——`/admin/deps`（不存在路由）404 占位页因无 API 错误而 PASS，**静默放行**；现已升级为**每页 expect 标志词 + 「页面不存在」反断言**（18 页）。新增页面必须同步 smoke-pages 的 PAGES（含 expect 词），改页面标题时同步更新 expect。
 
 ### 5.2 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
 
