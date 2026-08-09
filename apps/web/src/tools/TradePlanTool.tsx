@@ -55,6 +55,25 @@ const cny = (v: number) => `¥${Math.round(v).toLocaleString("zh-CN")}`;
 const stripLeadZeros = (v: string) => v.replace(/^0+(?=\d)/, "");
 const numInput = (v: string) => Number(stripLeadZeros(v).replace(/[,，\s]/g, "")) || 0;
 
+/** 数字输入 + 上下步进（▲▼ 调整；min/max 下限/上限，手动输入照常） */
+function StepInput({ value, onChange, step = 1, min = 0, max, width = 90, placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; width?: number; placeholder?: string }) {
+  const clamp = (v: number) => {
+    let r = Math.round(v * 100) / 100;
+    if (max !== undefined) r = Math.min(max, r);
+    return Math.max(min, r);
+  };
+  const stepFn = (dir: 1 | -1) => () => onChange(clamp(value + dir * step));
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+      <input style={{ ...input, width, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" value={value > 0 ? value.toLocaleString("zh-CN") : ""} onChange={(e) => onChange(clamp(numInput(e.target.value)))} placeholder={placeholder} />
+      <span style={{ display: "inline-flex", flexDirection: "column", gap: 1 }}>
+        <button type="button" onClick={stepFn(1)} title={`+${step}`} style={{ padding: "0 0.3rem", lineHeight: "0.85rem", fontSize: "0.5rem", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#475569" }}>▲</button>
+        <button type="button" onClick={stepFn(-1)} title={`-${step}`} style={{ padding: "0 0.3rem", lineHeight: "0.85rem", fontSize: "0.5rem", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#475569" }}>▼</button>
+      </span>
+    </span>
+  );
+}
+
 export default function TradePlanTool() {
   const [strategies, setStrategies] = useState<TradePlanStrategySummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -435,11 +454,11 @@ export default function TradePlanTool() {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem", marginBottom: "0.7rem" }}>
                       <label>
                         <span style={{ color: "#475569", fontSize: "0.8rem" }}>总仓位（元）</span>
-                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.totalCapital === 0 ? "" : strategy.totalCapital.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, totalCapital: numInput(e.target.value) })} onBlur={() => void saveCfg({ silent: true })} placeholder="如 1000000" />
+                        <StepInput value={strategy.totalCapital} onChange={(v) => setStrategy({ ...strategy, totalCapital: v })} step={10000} width={150} placeholder="如 1000000" />
                       </label>
                       <label>
                         <span style={{ color: "#475569", fontSize: "0.8rem" }}>单日加仓上限（元）</span>
-                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.dailyAddLimit === 0 ? "" : strategy.dailyAddLimit.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: numInput(e.target.value) })} onBlur={() => void saveCfg({ silent: true })} placeholder="如 50000" />
+                        <StepInput value={strategy.dailyAddLimit} onChange={(v) => setStrategy({ ...strategy, dailyAddLimit: v })} step={5000} width={150} placeholder="如 50000" />
                       </label>
                     </div>
 
@@ -474,7 +493,7 @@ export default function TradePlanTool() {
                       <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b", flexShrink: 0 }}>
                         上限
                         <input type="range" min={0} max={100} step={1} value={newStock.maxWeightPct ?? 0} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: Number(e.target.value) || undefined }))} style={{ width: 70, accentColor: "#2563eb" }} title="单标的上限（占总仓位百分比）" />
-                        <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="%" value={newStock.maxWeightPct ?? ""} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: Math.min(100, Math.max(0, numInput(e.target.value))) || undefined }))} />
+                        <StepInput value={newStock.maxWeightPct ?? 0} onChange={(v) => setNewStock((st) => ({ ...st, maxWeightPct: Math.min(100, v) || undefined }))} step={5} max={100} width={54} placeholder="%" />
                       </label>
                       <button style={{ ...btn, padding: "0.35rem 0.8rem", fontSize: "0.8rem" }} onClick={addNewStock} disabled={!newStock.code.trim()} type="button">添加</button>
                       {addMsg && <span style={{ fontSize: "0.75rem", color: "#dc2626", flexShrink: 0 }}>{addMsg}</span>}
@@ -502,22 +521,22 @@ export default function TradePlanTool() {
                           )}
                           <span style={{ flex: 1 }} />
                           <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => { if (isEdit) void saveCfg({ silent: true }); setEditingCode(isEdit ? null : s.code); }} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
-                          <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再删除" : "移除标的（同步删除当前仓位）"} onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</button>
+                          <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} title="移除标的（同步删除当前仓位）" onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</button>
                         </div>
                         {isEdit ? (
                           <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.3rem" }}>
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               单标的上限
                               <input type="range" min={0} max={100} step={1} value={s.maxWeightPct ?? 0} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} style={{ width: 80, accentColor: "#2563eb" }} />
-                              <input style={{ ...input, width: 50, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" value={s.maxWeightPct ?? ""} onChange={(e) => setStockAt(i, { maxWeightPct: numInput(e.target.value) })} placeholder="--" />%
+                              <StepInput value={s.maxWeightPct ?? 0} onChange={(v) => setStockAt(i, { maxWeightPct: v })} step={5} max={100} width={50} placeholder="--" />%
                             </label>
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               当前数量
-                              <input style={{ ...input, width: 95, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="0" value={pos?.quantity ? pos.quantity.toLocaleString("zh-CN") : ""} onChange={(e) => setPosByCode(s.code, { quantity: numInput(e.target.value) })} />
+                              <StepInput value={pos?.quantity ?? 0} onChange={(v) => setPosByCode(s.code, { quantity: v })} step={100} width={95} placeholder="0" />
                             </label>
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               成本价
-                              <input style={{ ...input, width: 85, padding: "0.3rem 0.45rem" }} type="text" inputMode="decimal" placeholder="0.00" value={pos?.avgCost ? pos.avgCost.toFixed(2) : ""} onChange={(e) => setPosByCode(s.code, { avgCost: Number(stripLeadZeros(e.target.value)) || 0 })} />
+                              <StepInput value={pos?.avgCost ?? 0} onChange={(v) => setPosByCode(s.code, { avgCost: v })} step={0.1} width={85} placeholder="0.00" />
                             </label>
                             <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>数量非零时成本价必填</span>
                           </div>
@@ -561,9 +580,9 @@ export default function TradePlanTool() {
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
                     </select>
-                    <input style={{ ...input, width: 100, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="数量（股）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
+                    <StepInput value={it.amount} onChange={(v) => setItemAt(i, { amount: v })} step={100} width={100} placeholder="数量（股）" />
                     {it.action === "add" && (
-                      <input style={{ ...input, width: 90, padding: "0.4rem 0.55rem" }} type="text" inputMode="decimal" placeholder="成本价（可选）" value={it.cost ? it.cost.toFixed(2) : ""} onChange={(e) => setItemAt(i, { cost: Number(stripLeadZeros(e.target.value)) || undefined })} title="本次买入成本价；缺省用当前仓位成本价" />
+                      <StepInput value={it.cost ?? 0} onChange={(v) => setItemAt(i, { cost: v || undefined })} step={0.1} width={90} placeholder="成本价（可选）" />
                     )}
                     {(() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
