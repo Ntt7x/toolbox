@@ -334,6 +334,23 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改完必须跑 node scripts/smoke-pages.mjs。
 
+### 4.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
+
+**所有开发辅助脚本一律集中放 scripts/dev-utils/**（API 客户端 / 备忘录 CLI / KV 检查 / E2E 脚手架），禁止在仓库根目录散放 tmp_*.mjs（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）。
+
+**已固化工具（直接调用，禁止重复手写）**：
+- api.mjs：通用 API 客户端——import { call, get, post, put, del } from './api.mjs'；非 2xx 自动抛带 message 的 Error（含 rejectReason）
+- memo.mjs：备忘录 CLI——node scripts/dev-utils/memo.mjs list / done <id>... / add <text>（每轮「处理备忘录」必用）
+- kv.mjs：KV/DB 只读检查——node scripts/dev-utils/kv.mjs list <前缀> / count <前缀> / get <key>（查测试数据残留/数据分布）
+- e2e.mjs：API E2E 断言脚手架——import { e2e, assert } from './e2e.mjs'，声明用例列表跑断言，失败即 exit 1
+- 用法详见 scripts/dev-utils/README.md
+
+**规则**：
+1. 发现第二次出现相似脚本需求（fetch 包装/读 kv/标记备忘录/替换文件）→ 先用现成工具，缺能力则在 dev-utils/ 内新增可复用函数（不是又写一个根目录 tmp）
+2. 一次性调试：可放 scripts/dev-utils/ 下命名 _tmp_*.mjs，跑完立即删；严禁提交根目录 tmp 脚本
+3. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）——写 .mjs 脚本文件执行（见 §4.6）
+4. 集成验证（E2E）用 e2e.mjs 脚手架组织；服务端校验改完必须「重启 server + 脚本打 400/200 断言」（§4.7）
+
 ## 5. 外部数据源经验
 
 - **知乎爬虫（多内容目标，2026-08 实测）**：
