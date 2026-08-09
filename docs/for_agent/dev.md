@@ -3,6 +3,28 @@
 > 本文件由实际开发会话沉淀而来，是后续所有 agent 对话的**强制开发规范**。
 > 由项目根 `AGENTS.md` 自动加载（常驻指令）。新会话请先通读全文再动手。
 
+## 0. 开工清单（每个新会话必走）
+
+1. **加载规范**：本文件已由 AGENTS.md 强制加载；涉足专业领域（Reasonix / 行情 / 知乎 / 知识库 / trade-plan / 浏览器自动化）时按 §7 索引**按需加载**对应 domains 文档。
+2. **查状态**：`git status` / `git branch -a`——当前分支 + 是否有待验收分支（§4）。
+3. **读备忘录**：`node scripts/dev-utils/memo.mjs list`——处理 open 改进备忘录（§8.0）。
+4. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
+5. **验证→提交→推送**：L0 typecheck → 按 §5.1 分级验证 → `commit.mjs "msg"`（自动 push）→ 等用户验收再合并 main（§4）。
+
+**常用命令（高频，脚本细节见 §6.8 / scripts/README.md）**：
+| 用途 | 命令 |
+|---|---|
+| 类型检查 | `pnpm typecheck` |
+| 模块/全量单测 | `node scripts/dev-utils/test.mjs <模块>` / 空=全量 |
+| 重启 dev 环境 | `node scripts/dev-utils/dev.mjs restart` |
+| 提交+推送 | `node scripts/dev-utils/commit.mjs "feat(x): ..."` |
+| 备忘录 | `node scripts/dev-utils/memo.mjs list / done <id>` |
+| 页面定向/全量冒烟 | `node scripts/dev-utils/smoke-pages.mjs --page /tools/x` / 无参全量 |
+| API 断言 | `node scripts/dev-utils/api-cli.mjs GET /health` |
+| 查数据残留 | `node scripts/dev-utils/kv.mjs list/count <前缀>` |
+
+---
+
 ## 1. 项目架构（不可破坏）
 
 ```
@@ -38,7 +60,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 3. web：`api.ts` 加方法（`get`/`post` 封装，错误响应携带 message）→ 工具页组件
 4. 验证：`pnpm typecheck` + curl 全量回归（health/tools/各工具端点）+ 页面 200
 
-## 3.1 开发进程管理（scripts/dev.mjs，2026-08-07 起强制）
+## 3. 环境与工具注意（Windows）
+
+- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；每次命令需 `set "PATH=D:\Softwares\nodejs;%PATH%"`
+- dev 服务：`pnpm dev` 后台跑（tsx watch + vite HMR 都正常）
+- bash 工具解析器在 cmd/PowerShell 间不稳定：**分号 `;` 会被当参数**，
+  一条命令只做一件事；多行提交信息用 `-F 文件`（`.git/COMMIT_MSG_TMP.txt`，用完删）
+- typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
+
+### 3.1 开发进程管理（scripts/dev.mjs，2026-08-07 起强制）
+（scripts/dev.mjs，2026-08-07 起强制）
 
 - **禁止手动在后台任务里直接起 `tsx watch` / `vite`**（历史多次 EADDRINUSE/残留进程/服务静默挂掉，排查耗时）。
 - 一律用 `node scripts/dev-utils/dev.mjs start|stop|restart|status|kill-port <port|all>`：
@@ -49,17 +80,130 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 排查步骤：`node scripts/dev-utils/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
 - 后台运行 start 用 PowerShell 语法：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH; cd D:\Agent\toolbox; node scripts/dev-utils/dev.mjs start`。
 
-## 3. 环境与工具注意（Windows）
 
-- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；每次命令需 `set "PATH=D:\Softwares\nodejs;%PATH%"`
-- dev 服务：`pnpm dev` 后台跑（tsx watch + vite HMR 都正常）
-- bash 工具解析器在 cmd/PowerShell 间不稳定：**分号 `;` 会被当参数**，
-  一条命令只做一件事；多行提交信息用 `-F 文件`（`.git/COMMIT_MSG_TMP.txt`，用完删）
-- typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
+## 4. git 规范
+### 4.1 分支工作流（强制，2026-08-05 起）
 
-## 4. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
+> ⚠️ **硬性规则（2026-08 再次强调）：所有改动无论大小、无论是否小修补，一律先 `git switch -c <type>/<简述>` 新建分支再动手；禁止在 main 上直接修改、提交或推送。曾发生多起「小改动顺手改 main」的违规（如备忘录小修），导致 main 被直接污染、验收流程失效。用户验收通过后才允许合并回 main。**
 
-### 4.1 成本原则：提示词/引导词最小冗余（2026-08-07 起，强制）
+
+
+- **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
+  `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
+- 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
+- **必须等待用户验收通过后**才能合并到 main：`git switch main && git merge <分支>` → `git push origin main`
+- 合并后删除远程分支（`git push origin --delete <分支>`）与本地分支（可选）
+- 用户明确要求直接改 main 的情况（如紧急修复）除外
+- 新 Agent 开工前：`git status` / `git branch -a` 确认当前分支与是否有待验收分支
+
+### 4.2 提交与推送
+
+- 身份：`kk <kk@localhost>`（全局已配）
+- 提交信息：`feat(scope): 摘要` + 空行 + 要点列表；中文
+- 每完成一个功能批提交一次；`.env`、`.vscode/`、`.file/` 不入库（已 gitignore）
+- 提交前 `git status` 确认无测试残留（`$null` 之类的垃圾文件）
+- **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
+  本会话若产生了新的经验/约定/架构变化/文件改名，先更新 dev.md 再提交，
+  提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
+- **每次 commit 后必须自动 push 到 origin**（提交即推送）：
+  - 远程已配置：`origin = https://github.com/Ntt7x/toolbox.git`，本地凭证可用；
+  - 分支上：`git add -A` → `git commit` → `git push -u origin <分支>`（一条龙）；
+  - push 失败（认证/网络）时：保留本地提交、报告失败原因，下次可重推，不得丢弃提交；
+  - push 成功后确认 `git status --short --branch` 显示 `## <分支>...origin/<分支>`（无 ahead/behind）。
+
+## 5. 验证清单（每功能必过）
+### 5.1 测试分级与场景引导（2026-08-08 起）
+
+**四级测试（按成本递增，改动按级别对号入座）**：
+- **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
+- **L1 单测**：服务端逻辑改动必跑相关模块单测（`node .../tsx --test apps/server/src/features/<模块>/*.test.ts`）
+- **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
+- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，17 页 playwright）：仅以下场景必跑
+
+**L3 全量冒烟触发时机（严格执行，避免浪费）**：
+- 用户明确要求全量测试时
+- 大需求改动：新页面 / 新路由 / 多文件前端重构 / **页面加载逻辑改动**（useEffect/数据获取）
+- 提交/合并 main 前的收尾自检
+
+**测试场景对照表（改什么 → 测什么）**：
+
+| 改动类型 | 验证级别 |
+|---|---|
+| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ curl 断言（§6.7：400/200 + message） |
+| 服务端纯计算 / 业务规则 | L0 + L1（compute 等单测） |
+| 前端单页内微调（UI 组件/文案/样式/类型） | L0 + **目标页定向冒烟**（`smoke-pages.mjs --page /tools/x`，比打开 200 更能发现 JS 崩溃/API 错误） |
+| 前端页面加载逻辑（useEffect/API 请求/路由挂载） | L0 + **L3 冒烟**（历史教训：TradePlanTool 卡加载中，curl 测不出请求是否发出） |
+| 新页面 / 新路由 / 多文件前端重构 | L0 + L3 冒烟 + §5.2 菜单/路由/契约核对 |
+| shared 契约类型变更 | L0（全仓 tsc 抓所有引用）+ 受影响调用方定向验证 |
+| 脚本工具（dev-utils/） | 工具自测（self-test.mjs）+ 实跑一次目标场景 |
+| 提交 / 合并 main 前收尾 | L0 + L1 全量 + L3 冒烟 + 测试数据清理（§8.1） |
+
+**测试节奏（对应改动频率）**：
+- **每次小改动提交前**：L0 + 该改动对应级别（多数为 L1/L2 定向）——不跑全量
+- **每个功能/需求完成时**：L0 + L1（相关模块全量）+ L2 定向验证关键交互
+- **每个分支验收前**：L0 + L1 全量 + L3 冒烟 + 测试数据清理（§8.1）+ 历史归档
+- **全量测试触发**：用户明确要求 / 大需求改动 / 分支收尾（严格执行，避免浪费）
+
+**失败处理（更快收敛）**：单测/冒烟失败 → 看失败用例名与断言定位 → 修代码 → **只重跑该模块测试**（`node scripts/dev-utils/test.mjs <模块>`）或**定向冒烟该页**（`--page`）→ 全绿后再继续；**不重复全量冒烟直到收尾**
+
+**历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**涉及页面加载逻辑时必须跑浏览器级冒烟**
+- 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
+
+### 5.2 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
+
+新增任何页面/路由/菜单项后，必须逐项核对：
+
+1. **前端菜单注册三件套**（`apps/web/src/App.tsx`）：`MENU_GROUPS` 加分组项
+   （staticItems 用 `{name, path, icon}`，工具页用 `toolIds`）＋ `<Route>` 映射 ＋ 组件 import。
+2. **菜单编辑模式兼容**（教训：`/settings/agent-sessions` 曾因旧 `settings:menu.order`
+   未含新项而"显示在组末尾但拖不动、保存不进顺序"）：
+   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`sqlite3` 或本地数据管理页）；
+     若该组已有保存顺序且不含新 key，新项会靠 `resolveGroupItems` 的 rest 补显示，
+     但编辑模式草稿不包含它 → 不可拖、保存丢失（startEdit 已修复：进入编辑模式时
+     将未列出的默认项合并进草稿）。
+   - 规则：**新菜单项 key 必须能被 `defaultOrder` 覆盖**（staticItems 的 key=path，
+     toolIds 的 key=tool id），且改动后建议清一次该组顺序或验证编辑模式可拖动。
+3. **服务端注册**：新 feature 必须在 `apps/server/src/index.ts` 加 import + `register(app)`；
+   feature 的 `meta.path` 必须与前端路由一致（`/tools/x` 或 `/settings/x`）。
+4. **shared 契约**：请求/响应类型放 `packages/shared/src/index.ts`，服务端与前端共用；
+   前端 `api.ts` 同步加方法（`jsonInit`，DELETE 用 `jsonInit("DELETE", {})`）。
+5. **持久化数据**：新数据源（KV 前缀/表）必须 `registerDataSource`（本地数据管理可见），
+   否则落入"未标记"。
+   - **tag 必须在前端 `LocalData.tsx` 的 `TAG_COLOR`/`TAG_ORDER` 注册**（教训：`knowledge:` 源 tag=知识数据
+     未注册 TAG_ORDER，整组被 `groups()` 过滤 → 用户"找不到 knowledge"）；`groups()` 现已改为
+     「已知 tag 排序优先 + 未知 tag 追加末尾」，新 tag 不会漏显但仍建议补颜色。
+6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
+
+### 5.3 项目架构依赖图（2026-08-07 起）
+
+- **自动生成**：`core/dependencyGraph.ts` 扫描 server 源码
+  （`features/*/index.ts` + 同目录业务文件、`core/*.ts`）的相对 import，生成 `{nodes, edges}`；
+  `GET /api/dependency-graph` 提供。**新增/修改模块的 import 依赖即自动反映，无需手工维护图结构**。
+- **展示**：后台管理 →「架构图」（`/settings/arch-graph`，ECharts 力导向：拖拽/缩放/点击节点详情与关联）。
+- **手工补充的映射表**（新增模块时同步更新，否则节点显示英文 id / 无描述 / 缺外部边）：
+  - `NODE_NAMES`（id → 中文名）、`NODE_DESC`（关键模块说明）、`EXTERNAL_EDGES`（外部系统/数据层连接）、
+    `LLM_MODE_EDGES`（业务 → LLM 三模式边）。
+- **架构约束**（图应始终体现）：features（业务层）→ core（公共层）→ 外部系统，**单向依赖**；
+  业务不得反向依赖；LLM 三模式（direct/chatSession/reasonix）与 SQLite 数据层为显式带标签边。
+- **验证**：改完跑 `/api/dependency-graph` 看节点/边数量与新增模块是否出现。
+
+### 5.4 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
+
+所有页面交互控件遵守以下最小尺寸与细节（用户舒适度优先）：
+
+1. **输入框/文本域**：`padding ≥ 0.6rem 0.85rem`、`min-height ≥ 40px`、`font-size ≥ 0.9rem`、
+   `border-radius 10px`、边框 `#cbd5e1` + focus ring（`0 0 0 3px rgba(37,99,235,0.12)`）。
+   多行文本域高度 ≥ 96px（约 4 行），`line-height 1.7`。
+2. **按钮**：`padding ≥ 0.5rem 1rem`、`font-size ≥ 0.86rem`、圆角 ≥ 10px；主按钮品牌蓝 +
+   阴影 + hover 反馈；禁用态 opacity 0.55。
+3. **表单结构**：字段用 `.field-label`（0.8rem/600/深灰）标注，输入框与标签间距 ≥ 0.3rem；
+   不要只靠 placeholder 表达字段含义（placeholder 会消失，标签常驻）。
+4. **通用原则**：可读性优先——正文 ≥ 0.8rem、表格 ≥ 0.8rem；可点击元素有 hover 反馈；
+   卡片间距 ≥ 1rem；避免过小点击区（≥ 28px 高度）。
+5. 优先复用 `styles.css` 的 `.input`/`.btn`/`.field-label`/`.card` 工具类；内联样式不得低于上述最小尺寸。
+
+## 6. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
+### 6.1 成本原则：提示词/引导词最小冗余（2026-08-07 起，强制）
 
 **LLM 调用是花钱的，一切提示词与引导词设计以「减少重复冗余、最大化前缀缓存命中」为基本原则：**
 
@@ -75,11 +219,11 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
    即便如此 system 仍应固定、变化进 user。
 4. **日期注入**：需要当前日期时**只注入一次到 user 消息**，不要写进 system 模板（否则 system 每天变、前缀缓存全失效）；
    Reasonix/自研会话首次建立后由会话持有，续问不再重复。
-5. **程序性提示词（非 LLM 的指令文本）不适用本原则**，但同样遵守「数据化/配置化」治理（§4.4）。
+5. **程序性提示词（非 LLM 的指令文本）不适用本原则**，但同样遵守「数据化/配置化」治理（§6.5）。
 
 落实检查点：新增/修改任何 LLM 调用，先问「system 是否固定？变化内容是否都进了 user？能否用会话化减少重复？」
 
-### 4.2 LLM 用量切面（三层标注，2026-08-06 重构后规范）
+### 6.2 LLM 用量切面（三层标注，2026-08-06 重构后规范）
 
 每次 LLM 调用被切面记录到 `llmUsage:log`，**三层标注**各自职责：
 
@@ -101,7 +245,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 4. **前端展示**：按场景（业务/系统/测试）→ 按模式 → 按模块 三栏；旧数据无 mode/scene 兼容按 direct/module 推断。
 
 
-### 4.3 三种调用模式（direct / 自研会话 / Reasonix）
+### 6.3 三种调用模式（direct / 自研会话 / Reasonix）
 
 #### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
 - search=联网搜索（Responses API + web_search，服务端执行，仅 deepseek-v4-flash）；json=response_format json_object
@@ -143,7 +287,35 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   其余全部转义（内容引号成对 + 与结束重叠的 LLM 畸形模式如 `"高"}` 也能恢复合法 JSON）。
   注意 extractOuterJson 遇裸引号会因栈不平衡返回 null，故 fix 后须对整体再试 parse。
 
-## 4.4 本地数据治理原则（禁止硬编码）
+### 6.4 LLM 调用开发经验总结（决策清单，2026-08-07 整合）
+
+**选择调用模式（先决策再写码）**：
+| 场景 | 模式 | 理由 |
+|---|---|---|
+| 单次分析、参数随请求变化 | 模式 1 `chat`（system 固定） | 无会话语义，一次即弃 |
+| 多轮续问 / 批量同类任务 / 同 system 高频复用 | 模式 2 `createChatSession`+`chatSessionAsk` | append-only，前缀缓存命中（实测 3 轮 0%→51%→88.7%） |
+| 长上下文 / Agent 任务 / 知识库问答 | 模式 3 Reasonix ACP | 自带压缩/持久化/工具（代价 ~20k token system 开销） |
+
+**成本落实四问（新增/修改 LLM 调用必答）**：
+1. system 是否逐字固定？——动态内容（日期/标的/月份/对话）一律 `user`（`{占位}` 在 system 中替换为「见用户消息」说明，勿真内联）
+2. 能否会话化？——同 system 复用场景用确定性会话 id（如 `rr-daily-{month}`、`wl-imp-{hash}`、`wl-fund-{code}`），幂等复用 + 不跨业务污染
+3. 引导词/日期是否重复？——Reasonix 会话引导词**仅首轮发送**（guideFp 指纹去重）；日期只注入 user 一次
+4. 结构化输出是否共用 `robustJsonParse`？——新业务直接 import core/jsonParse，勿复制
+
+**已踩过的坑（勿重犯）**：
+- system 内联 `{conversation}`/日期 → 前缀缓存永远 miss（watchlist.import 前身）
+- system 4 变体（cbRate 旧版：banks/日历/搜索注记全内联）→ 收敛为仅 searchNote 2 变体
+- 会话 append 累积污染（固定 id 会话多轮后旧内容残留）→ 按内容哈希的 id（`wl-imp-{hash}`）天然隔离
+- 搜索模式不注入日期 → 模型按训练知识理解「本月」；日期注入 user 且当天固定
+- 模板改版后设置数据里旧模板残留（seed 幂等不覆盖）→ 改模板后必须 `POST /api/prompts/<id>/reset`
+- Reasonix 引导词每轮重复 → 首轮发 + 指纹去重（省 ~200-400 token/轮）
+
+**验证手段**：
+- LLM 用量切面（§6.2 三层标注）看 module 覆盖；会话列表（Agent 会话管理页）看会话是否按预期复用
+- 缓存命中实验：同一会话连续 ask，对比 usage 中 prompt tokens（命中后大幅下降）
+- 单测：`chatSession.test.ts` 会话语义/归档；`knowledgeSession.test.ts` 引导词指纹去重
+
+### 6.5 本地数据治理原则（禁止硬编码）
 
 - **Agent 型改进备忘录（2026-08-07 起，强制）**：Agent（开发 Agent）在工作过程中
   **自增**改进/遗留记录时，`POST /api/tools/memo` 必须显式传 `kind: "agent"`
@@ -188,11 +360,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   纯计算参数/公式（gridPlan compute）
 - 新功能落地检查：数据是否可被用户编辑？可编辑即应入库；入库后立即 `registerDataSource` 打页面 tag
 
-### 4.5 数据可信度（cbRate 等 LLM 结构化输出）
-
-- **专业领域文档**：数据可信度经验（dataMode、防幻觉、缓存 schema 版本、任务终态保护）**见 `docs/for_agent/domains/features.md`**。
-
-## 4.6 前端异步任务（useAsyncTask，切页不丢状态的正确姿势）
+### 6.6 前端异步任务（useAsyncTask，切页不丢状态的正确姿势）
 
 - **结果必须持久化**：taskId 存 sessionStorage 只解决"进行中任务"的恢复；**任务完成后的成果
   也要存 sessionStorage（`:result` 键）**，否则切页（组件卸载）后成果丢失，返回页面空白
@@ -206,43 +374,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   error 帧双路径互相覆盖）
 
 
-## 4.7 LLM 调用开发经验总结（决策清单，2026-08-07 整合）
-
-**选择调用模式（先决策再写码）**：
-| 场景 | 模式 | 理由 |
-|---|---|---|
-| 单次分析、参数随请求变化 | 模式 1 `chat`（system 固定） | 无会话语义，一次即弃 |
-| 多轮续问 / 批量同类任务 / 同 system 高频复用 | 模式 2 `createChatSession`+`chatSessionAsk` | append-only，前缀缓存命中（实测 3 轮 0%→51%→88.7%） |
-| 长上下文 / Agent 任务 / 知识库问答 | 模式 3 Reasonix ACP | 自带压缩/持久化/工具（代价 ~20k token system 开销） |
-
-**成本落实四问（新增/修改 LLM 调用必答）**：
-1. system 是否逐字固定？——动态内容（日期/标的/月份/对话）一律 `user`（`{占位}` 在 system 中替换为「见用户消息」说明，勿真内联）
-2. 能否会话化？——同 system 复用场景用确定性会话 id（如 `rr-daily-{month}`、`wl-imp-{hash}`、`wl-fund-{code}`），幂等复用 + 不跨业务污染
-3. 引导词/日期是否重复？——Reasonix 会话引导词**仅首轮发送**（guideFp 指纹去重）；日期只注入 user 一次
-4. 结构化输出是否共用 `robustJsonParse`？——新业务直接 import core/jsonParse，勿复制
-
-**已踩过的坑（勿重犯）**：
-- system 内联 `{conversation}`/日期 → 前缀缓存永远 miss（watchlist.import 前身）
-- system 4 变体（cbRate 旧版：banks/日历/搜索注记全内联）→ 收敛为仅 searchNote 2 变体
-- 会话 append 累积污染（固定 id 会话多轮后旧内容残留）→ 按内容哈希的 id（`wl-imp-{hash}`）天然隔离
-- 搜索模式不注入日期 → 模型按训练知识理解「本月」；日期注入 user 且当天固定
-- 模板改版后设置数据里旧模板残留（seed 幂等不覆盖）→ 改模板后必须 `POST /api/prompts/<id>/reset`
-- Reasonix 引导词每轮重复 → 首轮发 + 指纹去重（省 ~200-400 token/轮）
-
-**验证手段**：
-- LLM 用量切面（§4.2 三层标注）看 module 覆盖；会话列表（Agent 会话管理页）看会话是否按预期复用
-- 缓存命中实验：同一会话连续 ask，对比 usage 中 prompt tokens（命中后大幅下降）
-- 单测：`chatSession.test.ts` 会话语义/归档；`knowledgeSession.test.ts` 引导词指纹去重
-
-### 4.8 浏览器自动化（core/browser.ts + features/browserChat）
-
-- **专业领域文档**：浏览器自动化经验（DeepSeek 网页版 Chat 操作、受控输入 insertText、aria-pressed、profile 锁）**见 `docs/for_agent/domains/features.md`**。
-
-### 4.9 策略仓位管理（trade-plan）
-
-- **专业领域文档**：策略仓位管理实现经验（配置/仓位拆分、日度计划按数量、保存即应用、基线+重放、校验分工）**见 `docs/for_agent/domains/features.md`**；通用原则见 §4.10（前后端分工）。
-
-### 4.10 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
+### 6.7 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
 
 **核心原则：所有业务规则校验一律在服务端做「权威校验」，前端只做「体验性校验」。** 前端校验可被绕过（直接调 API），绝不能当作安全/正确性边界。
 
@@ -256,9 +388,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **教训（本次踩坑）**：「重复标的」「数量非零成本必填」起初只在前端校验，用户指出后才补服务端——任何「不允许/必须」的规则都先问：服务端拦了吗？没拦就是漏洞。
 
-**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §6.4 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
+**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §5.1 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
 
-### 4.11 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
+### 6.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
 **单源化**：脚本的**目录树 / 13 个工具用法 / 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**（导航/查表见 README §2 用途列）。README 缺失/过期时优先补 README（§8.1 同步义务）。
 
@@ -266,149 +398,43 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 1. 所有辅助脚本一律放 scripts/dev-utils/，**禁止仓库根目录散放 tmp_*.mjs**（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）
 2. 出现第 2 次相似脚本需求 → 先查 README §2 工具表 + §4 归档表 → 有现成直接用；缺能力在 dev-utils/ 固化（不是又写 tmp）
 3. 一次性调试脚本 → dev-utils/_tmp_*.mjs 跑完即删，严禁提交
-4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§4.9 教训）
+4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§7.3 教训）
 5. 服务端单测/全量单测用 test.mjs；提交用 commit.mjs（消息引号安全）；API 验证用 api-cli.mjs；工具改动后必跑 self-test.mjs
-6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§4.10）
+6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§6.7）
 
-**同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §4.11 与工具实际一致（§8.1）。
+**同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §6.8 与工具实际一致（§8.1）。
 
-## 5. 外部数据源经验
+## 7. 领域经验索引（按需加载）
+
+> 各业务/技术领域细节在 `docs/for_agent/domains/`，仅涉足时加载（AGENTS.md 只强制加载本文件）。
+
+| 领域 | 文档 | 何时看 |
+|---|---|---|
+| Reasonix ACP（协议/会话/进程/MCP/托管/引导词去重） | `domains/reasonix.md` | 涉足 Reasonix 会话/知识库会话复用 |
+| 浏览器自动化（DeepSeek 网页版 Chat） | `domains/features.md` | 改 browserChat / 网页自动化 |
+| 策略仓位管理（trade-plan） | `domains/features.md` | 改 trade-plan |
+| 数据可信度（cbRate 结构化输出） | `domains/features.md` | 改 LLM 结构化输出业务 |
+| 外部数据源（知乎/知识库中心/行情/分享/快讯） | `domains/data-sources.md` | 涉足外部数据源 |
+
+### 7.1 Reasonix ACP
+- **专业领域文档**：Reasonix ACP 全部细节（协议要点 / 会话生命周期 / 进程管理 / MCP 配置 / 对话托管 / 引导词去重 / 会话复用）**见 `docs/for_agent/domains/reasonix.md`**——涉足 Reasonix 时按需加载。
+
+### 7.2 浏览器自动化（core/browser.ts + features/browserChat）
+
+- **专业领域文档**：浏览器自动化经验（DeepSeek 网页版 Chat 操作、受控输入 insertText、aria-pressed、profile 锁）**见 `docs/for_agent/domains/features.md`**。
+
+### 7.3 策略仓位管理（trade-plan）
+
+- **专业领域文档**：策略仓位管理实现经验（配置/仓位拆分、日度计划按数量、保存即应用、基线+重放、校验分工）**见 `docs/for_agent/domains/features.md`**；通用原则见 §6.7（前后端分工）。
+
+### 7.4 数据可信度（cbRate 等 LLM 结构化输出）
+
+- **专业领域文档**：数据可信度经验（dataMode、防幻觉、缓存 schema 版本、任务终态保护）**见 `docs/for_agent/domains/features.md`**。
+
+### 7.5 外部数据源经验
 
 - **专业领域文档**：外部数据源（知乎爬虫 / 知识库中心 / A-H 行情多源 / DeepSeek 分享提取 / 东财快讯）经验**见 `docs/for_agent/domains/data-sources.md`**——涉足外部数据源时按需加载。
 - 测试资源：分享 id `u5myqtvktzo5gal4qi`；测试行情 `600519` / `hk00700`。
-
-## 6. git 规范
-
-### 6.1 分支工作流（强制，2026-08-05 起）
-
-> ⚠️ **硬性规则（2026-08 再次强调）：所有改动无论大小、无论是否小修补，一律先 `git switch -c <type>/<简述>` 新建分支再动手；禁止在 main 上直接修改、提交或推送。曾发生多起「小改动顺手改 main」的违规（如备忘录小修），导致 main 被直接污染、验收流程失效。用户验收通过后才允许合并回 main。**
-
-
-
-- **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
-  `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
-- 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
-- **必须等待用户验收通过后**才能合并到 main：`git switch main && git merge <分支>` → `git push origin main`
-- 合并后删除远程分支（`git push origin --delete <分支>`）与本地分支（可选）
-- 用户明确要求直接改 main 的情况（如紧急修复）除外
-- 新 Agent 开工前：`git status` / `git branch -a` 确认当前分支与是否有待验收分支
-
-### 6.2 提交与推送
-
-- 身份：`kk <kk@localhost>`（全局已配）
-- 提交信息：`feat(scope): 摘要` + 空行 + 要点列表；中文
-- 每完成一个功能批提交一次；`.env`、`.vscode/`、`.file/` 不入库（已 gitignore）
-- 提交前 `git status` 确认无测试残留（`$null` 之类的垃圾文件）
-- **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
-  本会话若产生了新的经验/约定/架构变化/文件改名，先更新 dev.md 再提交，
-  提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
-- **每次 commit 后必须自动 push 到 origin**（提交即推送）：
-  - 远程已配置：`origin = https://github.com/Ntt7x/toolbox.git`，本地凭证可用；
-  - 分支上：`git add -A` → `git commit` → `git push -u origin <分支>`（一条龙）；
-  - push 失败（认证/网络）时：保留本地提交、报告失败原因，下次可重推，不得丢弃提交；
-  - push 成功后确认 `git status --short --branch` 显示 `## <分支>...origin/<分支>`（无 ahead/behind）。
-
-## 7. 验证清单（每功能必过）
-
-- [ ] `pnpm typecheck` 全绿
-- [ ] 新 API 用 curl 实测（含错误分支：非法参数/未配置/上游失败）
-- [ ] 页面与模块编译 200（vite dev；**vite 只绑 `[::1]`，测试用 `http://localhost:5173` 而非 127.0.0.1**）
-- [ ] 回归：`/api/health`、`/api/tools`、既有端点不受影响
-- [ ] 单测：`tsx --test apps/server/src/**/*.test.ts`（含 `app.integration.test.ts`）
-- [ ] **app 级集成测试约定（2026-08-07 起）**：`apps/server/src/app.integration.test.ts` 免端口测核心路由
-  （`app.request`），import `./index.js` 前须 `process.env.TOOLBOX_TEST="1"`（index.ts 据此跳过端口监听）；
-  只测读/纯计算链路，**禁止触发 LLM/外网**（网格计划计算/总览/用量/数据源/备忘录 CRUD/prompts 列表）。
-  index.ts 已 `export { app }`——新增路由后在此补一条断言即完成「装配级回归」。
-
-### 6.4 测试分级与场景引导（2026-08-08 起）
-
-**四级测试（按成本递增，改动按级别对号入座）**：
-- **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
-- **L1 单测**：服务端逻辑改动必跑相关模块单测（`node .../tsx --test apps/server/src/features/<模块>/*.test.ts`）
-- **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
-- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，17 页 playwright）：仅以下场景必跑
-
-**L3 全量冒烟触发时机（严格执行，避免浪费）**：
-- 用户明确要求全量测试时
-- 大需求改动：新页面 / 新路由 / 多文件前端重构 / **页面加载逻辑改动**（useEffect/数据获取）
-- 提交/合并 main 前的收尾自检
-
-**测试场景对照表（改什么 → 测什么）**：
-
-| 改动类型 | 验证级别 |
-|---|---|
-| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ curl 断言（§4.10：400/200 + message） |
-| 服务端纯计算 / 业务规则 | L0 + L1（compute 等单测） |
-| 前端单页内微调（UI 组件/文案/样式/类型） | L0 + **目标页定向冒烟**（`smoke-pages.mjs --page /tools/x`，比打开 200 更能发现 JS 崩溃/API 错误） |
-| 前端页面加载逻辑（useEffect/API 请求/路由挂载） | L0 + **L3 冒烟**（历史教训：TradePlanTool 卡加载中，curl 测不出请求是否发出） |
-| 新页面 / 新路由 / 多文件前端重构 | L0 + L3 冒烟 + §7.1 菜单/路由/契约核对 |
-| shared 契约类型变更 | L0（全仓 tsc 抓所有引用）+ 受影响调用方定向验证 |
-| 脚本工具（dev-utils/） | 工具自测（self-test.mjs）+ 实跑一次目标场景 |
-| 提交 / 合并 main 前收尾 | L0 + L1 全量 + L3 冒烟 + 测试数据清理（§8.1） |
-
-**测试节奏（对应改动频率）**：
-- **每次小改动提交前**：L0 + 该改动对应级别（多数为 L1/L2 定向）——不跑全量
-- **每个功能/需求完成时**：L0 + L1（相关模块全量）+ L2 定向验证关键交互
-- **每个分支验收前**：L0 + L1 全量 + L3 冒烟 + 测试数据清理（§8.1）+ 历史归档
-- **全量测试触发**：用户明确要求 / 大需求改动 / 分支收尾（严格执行，避免浪费）
-
-**失败处理（更快收敛）**：单测/冒烟失败 → 看失败用例名与断言定位 → 修代码 → **只重跑该模块测试**（`node scripts/dev-utils/test.mjs <模块>`）或**定向冒烟该页**（`--page`）→ 全绿后再继续；**不重复全量冒烟直到收尾**
-
-**历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**涉及页面加载逻辑时必须跑浏览器级冒烟**
-- 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
-
-### 7.1 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
-
-新增任何页面/路由/菜单项后，必须逐项核对：
-
-1. **前端菜单注册三件套**（`apps/web/src/App.tsx`）：`MENU_GROUPS` 加分组项
-   （staticItems 用 `{name, path, icon}`，工具页用 `toolIds`）＋ `<Route>` 映射 ＋ 组件 import。
-2. **菜单编辑模式兼容**（教训：`/settings/agent-sessions` 曾因旧 `settings:menu.order`
-   未含新项而"显示在组末尾但拖不动、保存不进顺序"）：
-   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`sqlite3` 或本地数据管理页）；
-     若该组已有保存顺序且不含新 key，新项会靠 `resolveGroupItems` 的 rest 补显示，
-     但编辑模式草稿不包含它 → 不可拖、保存丢失（startEdit 已修复：进入编辑模式时
-     将未列出的默认项合并进草稿）。
-   - 规则：**新菜单项 key 必须能被 `defaultOrder` 覆盖**（staticItems 的 key=path，
-     toolIds 的 key=tool id），且改动后建议清一次该组顺序或验证编辑模式可拖动。
-3. **服务端注册**：新 feature 必须在 `apps/server/src/index.ts` 加 import + `register(app)`；
-   feature 的 `meta.path` 必须与前端路由一致（`/tools/x` 或 `/settings/x`）。
-4. **shared 契约**：请求/响应类型放 `packages/shared/src/index.ts`，服务端与前端共用；
-   前端 `api.ts` 同步加方法（`jsonInit`，DELETE 用 `jsonInit("DELETE", {})`）。
-5. **持久化数据**：新数据源（KV 前缀/表）必须 `registerDataSource`（本地数据管理可见），
-   否则落入"未标记"。
-   - **tag 必须在前端 `LocalData.tsx` 的 `TAG_COLOR`/`TAG_ORDER` 注册**（教训：`knowledge:` 源 tag=知识数据
-     未注册 TAG_ORDER，整组被 `groups()` 过滤 → 用户"找不到 knowledge"）；`groups()` 现已改为
-     「已知 tag 排序优先 + 未知 tag 追加末尾」，新 tag 不会漏显但仍建议补颜色。
-6. **验证**：新页面 200（vite dev）＋ API curl 实测（含错误分支）＋ 菜单编辑模式拖动/保存一次。
-
-### 7.2 项目架构依赖图（2026-08-07 起）
-
-- **自动生成**：`core/dependencyGraph.ts` 扫描 server 源码
-  （`features/*/index.ts` + 同目录业务文件、`core/*.ts`）的相对 import，生成 `{nodes, edges}`；
-  `GET /api/dependency-graph` 提供。**新增/修改模块的 import 依赖即自动反映，无需手工维护图结构**。
-- **展示**：后台管理 →「架构图」（`/settings/arch-graph`，ECharts 力导向：拖拽/缩放/点击节点详情与关联）。
-- **手工补充的映射表**（新增模块时同步更新，否则节点显示英文 id / 无描述 / 缺外部边）：
-  - `NODE_NAMES`（id → 中文名）、`NODE_DESC`（关键模块说明）、`EXTERNAL_EDGES`（外部系统/数据层连接）、
-    `LLM_MODE_EDGES`（业务 → LLM 三模式边）。
-- **架构约束**（图应始终体现）：features（业务层）→ core（公共层）→ 外部系统，**单向依赖**；
-  业务不得反向依赖；LLM 三模式（direct/chatSession/reasonix）与 SQLite 数据层为显式带标签边。
-- **验证**：改完跑 `/api/dependency-graph` 看节点/边数量与新增模块是否出现。
-
-### 7.3 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
-
-所有页面交互控件遵守以下最小尺寸与细节（用户舒适度优先）：
-
-1. **输入框/文本域**：`padding ≥ 0.6rem 0.85rem`、`min-height ≥ 40px`、`font-size ≥ 0.9rem`、
-   `border-radius 10px`、边框 `#cbd5e1` + focus ring（`0 0 0 3px rgba(37,99,235,0.12)`）。
-   多行文本域高度 ≥ 96px（约 4 行），`line-height 1.7`。
-2. **按钮**：`padding ≥ 0.5rem 1rem`、`font-size ≥ 0.86rem`、圆角 ≥ 10px；主按钮品牌蓝 +
-   阴影 + hover 反馈；禁用态 opacity 0.55。
-3. **表单结构**：字段用 `.field-label`（0.8rem/600/深灰）标注，输入框与标签间距 ≥ 0.3rem；
-   不要只靠 placeholder 表达字段含义（placeholder 会消失，标签常驻）。
-4. **通用原则**：可读性优先——正文 ≥ 0.8rem、表格 ≥ 0.8rem；可点击元素有 hover 反馈；
-   卡片间距 ≥ 1rem；避免过小点击区（≥ 28px 高度）。
-5. 优先复用 `styles.css` 的 `.input`/`.btn`/`.field-label`/`.card` 工具类；内联样式不得低于上述最小尺寸。
 
 ## 8. 历史进度记录（必须遵守）
 
@@ -431,7 +457,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **需求型（feature）改进**必须等待用户显式确认（用户明确点名实现或说"全部处理"）后才做
 - 处理完的条目在 memo:items 里标记 status=done；类型字段 `kind`（缺省 fix，旧数据兼容）
 
-## 8.1 维护性文件同步规则（每次提交/归档必做）
+### 8.1 维护性文件同步规则（每次提交/归档必做）
 
 - **测试数据必须清理（硬性）**：任何测试/冒烟产生的临时数据，交付前必须删除并验证无残留——包括：临时领域库/虚拟库/知识条目（`it_*`/`test*`/`zh_*` 等前缀）、导入历史（`kbImport:history`）、LLM 用量记录（`llmUsage:` 测试 module 记录）。**单测必须在 `finally` 中彻底清理其创建的 KV**（注意前缀：领域元数据是 `kbDomain:`，删它用 `deleteDomain`；虚拟库是 `kbVirt:`，删它用 `deleteVirtKb`——勿混用，否则残留）。提交前跑一次 overview/本地数据管理 确认无 `testdomain_`/`it_` 等残留。
 
@@ -444,7 +470,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
    - `docs/for_agent/domains/*.md`——专业领域经验（reasonix / features / data-sources），**按需加载**：涉足对应领域时阅读并更新；
    - `docs/for_agent/history/*.md`——时间线记录（会话总结，只增不改）；
    - 根目录 `AGENTS.md`——强制加载入口（若 dev.md 目录结构/引用路径变化需同步）。
-2. **每次阶段性 git commit 前**（§6）：检查本次改动是否影响任何经验/约定/结构，
+2. **每次阶段性 git commit 前**（§4）：检查本次改动是否影响任何经验/约定/结构，
    受影响则先更新 dev.md（新增节/条目或修订过时内容），把文档更新一起提交。
 3. **每次归档 history 后**：立即对照本次会话改动核对 dev.md——新增的经验/教训必须
    已固化进 dev.md（历史记录 ≠ 常驻规范，只有 dev.md 会被自动加载）；
