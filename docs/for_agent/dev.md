@@ -7,9 +7,10 @@
 
 1. **加载规范**：本文件已由 AGENTS.md 强制加载；涉足专业领域（Reasonix / 行情 / 知乎 / 知识库 / trade-plan / 浏览器自动化）时按 §7 索引**按需加载**对应 domains 文档。
 2. **查状态**：`git status` / `git branch -a`——当前分支 + 是否有待验收分支（§4）。
-3. **读备忘录**：`node scripts/dev-utils/memo.mjs list`——处理 open 改进备忘录（§8.0）。
-4. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
-5. **验证→提交→推送**：L0 typecheck → 按 §5.1 分级验证 → `commit.mjs "msg"`（自动 push）→ 等用户验收再合并 main（§4）。
+3. **读历史**：读最近一份 `docs/for_agent/history/` 归档，了解已完成/遗留（§8）。
+4. **读备忘录**：`node scripts/dev-utils/memo.mjs list`——处理 open 改进备忘录（§8.0）。
+5. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
+6. **验证→提交→推送**：L0 typecheck → 按 §5.1 分级验证 → `commit.mjs "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
 
 **常用命令（高频，脚本细节见 §6.8 / scripts/README.md）**：
 | 用途 | 命令 |
@@ -58,18 +59,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 1. **先写 shared 契约**（类型 + 注释），前后端共享，绝不直接改对方类型
 2. server：core 放能力（fetch/LLM/计算），features 放业务编排（提示词/解析/路由）
 3. web：`api.ts` 加方法（`get`/`post` 封装，错误响应携带 message）→ 工具页组件
-4. 验证：`pnpm typecheck` + curl 全量回归（health/tools/各工具端点）+ 页面 200
+4. 验证：`pnpm typecheck` + api-cli 全量回归（health/tools/各工具端点，§6.8）+ 页面 200
 
 ## 3. 环境与工具注意（Windows）
 
-- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；每次命令需 `set "PATH=D:\Softwares\nodejs;%PATH%"`
+- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；命令前设 PATH——cmd：`set "PATH=D:\Softwares\nodejs;%PATH%"`；PowerShell（当前 bash 工具）：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH`
 - dev 服务：`pnpm dev` 后台跑（tsx watch + vite HMR 都正常）
 - bash 工具解析器在 cmd/PowerShell 间不稳定：**分号 `;` 会被当参数**，
-  一条命令只做一件事；多行提交信息用 `-F 文件`（`.git/COMMIT_MSG_TMP.txt`，用完删）
+  一条命令只做一件事；提交用 `commit.mjs`（消息引号安全，自动 add+commit+push，§6.8）
 - typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
 
-### 3.1 开发进程管理（scripts/dev.mjs，2026-08-07 起强制）
-（scripts/dev.mjs，2026-08-07 起强制）
+### 3.1 开发进程管理（scripts/dev-utils/dev.mjs，2026-08-07 起强制）
 
 - **禁止手动在后台任务里直接起 `tsx watch` / `vite`**（历史多次 EADDRINUSE/残留进程/服务静默挂掉，排查耗时）。
 - 一律用 `node scripts/dev-utils/dev.mjs start|stop|restart|status|kill-port <port|all>`：
@@ -91,10 +91,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
   `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
 - 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
-- **必须等待用户验收通过后**才能合并到 main：`git switch main && git merge <分支>` → `git push origin main`
+- **必须等待用户验收通过后**才能合并到 main：`git switch main` → `git merge <分支>` → `git push origin main`（PowerShell 不支持 `&&`，分步执行）
 - 合并后删除远程分支（`git push origin --delete <分支>`）与本地分支（可选）
 - 用户明确要求直接改 main 的情况（如紧急修复）除外
-- 新 Agent 开工前：`git status` / `git branch -a` 确认当前分支与是否有待验收分支
+- 开工状态检查已在 §0 开工清单（步骤 2-4），此处不重复
 
 ### 4.2 提交与推送
 
@@ -107,7 +107,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   提交信息中注明文档同步（如 `docs(agent): …`）；禁止只改代码不落文档。
 - **每次 commit 后必须自动 push 到 origin**（提交即推送）：
   - 远程已配置：`origin = https://github.com/Ntt7x/toolbox.git`，本地凭证可用；
-  - 分支上：`git add -A` → `git commit` → `git push -u origin <分支>`（一条龙）；
+  - 分支上：推荐 `node scripts/dev-utils/commit.mjs "msg"`（自动 add+commit+push）；或手写 `git add -A` → `git commit` → `git push -u origin <分支>`；
   - push 失败（认证/网络）时：保留本地提交、报告失败原因，下次可重推，不得丢弃提交；
   - push 成功后确认 `git status --short --branch` 显示 `## <分支>...origin/<分支>`（无 ahead/behind）。
 
@@ -116,7 +116,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **四级测试（按成本递增，改动按级别对号入座）**：
 - **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
-- **L1 单测**：服务端逻辑改动必跑相关模块单测（`node .../tsx --test apps/server/src/features/<模块>/*.test.ts`）
+- **L1 单测**：服务端逻辑改动必跑相关模块单测（`node scripts/dev-utils/test.mjs <模块>`，自动定位 .test.ts；空参数=全量串行）
 - **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
 - **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，17 页 playwright）：仅以下场景必跑
 
@@ -129,7 +129,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 | 改动类型 | 验证级别 |
 |---|---|
-| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ curl 断言（§6.7：400/200 + message） |
+| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ API 断言（api-cli，§6.7：400/200 + message） |
 | 服务端纯计算 / 业务规则 | L0 + L1（compute 等单测） |
 | 前端单页内微调（UI 组件/文案/样式/类型） | L0 + **目标页定向冒烟**（`smoke-pages.mjs --page /tools/x`，比打开 200 更能发现 JS 崩溃/API 错误） |
 | 前端页面加载逻辑（useEffect/API 请求/路由挂载） | L0 + **L3 冒烟**（历史教训：TradePlanTool 卡加载中，curl 测不出请求是否发出） |
@@ -157,7 +157,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
    （staticItems 用 `{name, path, icon}`，工具页用 `toolIds`）＋ `<Route>` 映射 ＋ 组件 import。
 2. **菜单编辑模式兼容**（教训：`/settings/agent-sessions` 曾因旧 `settings:menu.order`
    未含新项而"显示在组末尾但拖不动、保存不进顺序"）：
-   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`sqlite3` 或本地数据管理页）；
+   - 新增菜单项后，先查服务端 `settings:menu.order` 现值（`node scripts/dev-utils/kv.mjs get settings:menu.order` 或本地数据管理页）；
      若该组已有保存顺序且不含新 key，新项会靠 `resolveGroupItems` 的 rest 补显示，
      但编辑模式草稿不包含它 → 不可拖、保存丢失（startEdit 已修复：进入编辑模式时
      将未列出的默认项合并进草稿）。
@@ -260,6 +260,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 #### 模式 3：Reasonix ACP
 
 - **专业领域文档**：Reasonix ACP 全部细节（协议要点 / 会话生命周期 / 进程管理 / MCP 配置 / 对话托管 / 引导词去重 / 会话复用）**见 `docs/for_agent/domains/reasonix.md`**——涉足 Reasonix 时按需加载。
+
+#### 通用细节（三种模式共用）
 
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
@@ -373,7 +375,6 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **终态防重复**：settledRef 标记——error 帧/迟到轮询结果不得重复处理（防止 onerror 与
   error 帧双路径互相覆盖）
 
-
 ### 6.7 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
 
 **核心原则：所有业务规则校验一律在服务端做「权威校验」，前端只做「体验性校验」。** 前端校验可被绕过（直接调 API），绝不能当作安全/正确性边界。
@@ -388,7 +389,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **教训（本次踩坑）**：「重复标的」「数量非零成本必填」起初只在前端校验，用户指出后才补服务端——任何「不允许/必须」的规则都先问：服务端拦了吗？没拦就是漏洞。
 
-**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §5.1 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
+**验证习惯**：改完服务端校验必须「重启 server + 用 api-cli 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §5.1 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
 
 ### 6.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
@@ -440,7 +441,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。
 
-- **新 Agent 开工前**：先读最近一份 history（`ls docs/for_agent/history/` 取最新），了解已完成/遗留，避免重复开发
+- **新 Agent 开工前**：先读最近一份 history（`ls docs/for_agent/history/ | sort | Select-Object -Last 1`，PowerShell），了解已完成/遗留，避免重复开发
 - **每个 Agent 会话结束时**：在 `docs/for_agent/history/` 追加一份总结，命名 `YYYY-MM-DD-NN.md`（NN 为当日序号）
 - 总结格式：时间、会话主题、按序完成的功能（含文件/API）、git commit、**遗留/规划事项**（🔮 未实现 🚧 未提交）
 - 历史文件只增不改（除非事实错误），保持时间线完整
@@ -459,7 +460,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 8.1 维护性文件同步规则（每次提交/归档必做）
 
-- **测试数据必须清理（硬性）**：任何测试/冒烟产生的临时数据，交付前必须删除并验证无残留——包括：临时领域库/虚拟库/知识条目（`it_*`/`test*`/`zh_*` 等前缀）、导入历史（`kbImport:history`）、LLM 用量记录（`llmUsage:` 测试 module 记录）。**单测必须在 `finally` 中彻底清理其创建的 KV**（注意前缀：领域元数据是 `kbDomain:`，删它用 `deleteDomain`；虚拟库是 `kbVirt:`，删它用 `deleteVirtKb`——勿混用，否则残留）。提交前跑一次 overview/本地数据管理 确认无 `testdomain_`/`it_` 等残留。
+- **测试数据必须清理（硬性）**：任何测试/冒烟产生的临时数据，交付前必须删除并验证无残留——包括：临时领域库/虚拟库/知识条目（`it_*`/`test*`/`zh_*` 等前缀）、导入历史（`kbImport:history`）、LLM 用量记录（`llmUsage:` 测试 module 记录）。**单测必须在 `finally` 中彻底清理其创建的 KV**（注意前缀：领域元数据是 `kbDomain:`，删它用 `deleteDomain`；虚拟库是 `kbVirt:`，删它用 `deleteVirtKb`——勿混用，否则残留）。提交前跑 `node scripts/dev-utils/api-cli.mjs GET /tools/overview` 或本地数据管理页确认无 `testdomain_`/`it_` 等残留。
 
 - **维护性文件**：docs/for_agent 下所有文件（dev.md、history/*）必须在每次阶段性提交/归档时同步更新（新路由/新页面/新公共模块/经验教训/规则变更都要记）。
 
