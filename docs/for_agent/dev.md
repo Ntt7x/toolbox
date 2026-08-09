@@ -334,7 +334,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **教训（本次踩坑）**：「重复标的」「数量非零成本必填」起初只在前端校验，用户指出后才补服务端——任何「不允许/必须」的规则都先问：服务端拦了吗？没拦就是漏洞。
 
-**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改完必须跑 node scripts/dev-utils/smoke-pages.mjs。
+**验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §6.4 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
 
 ### 4.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
@@ -345,8 +345,11 @@ scripts/
 └── dev-utils/
     ├── dev.mjs                   开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
     ├── proc.mjs                  进程诊断/清理 CLI（status/list/kill/kill-port；查残留 supervisor/tsx）
-    ├── smoke-pages.mjs           页面冒烟（17 页 playwright；页面大改后必跑）
-    └── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs
+    ├── smoke-pages.mjs           页面冒烟（17 页 playwright；--page <路径> 定向单页）
+    ├── test.mjs                  模块单测快捷（自动定位测试文件 / 全量串行）
+    ├── commit.mjs                git 提交包装（消息引号安全，自动 add+commit）
+    ├── api-cli.mjs               API CLI（GET/POST/PUT/DELETE + JSON body）
+    └── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs / self-test.mjs
 ```
 
 **所有开发辅助脚本一律集中放 scripts/dev-utils/**（API 客户端 / 备忘录 CLI / KV 检查 / E2E 脚手架），禁止在仓库根目录散放 tmp_*.mjs（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）。
@@ -356,6 +359,12 @@ scripts/
 - memo.mjs：备忘录 CLI——node scripts/dev-utils/memo.mjs list / done <id>... / add <text>（每轮「处理备忘录」必用）
 - kv.mjs：KV/DB 只读检查——node scripts/dev-utils/kv.mjs list <前缀> / count <前缀> / get <key>（查测试数据残留/数据分布）
 - e2e.mjs：API E2E 断言脚手架——import { e2e, assert } from './e2e.mjs'，声明用例列表跑断言，失败即 exit 1
+- test.mjs：模块单测快捷——node scripts/dev-utils/test.mjs <模块名|features/x|core/x|空=全量>（自动定位 .test.ts；全量逐文件串行防 SQLite 写锁）
+- commit.mjs：git 提交包装——node scripts/dev-utils/commit.mjs "消息"（自动 add -A + commit -F；消息内 
+ 转多行；解决 cmd 引号/分号拆解）
+- api-cli.mjs：API CLI——node scripts/dev-utils/api-cli.mjs <GET|POST|PUT|DELETE> <path> [json-body]（curl 替代，Windows 引号安全；BASE 已含 /api，path 写 /health）
+- self-test.mjs：工具自测——node scripts/dev-utils/self-test.mjs（patch.mjs 逻辑回归；工具改动后必跑）
+- smoke-pages.mjs --page：定向冒烟——node scripts/dev-utils/smoke-pages.mjs --page /tools/x（单页验证，配合 §6.4 L2）
 - 用法详见 scripts/README.md（§2 工具速查表）
 
 **规则**：
@@ -365,6 +374,30 @@ scripts/
 4. 集成验证（E2E）用 e2e.mjs 脚手架组织；服务端校验改完必须「重启 server + 脚本打 400/200 断言」（§4.7）
 5. 文件文本替换用 patch.mjs（patch.json 驱动，dry-run/原子写盘），禁止 node -e 长替换；浏览器调试用 browser-probe.mjs
 6. 历史临时脚本的归类与去向见 scripts/README.md（§4 归档表）——新脚本需求先查该表与 README，出现第 2 次即固化
+7. 服务端单测/全量单测用 test.mjs（模块名或空=全量）；提交用 commit.mjs（不要手敲 git commit -m 长消息）
+8. 服务端 API 验证用 api-cli.mjs（400/200 断言见 §4.7）；脚本工具改动后必跑 self-test.mjs
+
+**常用场景速查（改什么 → 用什么脚本）**：
+| 场景 | 命令 |
+|---|---|
+| 启动/重启 dev 环境 | dev.mjs start/restart/stop/status |
+| 进程异常/残留排查 | proc.mjs status/list/kill/kill-port |
+| 跑模块单测 / 全量单测 | test.mjs <模块> / test.mjs |
+| 提交改动（引号安全） | commit.mjs "feat(x): ..." |
+| 验证 API（400/200 断言） | api-cli.mjs GET /health 等 |
+| 页面小改动定向验证 | smoke-pages.mjs --page /tools/x |
+| 大需求改动全量验证 | smoke-pages.mjs（L3，§6.4 触发时机） |
+| 处理备忘录 | memo.mjs list / done <id>... |
+| 查测试数据残留 | kv.mjs list/count <前缀> |
+| 文件批量替换 | patch.mjs <patch.json> [--apply] |
+| 浏览器元素探测 | browser-probe.mjs <url> --check "选择器" [--headless] |
+| 工具改动回归 | self-test.mjs |
+
+**脚本进化流程（新需求怎么走）**：
+1. 出现脚本需求 → 先查 scripts/README.md §2 工具表 + §4 归档表：有现成 → 直接用
+2. 没有 → 判断一次性（dev-utils/_tmp_*.mjs 跑完即删）还是可复用（在 dev-utils/ 固化）
+3. 固化后：写 self-test 用例（如 patch.mjs 的 7 项回归）→ 实跑验证 → scripts/README.md 工具表补一行 → 本段目录树/清单补一行 → 提交
+4. 每次阶段性提交：检查 dev.md §4.8 与 scripts/README.md 是否与工具实际状态一致（§8.1 维护性文件同步）
 
 ## 5. 外部数据源经验
 
