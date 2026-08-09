@@ -53,6 +53,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **分层铁律**：依赖方向 `features → core`，core 之间互不依赖；业务逻辑不进 core。
 新增工具 = 建 `features/xxx/`（导出 `meta` + `register(app)`）→ shared 加契约 → web 建 `tools/XxxTool.tsx` 并注册进 `toolPages` + `MENU_GROUPS`（分组：后台 / 交易 / 工具，见 §5.2 菜单三件套）。
+前端 UI 组件：复杂交互优先用 shadcn/ui（§5.4 组件库选型），简单元素用现有样式体系。
 
 ## 2. 开发流程（契约驱动）
 
@@ -196,7 +197,22 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 5.4 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
 
-所有页面交互控件遵守以下最小尺寸与细节（用户舒适度优先）：
+**组件库选型（2026-08-09 起）：新前端组件优先采用成熟组件库 `shadcn/ui`**
+- 官方安装文档：https://ui.shadcn.com/docs/installation/vite（React 19 + Vite 兼容）
+- 定位：shadcn/ui 是**复制式**组件库（Radix 无头组件 + Tailwind 样式），组件源码复制进 `apps/web/src/components/ui/`，**可完全定制、无运行时包锁定**——适合"个人工具集 + 频繁迭代"
+- **适用范围**：复杂交互组件（对话框/下拉/开关/标签页/表格/表单/弹窗）优先 shadcn；**简单元素**（按钮/输入框/卡片）继续用现有 `styles.css` 工具类或内联样式——**存量页面渐进迁移，不强制重写**
+- **引入前提（已落地 2026-08-09，TradePlanTool 重写时）**：`tailwindcss` v4（`@tailwindcss/vite` 插件）+ `cn` 工具（clsx + tailwind-merge，`src/lib/utils.ts`）+ `components.json` + `@/` path alias（vite resolve.alias + tsconfig paths）+ CSS 变量 token（`src/index.css`，主色对齐 #2563eb）
+- **shadcn 使用经验（TradePlanTool 重写实践沉淀）**：
+  - **初始化**：`npx shadcn@latest add <组件...>`（在 apps/web 下跑，读 components.json）；Radix 现在统一为 `radix-ui` 单包（非散装 @radix-ui/react-*）
+  - **Select**：`<Select value onValueChange>` 的 value 是 string，`onValueChange(v: string)`；**value 不允许空串**（初始无值用 `SelectValue placeholder` 而不是 value=""）；`SelectItem` 支持 `disabled`
+  - **Slider**：值是**数组**（`value={[n]}` + `onValueChange={(v) => set(v[0])}`），与原生 `<input type=range>` 不同
+  - **Button**：variant（default/secondary/outline/ghost/destructive）+ size（default/sm/lg/icon）；小按钮用 `size="icon"` + className 微调
+  - **Input 半受控**（数字输入）：shadcn Input 的 onChange 正常转发，半受控模式（本地 text 态 + blur 提交）可用——**但注意**：受控组件 onChange 立即回写会吞中间态（"1."），数字输入必须半受控（见 §6.8 前 TradePlanTool StepInput 教训）
+  - **tailwind preflight 无破坏**：现有页面内联样式自给自足，preflight 重置被显式样式覆盖——18 页冒烟确认无回归
+  - **重写策略**：大组件重写保留业务逻辑层（状态/回调/计算），只换 JSX 渲染层（Card/Button/Input/Select/Table/Badge 等）——逻辑零回归
+- **约束**：引入 shadcn 组件后仍需满足下方细节（可读性/最小尺寸/hover 反馈）；新组件必须过定向冒烟（smoke-pages --page）
+
+**通用细节（所有页面交互控件，含 shadcn 组件）**：
 
 1. **输入框/文本域**：`padding ≥ 0.6rem 0.85rem`、`min-height ≥ 40px`、`font-size ≥ 0.9rem`、
    `border-radius 10px`、边框 `#cbd5e1` + focus ring（`0 0 0 3px rgba(37,99,235,0.12)`）。
