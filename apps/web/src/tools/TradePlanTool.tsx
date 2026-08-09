@@ -57,8 +57,9 @@ const numInput = (v: string) => Number(stripLeadZeros(v).replace(/[,，\s]/g, ""
 
 /** 数字输入 + 上下步进（▲▼ 调整；min/max 下限/上限，手动输入照常） */
 function StepInput({ value, onChange, step = 1, min = 0, max, width = 90, placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; width?: number; placeholder?: string }) {
+  // 精度：保留 6 位（防浮点噪声），不主动截断用户输入精度（如成本价 10.868）
   const clamp = (v: number) => {
-    let r = Math.round(v * 100) / 100;
+    let r = Math.round(v * 1e6) / 1e6;
     if (max !== undefined) r = Math.min(max, r);
     return Math.max(min, r);
   };
@@ -536,7 +537,7 @@ export default function TradePlanTool() {
                             </label>
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               成本价
-                              <StepInput value={pos?.avgCost ?? 0} onChange={(v) => setPosByCode(s.code, { avgCost: v })} step={0.1} width={85} placeholder="0.00" />
+                              <StepInput value={pos?.avgCost ?? 0} onChange={(v) => setPosByCode(s.code, { avgCost: v })} step={0.01} width={85} placeholder="0.00" />
                             </label>
                             <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>数量非零时成本价必填</span>
                           </div>
@@ -565,7 +566,7 @@ export default function TradePlanTool() {
                 {items.length === 0 && <div style={{ color: "#94a3b8", fontSize: "0.82rem", marginBottom: "0.5rem" }}>添加今日的交易操作（加仓 / 减仓）</div>}
                 {items.map((it, i) => (
                   <div key={i} style={{ display: "flex", gap: "0.35rem", marginBottom: "0.4rem", alignItems: "center" }}>
-                    <select style={{ ...input, width: 160, padding: "0.4rem 0.55rem" }} value={it.code} onChange={(e) => setItemAt(i, { code: e.target.value })}>
+                    <select style={{ ...input, width: 220, padding: "0.4rem 0.55rem" }} value={it.code} onChange={(e) => setItemAt(i, { code: e.target.value })}>
                       <option value="">选择标的</option>
                       {stockOptions.map((s) => {
                         const used = items.some((it2, j) => j !== i && it2.code === s.code);
@@ -582,7 +583,7 @@ export default function TradePlanTool() {
                     </select>
                     <StepInput value={it.amount} onChange={(v) => setItemAt(i, { amount: v })} step={100} width={100} placeholder="数量（股）" />
                     {it.action === "add" && (
-                      <StepInput value={it.cost ?? 0} onChange={(v) => setItemAt(i, { cost: v || undefined })} step={0.1} width={90} placeholder="成本价（可选）" />
+                      <StepInput value={it.cost ?? 0} onChange={(v) => setItemAt(i, { cost: v || undefined })} step={0.01} width={90} placeholder="成本价（可选）" />
                     )}
                     {(() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
