@@ -42,6 +42,14 @@ interface SourceDef {
   enabled: boolean;
 }
 
+// 重要新闻关键词（利率/重大政策/通胀/流动性等；命中 title 或 digest 即高亮）
+const IMPORTANT_KEYWORDS = [
+  "利率", "央行", "降息", "加息", "CPI", "PPI", "逆回购", "MLF", "LPR",
+  "货币政策", "美联储", "议息", "降准", "存款准备金", "国债", "汇率", "通胀", "财政政策",
+];
+const isImportant = (n: NewsItem): boolean =>
+  IMPORTANT_KEYWORDS.some((k) => (n.title || "").includes(k) || (n.digest || "").includes(k));
+
 export default function NewsCenterTool() {
   const [tab, setTab] = useState<"show" | "config">("show");
   // 展示区
@@ -156,35 +164,46 @@ export default function NewsCenterTool() {
 
           {items.length > 0 && (
             <div style={{ marginTop: "0.6rem", display: "flex", flexDirection: "column" }}>
-              {items.map((n, i) => (
-                <a
-                  key={`${n.source}-${i}`}
-                  href={n.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={n.digest}
-                  style={{
-                    display: "flex",
-                    gap: "0.7rem",
-                    alignItems: "baseline",
-                    textDecoration: "none",
-                    color: "#334155",
-                    fontSize: "0.85rem",
-                    lineHeight: 1.55,
-                    padding: "0.28rem 0.4rem",
-                    borderRadius: 8,
-                    borderBottom: "1px solid #f1f5f9",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0, width: 104 }}>{n.time.slice(5, 16)}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>{n.title}</span>
-                  <span style={{ color: "#64748b", fontSize: "0.72rem", flexShrink: 0, background: "#f1f5f9", padding: "0.1rem 0.5rem", borderRadius: 999 }}>
-                    {n.sourceName}
-                  </span>
-                </a>
-              ))}
+              {items.map((n, i) => {
+                const imp = isImportant(n);
+                return (
+                  <a
+                    key={`${n.source}-${i}`}
+                    href={n.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={n.digest}
+                    style={{
+                      display: "flex",
+                      gap: "0.7rem",
+                      alignItems: "baseline",
+                      textDecoration: "none",
+                      color: "#334155",
+                      fontSize: "0.85rem",
+                      lineHeight: 1.55,
+                      padding: "0.28rem 0.4rem",
+                      borderRadius: 8,
+                      borderBottom: "1px solid #f1f5f9",
+                      ...(imp
+                        ? { background: "#fff7ed", borderLeft: "3px solid #f97316", fontWeight: 600, color: "#7c2d12" }
+                        : {}),
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = imp ? "#ffedd5" : "#f8fafc"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = imp ? "#fff7ed" : "transparent"; }}
+                  >
+                    <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0, width: 104 }}>{n.time.slice(5, 16)}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{n.title}</span>
+                    {imp && (
+                      <span style={{ flexShrink: 0, background: "#f97316", color: "#fff", fontSize: "0.68rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: 999 }}>
+                        ⭐ 重要
+                      </span>
+                    )}
+                    <span style={{ color: "#64748b", fontSize: "0.72rem", flexShrink: 0, background: "#f1f5f9", padding: "0.1rem 0.5rem", borderRadius: 999 }}>
+                      {n.sourceName}
+                    </span>
+                  </a>
+                );
+              })}
             </div>
           )}
           {!loading && items.length === 0 && errors.length === 0 && (

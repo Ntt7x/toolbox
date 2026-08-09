@@ -586,18 +586,20 @@ export default function TradePlanTool() {
                     )}
                     {(() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
-                      const est = it.amount * (it.cost && it.cost > 0 ? it.cost : price);
+                      const cost = it.cost && it.cost > 0 ? it.cost : price; // 本次成本优先，缺省当前均价（与后端一致）
+                      const est = it.amount * cost;
                       return (
-                        <span style={{ fontSize: "0.72rem", color: price > 0 ? "#64748b" : "#b45309", width: 96, flexShrink: 0 }}>
-                          {price > 0 ? `≈ ${cny(est)}` : "未设成本价"}
+                        <span style={{ fontSize: "0.72rem", color: cost > 0 ? "#64748b" : "#b45309", width: 96, flexShrink: 0 }}>
+                          {cost > 0 ? `≈ ${cny(est)}` : "未设成本价"}
                         </span>
                       );
                     })()}
-                    {/* 金额百分比滑块：占总仓位百分比 → 金额 → 股数（按成本价换算） */}
+                    {/* 金额百分比滑块：占总仓位百分比 → 金额 → 股数（按成本价换算；本次 cost 优先） */}
                     {strategy.totalCapital > 0 && (() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
-                      if (price <= 0) return null;
-                      const pct = it.amount > 0 ? Math.min(100, Math.round((it.amount * price / strategy.totalCapital) * 100)) : 0;
+                      const cost = it.cost && it.cost > 0 ? it.cost : price;
+                      if (cost <= 0) return null;
+                      const pct = it.amount > 0 ? Math.min(100, Math.round((it.amount * cost / strategy.totalCapital) * 100)) : 0;
                       return (
                         <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                           <input
@@ -606,7 +608,7 @@ export default function TradePlanTool() {
                             max={100}
                             step={1}
                             value={pct}
-                            onChange={(e) => setItemAt(i, { amount: Math.round((strategy.totalCapital * Number(e.target.value)) / 100 / price) })}
+                            onChange={(e) => setItemAt(i, { amount: Math.round((strategy.totalCapital * Number(e.target.value)) / 100 / cost) })}
                             style={{ width: 72, accentColor: "#2563eb" }}
                             title="按占策略总仓位的百分比换算金额后折算股数"
                           />
