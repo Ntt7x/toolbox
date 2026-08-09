@@ -84,6 +84,8 @@ export default function TradePlanTool() {
   const [editingCode, setEditingCode] = useState<string | null>(null); // 编辑中的标的代码
   const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("none"); // 标的列表按市值排序
   const [newStock, setNewStock] = useState<{ code: string; name?: string; maxWeightPct?: number }>({ code: "" });
+  const [cfgMsg, setCfgMsg] = useState<string | null>(null); // 配置卡就地提示（保存结果/校验错误）
+  const [addMsg, setAddMsg] = useState<string | null>(null); // 新增区就地提示
   const savedCfgRef = useRef<string>(""); // 最近保存的配置快照（未保存离开提醒）
 
   const loadStrategies = useCallback(async () => {
@@ -126,32 +128,34 @@ export default function TradePlanTool() {
     } catch { /* 静默 */ }
   }, []);
 
-  const saveCfg = async () => {
+  const saveCfg = useCallback(async (opts?: { silent?: boolean }) => {
     if (!strategy) return;
-    // 上限% 校验：0-100
+    // 上限% 校验：0-100（就地提示）
     const bad = strategy.stocks.find((s) => s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100));
     if (bad) {
-      setMsg(`❌ 标的 ${bad.code || "（未填代码）"} 的仓位上限需在 0-100% 之间`);
+      setCfgMsg("❌ 标的 " + (bad.code || "（未填代码）") + " 的仓位上限需在 0-100% 之间");
       return;
     }
     // 当前仓位校验：数量非空非零时成本价必填
     const badPos = strategy.positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
     if (badPos) {
-      setMsg(`❌ 标的 ${badPos.code} 当前数量为 ${badPos.quantity}，成本价必填`);
+      setCfgMsg("❌ 标的 " + badPos.code + " 当前数量为 " + badPos.quantity + "，成本价必填");
       return;
     }
-    setMsg(null);
+    setCfgMsg(null);
     try {
       const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
       if (r.ok && r.strategy) setStrategy(r.strategy);
       savedCfgRef.current = JSON.stringify(r.strategy ?? strategy);
-      setMsg("✅ 策略配置已保存");
+      if (!opts?.silent) {
+        setCfgMsg("✅ 已自动保存");
+        setTimeout(() => setCfgMsg((m) => (m && m.startsWith("✅") ? null : m)), 2000);
+      }
       await loadStrategies();
     } catch (e) {
-      setMsg("❌ " + errMsg(e));
+      setCfgMsg("❌ 保存失败：" + errMsg(e));
     }
-  };
-
+  }, [strategy]);
   const createSt = async () => {
     const name = newName.trim();
     if (!name) return;
@@ -194,7 +198,7 @@ export default function TradePlanTool() {
     else if (code) positions.push({ code, quantity: patch.quantity ?? 0, avgCost: patch.avgCost ?? 0 });
     setStrategy({ ...strategy, positions });
   };
-  /** 移除标的（按 code 定位，同步删除对应当前仓位） */
+  /** 移除标的（按 code 定位，同步删除对应当前仓位；删除后自动保存） */
   const removeStockByCode = (code: string) => {
     if (!strategy) return;
     setStrategy({
@@ -202,13 +206,15 @@ export default function TradePlanTool() {
       stocks: strategy.stocks.filter((x) => x.code !== code),
       positions: strategy.positions.filter((p) => p.code !== code),
     });
+    setTimeout(() => void saveCfg({ silent: true }), 0);
   };
-  /** 新增标的（插入列表第一个；不允许重复 code） */
+  /** 新增标的（插入列表第一个；不允许重复 code；添加后自动保存） */
   const addNewStock = () => {
     if (!strategy || !newStock.code.trim()) return;
     const code = newStock.code.trim();
     if (strategy.stocks.some((x) => x.code === code)) {
-      setMsg(`❌ 标的 ${code} 已在策略中，不允许重复添加`);
+      setAddMsg("❌ 标的 " + code + " 已在策略中，不允许重复添加");
+      setTimeout(() => setAddMsg((m) => (m && m.startsWith("❌") ? null : m)), 3000);
       return;
     }
     setStrategy({
@@ -219,6 +225,8 @@ export default function TradePlanTool() {
       ],
     });
     setNewStock({ code: "" });
+    setAddMsg(null);
+    setTimeout(() => void saveCfg({ silent: true }), 0); // 添加后自动保存（等 strategy 更新）
   };
   /** 某标的当前市值 */
   const mvOf = (code: string) => {
@@ -412,25 +420,26 @@ export default function TradePlanTool() {
                     style={{ ...input, width: 160, fontWeight: 700 }}
                     value={strategy.name}
                     onChange={(e) => setStrategy({ ...strategy, name: e.target.value })}
+                    onBlur={() => void saveCfg({ silent: true })}
                     placeholder="策略名称"
                   />
                   <span style={{ flex: 1 }} />
                   <button style={{ ...btnGhost, padding: "0.4rem 0.8rem", fontSize: "0.8rem" }} onClick={() => setCfgCollapsed((v) => !v)} type="button">
                     {cfgCollapsed ? "▸ 展开配置" : "▾ 收起"}
                   </button>
-                  <button style={btn} onClick={() => void saveCfg()} type="button">💾 保存配置</button>
                 </div>
 
                 {!cfgCollapsed && (
                   <>
+                    {cfgMsg && <div style={{ marginBottom: "0.5rem", padding: "0.4rem 0.7rem", borderRadius: 8, fontSize: "0.8rem", background: cfgMsg.startsWith("❌") ? "#fef2f2" : "#ecfdf5", border: "1px solid " + (cfgMsg.startsWith("❌") ? "#fecaca" : "#a7f3d0") }}>{cfgMsg}</div>}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem", marginBottom: "0.7rem" }}>
                       <label>
                         <span style={{ color: "#475569", fontSize: "0.8rem" }}>总仓位（元）</span>
-                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.totalCapital === 0 ? "" : strategy.totalCapital.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, totalCapital: numInput(e.target.value) })} placeholder="如 1000000" />
+                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.totalCapital === 0 ? "" : strategy.totalCapital.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, totalCapital: numInput(e.target.value) })} onBlur={() => void saveCfg({ silent: true })} placeholder="如 1000000" />
                       </label>
                       <label>
                         <span style={{ color: "#475569", fontSize: "0.8rem" }}>单日加仓上限（元）</span>
-                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.dailyAddLimit === 0 ? "" : strategy.dailyAddLimit.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: numInput(e.target.value) })} placeholder="如 50000" />
+                        <input style={{ ...input, width: "100%", marginTop: "0.2rem" }} type="text" inputMode="numeric" value={strategy.dailyAddLimit === 0 ? "" : strategy.dailyAddLimit.toLocaleString("zh-CN")} onChange={(e) => setStrategy({ ...strategy, dailyAddLimit: numInput(e.target.value) })} onBlur={() => void saveCfg({ silent: true })} placeholder="如 50000" />
                       </label>
                     </div>
 
@@ -467,6 +476,7 @@ export default function TradePlanTool() {
                         <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="%" value={newStock.maxWeightPct ?? ""} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: numInput(e.target.value) || undefined }))} />
                       </label>
                       <button style={{ ...btn, padding: "0.35rem 0.8rem", fontSize: "0.8rem" }} onClick={addNewStock} disabled={!newStock.code.trim()} type="button">添加</button>
+                      {addMsg && <span style={{ fontSize: "0.75rem", color: "#dc2626", flexShrink: 0 }}>{addMsg}</span>}
                       <span style={{ flex: 1 }} />
                       <span style={{ fontSize: "0.78rem", color: "#64748b", flexShrink: 0 }}>按市值排序：</span>
                       {([["none", "默认"], ["desc", "↓ 高→低"], ["asc", "↑ 低→高"]] as const).map(([v, l]) => (
@@ -490,7 +500,7 @@ export default function TradePlanTool() {
                             </span>
                           )}
                           <span style={{ flex: 1 }} />
-                          <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => setEditingCode(isEdit ? null : s.code)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
+                          <button style={{ ...btn, background: isEdit ? "#16a34a" : "#0891b2", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => { if (isEdit) void saveCfg({ silent: true }); setEditingCode(isEdit ? null : s.code); }} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</button>
                           <button style={{ ...btn, background: "#ef4444", padding: "0.25rem 0.55rem", fontSize: "0.76rem" }} disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再删除" : "移除标的（同步删除当前仓位）"} onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</button>
                         </div>
                         {isEdit ? (

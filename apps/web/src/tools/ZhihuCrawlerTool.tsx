@@ -37,16 +37,18 @@ function ResultItems({
   selectable,
   selected,
   onToggle,
+  openFirst,
 }: {
   items: ZhihuCrawlItem[];
   selectable?: boolean;
   selected?: Set<number>;
   onToggle?: (i: number) => void;
+  openFirst?: boolean;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
       {items.map((it, i) => (
-        <details key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.6rem 0.9rem", background: "#fafbfc" }}>
+        <details key={i} open={openFirst && i === 0} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.6rem 0.9rem", background: "#fafbfc" }}>
           <summary style={{ cursor: "pointer", fontSize: "0.88rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
             {selectable && onToggle && (
               <input type="checkbox" checked={selected?.has(i) ?? false} onClick={(e) => e.stopPropagation()} onChange={() => onToggle(i)} />
@@ -110,6 +112,7 @@ export default function ZhihuCrawlerTool() {
   // 历史结果查看
   const [viewResultId, setViewResultId] = useState<string | null>(null);
   const [viewItems, setViewItems] = useState<ZhihuCrawlItem[] | null>(null);
+  const [resultOpenFirst, setResultOpenFirst] = useState(false); // 展开历史结果时自动打开第一篇
 
   const task = useAsyncTask<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; warnings?: string[]; message?: string }>(
     "zhihuCrawlTaskId",
@@ -564,37 +567,40 @@ export default function ZhihuCrawlerTool() {
             <tbody>
               {history.map((h) => (
                 <Fragment key={h.id}>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <tr
+                  style={{ borderBottom: "1px solid #f1f5f9", cursor: h.resultId ? "pointer" : "default" }}
+                  onClick={async () => {
+                    if (!h.resultId) return;
+                    const same = viewResultId === h.resultId;
+                    setViewResultId(same ? null : (h.resultId ?? null));
+                    setResultOpenFirst(false);
+                    if (same) {
+                      setViewItems(null);
+                    } else {
+                      try {
+                        const r = await api.zhihuResult(h.resultId!);
+                        setViewItems(r.ok ? (r.items ?? []) : null);
+                        setResultOpenFirst(true); // 展开后自动打开第一篇
+                      } catch {
+                        setViewItems(null);
+                      }
+                    }
+                  }}
+                  title={h.resultId ? "点击展开/收起抓取结果" : ""}
+                >
                   <td style={{ padding: "0.4rem 0.5rem" }}>
                     <b>{h.name || humanTarget(h.target)}</b>
                     {h.name ? <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.5rem" }}>{humanTarget(h.target)}</span> : null}
+                    {viewResultId === h.resultId && (
+                      <span style={{ fontSize: "0.7rem", color: "#2563eb", marginLeft: "0.4rem" }}>▼ 已展开</span>
+                    )}
                   </td>
                   <td style={{ padding: "0.4rem 0.5rem", color: "#64748b" }}>{h.total} 条</td>
                   <td style={{ padding: "0.4rem 0.5rem", color: "#94a3b8", fontSize: "0.72rem" }}>{new Date(h.ts).toLocaleString()}</td>
                   <td style={{ padding: "0.4rem 0.5rem", textAlign: "right", whiteSpace: "nowrap" }}>
-                    {h.resultId && (
-                      <button
-                        onClick={async () => {
-                          const same = viewResultId === h.resultId;
-                          setViewResultId(same ? null : (h.resultId ?? null));
-                          if (same) {
-                            setViewItems(null);
-                          } else {
-                            try {
-                              const r = await api.zhihuResult(h.resultId!);
-                              setViewItems(r.ok ? (r.items ?? []) : null);
-                            } catch {
-                              setViewItems(null);
-                            }
-                          }
-                        }}
-                        style={{ fontSize: "0.72rem", padding: "0.2rem 0.6rem", marginRight: "0.3rem" }}
-                      >
-                        {viewResultId === h.resultId ? "收起结果 ▲" : "查看结果"}
-                      </button>
-                    )}
                     <button
-                      onClick={async () => {
+                      onClick={async (e) => {
+                        e.stopPropagation();
                         await api.zhihuHistoryDelete(h.id);
                         setHistory((prev) => prev.filter((x) => x.id !== h.id));
                         if (viewResultId === h.resultId) {
@@ -613,7 +619,7 @@ export default function ZhihuCrawlerTool() {
                   <tr style={{ background: "#f8faff" }}>
                     <td colSpan={4} style={{ padding: "0.6rem 0.9rem", borderBottom: "1px solid #f1f5f9" }}>
                       <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
-                        <ResultItems items={viewItems} />
+                        <ResultItems items={viewItems} openFirst={resultOpenFirst} />
                       </div>
                     </td>
                   </tr>
