@@ -1706,6 +1706,8 @@ export interface TradePlanStrategy {
   stocks: TradePlanStockCfg[];
   /** 当前仓位（与配置拆分：独立管理，由日度计划应用后自动更新） */
   positions: TradePlanPosition[];
+  /** 仓位基线（手动编辑固化；日度计划应用/删除时从此基线重放，保证多日链一致） */
+  basePositions?: TradePlanPosition[];
   updatedAt: string;
   createdAt: string;
 }
@@ -1747,8 +1749,10 @@ export interface TradePlanItem {
   code: string;
   /** 加仓 / 减仓 */
   action: "add" | "reduce";
-  /** 数量（股）；金额 = 数量 × 成本价（当前仓位） */
+  /** 数量（股）；金额 = 数量 × 成本价 */
   amount: number;
+  /** 本次操作成本价（可选；缺省用当前仓位成本价） */
+  cost?: number;
   note?: string;
 }
 

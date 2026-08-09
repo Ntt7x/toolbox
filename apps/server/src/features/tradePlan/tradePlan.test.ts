@@ -89,3 +89,22 @@ test("applyItems：减仓只减数量", () => {
   assert.equal(m.quantity, 90);
   assert.equal(m.avgCost, 1200);
 });
+
+test("applyItems：加仓用本次 cost 重算均价", () => {
+  const after = applyItems(cfg.positions, [{ code: "600519", action: "add", amount: 10, cost: 2000 }]);
+  const m = after.find((p) => p.code === "600519")!;
+  assert.equal(m.quantity, 30); // 20 + 10
+  assert.equal(m.avgCost, 1600); // (20×1400 + 10×2000)/30
+});
+
+test("checkTradePlan：加仓金额用本次 cost", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 5, cost: 2000 }]);
+  assert.equal(r.totals.addTotal, 10000); // 5 × 2000
+  const m = r.after.find((p) => p.code === "600519")!;
+  assert.equal(m.addAmount, 10000);
+});
+
+test("checkTradePlan：cost 缺省用当前均价", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 5 }]);
+  assert.equal(r.totals.addTotal, 7000); // 5 × 1400
+});

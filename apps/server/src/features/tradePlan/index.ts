@@ -25,6 +25,7 @@ import {
   listDays,
   listStrategies,
   migrateLegacyConfig,
+  replayPositions,
   updateStrategy,
 } from "./store.js";
 
@@ -118,6 +119,8 @@ export function register(app: Hono): void {
       dailyAddLimit,
       stocks,
       positions,
+      // 手动保存仓位 → 固化为基线（日度计划重放的起点）
+      ...(positions !== undefined ? { basePositions: positions.map((p) => ({ ...p })) } : {}),
     });
     return c.json({ ok: true, strategy: st });
   });
@@ -151,12 +154,8 @@ export function register(app: Hono): void {
     const items = parseItems(raw?.items);
     if (!items || items.length === 0) return c.json({ ok: false, message: "计划条目无效（需至少一条）" }, 400);
 
-    // 同日已应用 → 先用该日 before 快照回滚仓位，保证同日重复保存幂等
-    const existing = listDays(st.id).find((d) => d.date === date);
-    let positions = st.positions ?? [];
-    if (existing?.applied && Array.isArray(existing.before)) {
-      positions = existing.before;
-    }
+    // 仓位 = 基线重放（剔除该日后）→ 保证同日覆盖/多日链一致
+    const positions = replayPositions(st, date);
     const checkConfig = { ...st, positions };
     const result = checkTradePlan(checkConfig, items);
     // 违反策略仓位管理（有 error 级告警）→ 拒绝保存
@@ -167,7 +166,7 @@ export function register(app: Hono): void {
     const after = applyItems(before, items);
     const now = new Date().toISOString();
     const day = createDay(st.id, date, items, result, { applied: true, before, after, appliedAt: now });
-    updateStrategy(st.id, { positions: after }); // 自动更新当前仓位
+    updateStrategy(st.id, { positions: after }); // 自动更新当前仓位（基线不变）
     return c.json({ ok: true, result, day, strategy: getStrategy(st.id) });
   });
 
@@ -198,7 +197,7 @@ export function register(app: Hono): void {
     return c.json({ ok: true, month, days });
   });
 
-  // 删除日度计划（已应用的自动回滚当前仓位）
+  // 删除日度计划（已应用的：从基线重放剩余计划 → 保证多日链一致）
   app.delete(`${API_PREFIX}/tools/trade-plan/strategies/:id/day/:dayId`, (c: Context) => {
     const id = c.req.param("id");
     const dayId = c.req.param("dayId");
@@ -206,8 +205,10 @@ export function register(app: Hono): void {
     const st = getStrategy(id);
     const day = listDays(id).find((d) => d.id === dayId);
     if (!st || !day) return c.json({ ok: false, message: "计划不存在" }, 404);
-    if (day.applied && Array.isArray(day.before)) {
-      updateStrategy(id, { positions: day.before }); // 回滚到应用前仓位
+    if (day.applied) {
+      // 删除该日后，其余已应用计划按日期升序重放 → 一致性（不再简单回滚 before）
+      const after = replayPositions(st, day.date);
+      updateStrategy(id, { positions: after });
     }
     deleteDay(id, dayId);
     return c.json({ ok: true });
@@ -246,15 +247,17 @@ function parseItems(raw: unknown): TradePlanItemParsed[] | null {
   const items: TradePlanItemParsed[] = [];
   for (const x of raw) {
     if (typeof x !== "object" || x === null) continue;
-    const it = x as { code?: unknown; action?: unknown; amount?: unknown; note?: unknown };
+    const it = x as { code?: unknown; action?: unknown; amount?: unknown; cost?: unknown; note?: unknown };
     const code = typeof it.code === "string" ? it.code.trim() : "";
     const action = it.action === "reduce" ? "reduce" : it.action === "add" ? "add" : null;
     const amount = num(it.amount);
     if (!code || !action || amount === undefined || amount <= 0) continue;
+    const cost = num(it.cost);
     items.push({
       code,
       action,
       amount,
+      ...(cost !== undefined && cost > 0 ? { cost } : {}),
       ...(typeof it.note === "string" && it.note.trim() ? { note: it.note.trim() } : {}),
     });
   }

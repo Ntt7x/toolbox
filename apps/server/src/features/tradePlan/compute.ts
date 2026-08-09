@@ -42,17 +42,23 @@ function qtyOf(config: TradePlanCheckConfig, code: string): number {
   return p?.quantity ?? 0;
 }
 
-/** 应用日度计划 → 更新后的仓位（纯函数；数量直接加减，成本价不变——按当前成本近似买入价） */
+/** 应用日度计划 → 更新后的仓位（纯函数；数量直接加减；加仓用本次成本价重算均价，缺省用当前均价） */
 export function applyItems(positions: TradePlanPosition[], items: TradePlanItem[]): TradePlanPosition[] {
   const out = positions.map((p) => ({ ...p, quantity: p.quantity || 0, avgCost: p.avgCost || 0 }));
   for (const it of items) {
     const pos = out.find((p) => p.code === it.code);
     if (!pos) {
-      if (it.action === "add" && it.amount > 0) out.push({ code: it.code, quantity: it.amount, avgCost: 0 });
+      if (it.action === "add" && it.amount > 0) out.push({ code: it.code, quantity: it.amount, avgCost: it.cost ?? 0 });
       continue;
     }
-    if (it.action === "add") pos.quantity = Math.round((pos.quantity + it.amount) * 100) / 100;
-    else pos.quantity = Math.max(0, Math.round((pos.quantity - it.amount) * 100) / 100);
+    if (it.action === "add") {
+      const cost = it.cost && it.cost > 0 ? it.cost : pos.avgCost;
+      const qty = pos.quantity + it.amount;
+      pos.avgCost = qty > 0 ? (pos.quantity * pos.avgCost + it.amount * cost) / qty : cost;
+      pos.quantity = Math.round(qty * 100) / 100;
+    } else {
+      pos.quantity = Math.max(0, Math.round((pos.quantity - it.amount) * 100) / 100);
+    }
   }
   return out;
 }
@@ -93,19 +99,23 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
   }
 
-  // 成本价检查：操作标的须已设成本价（金额 = 数量 × 成本价）
-  const missingPrice = [...byCode.keys()].filter((code) => priceOf(config, code) <= 0);
+  // 成本价检查：操作标的须有成本（本次 cost 或当前仓位 avgCost），金额 = 数量 × 成本价
+  const itemCostOf = (code: string) => items.find((it) => it.code === code)?.cost ?? 0;
+  const missingPrice = [...byCode.keys()].filter((code) => itemCostOf(code) <= 0 && priceOf(config, code) <= 0);
   for (const code of missingPrice) {
     alerts.push({
       level: "error",
       code,
       message: `标的 ${code} 未设置成本价，无法换算金额`,
-      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请先在「当前仓位」填写该标的的成本价",
+      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请填写本次成本价或在「当前仓位」填写该标的的成本价",
     });
   }
 
-  // 2. 单日加仓上限（金额 = 加仓股数 × 成本价）
-  const addTotal = [...byCode.entries()].reduce((a, [code, v]) => a + v.add * priceOf(config, code), 0);
+  // 2. 单日加仓上限（金额 = 加仓股数 × 成本价（本次 cost 优先））
+  const addTotal = [...byCode.entries()].reduce((a, [code, v]) => {
+    const cost = itemCostOf(code) > 0 ? itemCostOf(code) : priceOf(config, code);
+    return a + v.add * cost;
+  }, 0);
   if (dailyAddLimit > 0 && addTotal > dailyAddLimit) {
     alerts.push({
       level: "error",
@@ -156,7 +166,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
 
     seenCodes.add(pos.code);
-    const addAmount = v.add * price;
+    const addAmount = v.add * (itemCostOf(pos.code) > 0 ? itemCostOf(pos.code) : price);
     if (curQty === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
     after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount });
   }

@@ -563,7 +563,7 @@ export default function TradePlanTool() {
                     <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="数量（股）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
                     {(() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
-                      const est = it.amount * price;
+                      const est = it.amount * (it.cost && it.cost > 0 ? it.cost : price);
                       return (
                         <span style={{ fontSize: "0.72rem", color: price > 0 ? "#64748b" : "#b45309", width: 96, flexShrink: 0 }}>
                           {price > 0 ? `≈ ${cny(est)}` : "未设成本价"}

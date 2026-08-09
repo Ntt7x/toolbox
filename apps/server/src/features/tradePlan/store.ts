@@ -12,6 +12,7 @@ import {
   type TradePlanStrategySummary,
 } from "@toolbox/shared";
 import { kvGet, kvSet, kvDelete, kvCount } from "../../core/kvStore.js";
+import { applyItems } from "./compute.js";
 
 const STRATEGY_PREFIX = "tradePlan:strategy:";
 const STRATEGY_LIST = "tradePlan:strategies:list";
@@ -54,7 +55,24 @@ export function getStrategy(id: string): TradePlanStrategy | null {
     kvSet(STRATEGY_PREFIX + id, migrated);
     return migrated;
   }
+  // basePositions 迁移：无基线时以当前 positions 为基线（幂等）
+  if (!Array.isArray(st.basePositions)) {
+    st.basePositions = st.positions.map((p) => ({ ...p }));
+    kvSet(STRATEGY_PREFIX + id, st);
+  }
   return st;
+}
+
+/** 重放所有已应用日度计划（按日期升序）→ 最新仓位；excludeDate 用于同日覆盖/删除时剔除该日 */
+export function replayPositions(st: TradePlanStrategy, excludeDate?: string): TradePlanPosition[] {
+  let positions: TradePlanPosition[] = (st.basePositions ?? st.positions ?? []).map((p) => ({ ...p }));
+  const applied = listDays(st.id)
+    .filter((d) => d.applied && d.date !== excludeDate && Array.isArray(d.items))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  for (const d of applied) {
+    positions = applyItems(positions, d.items);
+  }
+  return positions;
 }
 
 /** 旧数据迁移：stocks[].initShares/initCost（或旧 initialPositions）→ positions，并清掉内联字段 */
@@ -114,6 +132,7 @@ export function updateStrategy(
     dailyAddLimit?: number;
     stocks?: TradePlanStrategy["stocks"];
     positions?: TradePlanStrategy["positions"];
+    basePositions?: TradePlanStrategy["basePositions"];
   },
 ): TradePlanStrategy | null {
   const st = getStrategy(id);
@@ -123,6 +142,7 @@ export function updateStrategy(
   if (patch.dailyAddLimit !== undefined) st.dailyAddLimit = patch.dailyAddLimit;
   if (patch.stocks !== undefined) st.stocks = patch.stocks;
   if (patch.positions !== undefined) st.positions = patch.positions;
+  if (patch.basePositions !== undefined) st.basePositions = patch.basePositions;
   st.updatedAt = new Date().toISOString();
   kvSet(STRATEGY_PREFIX + id, st);
   return st;
