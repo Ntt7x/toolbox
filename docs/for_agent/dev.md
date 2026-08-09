@@ -209,6 +209,13 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - **Button**：variant（default/secondary/outline/ghost/destructive）+ size（default/sm/lg/icon）；小按钮用 `size="icon"` + className 微调
   - **Input 半受控**（数字输入）：shadcn Input 的 onChange 正常转发，半受控模式（本地 text 态 + blur 提交）可用——**但注意**：受控组件 onChange 立即回写会吞中间态（"1."），数字输入必须半受控（见 §6.8 前 TradePlanTool StepInput 教训）
   - **tailwind preflight 无破坏**：现有页面内联样式自给自足，preflight 重置被显式样式覆盖——18 页冒烟确认无回归
+  - **@theme inline 映射必配（大坑）**：tailwind v4 的 `bg-primary`/`bg-secondary` 等类依赖
+    `@theme inline { --color-primary: var(--primary); ... }` 映射（shadcn init 标准产物）。
+    若只写 `:root { --primary: 217 91% 60% }`（HSL 三段式）且无映射 → `bg-primary` 输出无效颜色，
+    **按钮/滑块轨道全部透明/白（"按钮看不见"根因）**。修复：变量用完整色值（hex/oklch）+
+    @theme inline 全量映射。自检：`getComputedStyle(button).backgroundColor` 应为 `rgb(37,99,235)` 而非 transparent
+  - **组件染色按逻辑**：危险操作（删除 ✕）`hover:bg-red-50 hover:text-red-600`；Slider 轨道 `bg-slate-200/90`
+    （默认 bg-muted 太浅）+ 填充 primary；outline 按钮边框加深 `border-slate-300`；提示条用色底+文字色双通道
   - **重写策略**：大组件重写保留业务逻辑层（状态/回调/计算），只换 JSX 渲染层（Card/Button/Input/Select/Table/Badge 等）——逻辑零回归
 - **约束**：引入 shadcn 组件后仍需满足下方细节（可读性/最小尺寸/hover 反馈）；新组件必须过定向冒烟（smoke-pages --page）
 

@@ -4,28 +4,32 @@
    shadcn/ui 主题层（CSS 变量 token）
    与 styles.css 网站设计体系对齐：主色 #2563eb / 圆角 12px /
    背景 #f6f7f9 / 文字 slate 系——保证 shadcn 化页面与全站视觉统一
+   注意：变量必须用【完整颜色值】（hex/oklch），并配 @theme inline
+   映射 —— tailwind v4 的 bg-primary/bg-secondary 等类依赖
+   --color-* 映射；若只写 "217 91% 60%" 三段式，bg-primary 会
+   输出无效颜色 → 按钮/轨道变透明（本文件曾因此踩坑，见 dev.md）
    ============================================================ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;        /* slate-800 ≈ --text */
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 217 91% 60%;           /* #2563eb = --primary */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;         /* slate-100 ≈ --border-soft */
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 215 16% 47%;  /* slate-500 ≈ --text-2 */
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;         /* #dc2626 = --danger */
-    --destructive-foreground: 0 0% 100%;
-    --border: 214 32% 91%;            /* slate-200 ≈ --border */
-    --input: 214 32% 91%;
-    --ring: 217 91% 60%;
+    --background: #ffffff;
+    --foreground: #1e293b;            /* slate-800 ≈ --text */
+    --card: #ffffff;
+    --card-foreground: #1e293b;
+    --popover: #ffffff;
+    --popover-foreground: #1e293b;
+    --primary: #2563eb;               /* = --primary */
+    --primary-foreground: #ffffff;
+    --secondary: #f1f5f9;             /* slate-100 ≈ --border-soft */
+    --secondary-foreground: #1e293b;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;      /* slate-500 ≈ --text-2 */
+    --accent: #f1f5f9;
+    --accent-foreground: #1e293b;
+    --destructive: #dc2626;           /* = --danger */
+    --destructive-foreground: #ffffff;
+    --border: #e2e8f0;                /* slate-200 ≈ --border */
+    --input: #e2e8f0;
+    --ring: #2563eb;
     --radius: 0.75rem;                /* 12px 对齐网站 --radius */
   }
 
@@ -34,18 +38,44 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   }
+
+  * {
+    border-color: var(--border);
+  }
 }
 
-@layer base {
-  * {
-    border-color: hsl(var(--border));
-  }
+/* tailwind v4 主题映射（shadcn 标准产物，必配）：
+   bg-primary / text-foreground / border-border 等工具类由此生效 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 /* shadcn 组件与网站卡片风格统一：轻阴影 + 边框（对齐 styles.css --shadow/--border） */
 @layer components {
   [data-slot="card"] {
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-    border-color: hsl(var(--border));
+    border-color: var(--border);
   }
 }

@@ -377,7 +377,7 @@ export default function TradePlanTool() {
                     仓位 {cny(s.totalCapital)} · {s.stockCount} 标的 · {s.dayCount} 计划 · 当前 {s.positionPct !== undefined ? `${s.positionPct}%` : "—"}
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" className="text-slate-400" onClick={(e) => { e.stopPropagation(); void deleteSt(s.id, s.name); }} title="删除策略" type="button">✕</Button>
+                <Button variant="ghost" size="sm" className="text-slate-400 hover:bg-red-50 hover:text-red-600" onClick={(e) => { e.stopPropagation(); void deleteSt(s.id, s.name); }} title="删除策略" type="button">✕</Button>
               </div>
             ))}
           </CardContent>
