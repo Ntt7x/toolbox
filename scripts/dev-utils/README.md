@@ -8,6 +8,10 @@
 | `memo.mjs` | 改进备忘录 CLI（读 open / 批量 done / 新增） | `node scripts/dev-utils/memo.mjs list` / `done <id>...` / `add <text>` |
 | `kv.mjs` | KV/DB 检查（只读 SQLite，前缀过滤/统计/取值） | `node scripts/dev-utils/kv.mjs list tradePlan:` / `count <前缀>` / `get <key>` |
 | `e2e.mjs` | API E2E 断言脚手架（用例列表 + 统计/失败退出） | 脚本内 `import { e2e, assert } from "./e2e.mjs"` |
+| `patch.mjs` | 文件文本替换执行器（patch.json 驱动，dry-run/原子写盘/CRLF 感知） | `node scripts/dev-utils/patch.mjs <patch.json> [--apply]` |
+| `browser-probe.mjs` | 浏览器探针（launch 系统 Chrome + 选择器状态/属性探针） | `node scripts/dev-utils/browser-probe.mjs <url> --check "textarea:主输入框"` |
+
+历史临时脚本的归类与去向见 **`ARCHIVE.md`**。
 
 ## 规则（dev.md §4.8）
 1. **所有开发辅助脚本一律放 `scripts/dev-utils/`**，禁止在仓库根目录放 `tmp_*.mjs` 临时脚本（反复踩坑：残留混入 commit、cmd 引号截断）

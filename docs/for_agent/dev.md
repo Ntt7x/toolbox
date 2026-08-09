@@ -350,6 +350,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 2. 一次性调试：可放 scripts/dev-utils/ 下命名 _tmp_*.mjs，跑完立即删；严禁提交根目录 tmp 脚本
 3. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）——写 .mjs 脚本文件执行（见 §4.6）
 4. 集成验证（E2E）用 e2e.mjs 脚手架组织；服务端校验改完必须「重启 server + 脚本打 400/200 断言」（§4.7）
+5. 文件文本替换用 patch.mjs（patch.json 驱动，dry-run/原子写盘），禁止 node -e 长替换；浏览器调试用 browser-probe.mjs
+6. 历史临时脚本的归类与去向见 scripts/dev-utils/ARCHIVE.md——新脚本需求先查该表与 README，出现第 2 次即固化
 
 ## 5. 外部数据源经验
 
