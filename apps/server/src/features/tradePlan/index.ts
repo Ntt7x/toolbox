@@ -100,7 +100,18 @@ export function register(app: Hono): void {
     if (totalCapital === undefined && raw.totalCapital !== undefined) return c.json({ ok: false, message: "总仓位必须为非负数值" }, 400);
     if (dailyAddLimit === undefined && raw.dailyAddLimit !== undefined) return c.json({ ok: false, message: "单日加仓上限必须为非负数值" }, 400);
     const stocks = raw.stocks !== undefined ? parseStocks(raw.stocks) : undefined;
+    // 服务端查重：同一策略不允许重复 code
+    if (stocks && stocks.length > 0) {
+      const seen = new Set<string>();
+      const dup = stocks.find((x) => (seen.has(x.code) ? true : (seen.add(x.code), false)));
+      if (dup) return c.json({ ok: false, message: `标的 ${dup.code} 重复，请合并为一行` }, 400);
+    }
     const positions = raw.positions !== undefined ? parsePositions(raw.positions) : undefined;
+    // 服务端校验：当前数量非零时成本价必填（金额 = 数量 × 成本价）
+    if (positions) {
+      const badPos = positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
+      if (badPos) return c.json({ ok: false, message: `标的 ${badPos.code} 当前数量为 ${badPos.quantity}，成本价必填` }, 400);
+    }
     const st = updateStrategy(id, {
       name: typeof raw.name === "string" ? raw.name : undefined,
       totalCapital,
