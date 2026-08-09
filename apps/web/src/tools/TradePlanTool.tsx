@@ -142,23 +142,24 @@ export default function TradePlanTool() {
     } catch { /* 静默 */ }
   }, []);
 
-  const saveCfg = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!strategy) return;
-    const bad = strategy.stocks.find((s) => s.maxWeightPct !== undefined && (s.maxWeightPct < 0 || s.maxWeightPct > 100));
+  const saveCfg = useCallback(async (strat?: TradePlanStrategy, opts?: { silent?: boolean }) => {
+    const s = strat ?? strategy;
+    if (!s) return;
+    const bad = s.stocks.find((x) => x.maxWeightPct !== undefined && (x.maxWeightPct < 0 || x.maxWeightPct > 100));
     if (bad) {
       setCfgMsg("❌ 标的 " + (bad.code || "（未填代码）") + " 的仓位上限需在 0-100% 之间");
       return;
     }
-    const badPos = strategy.positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
+    const badPos = s.positions.find((x) => x.code && x.quantity > 0 && !(x.avgCost > 0));
     if (badPos) {
       setCfgMsg("❌ 标的 " + badPos.code + " 当前数量为 " + badPos.quantity + "，成本价必填");
       return;
     }
     setCfgMsg(null);
     try {
-      const r = await api.tradePlanSaveStrategy(strategy.id, strategy);
+      const r = await api.tradePlanSaveStrategy(s.id, s);
       if (r.ok && r.strategy) setStrategy(r.strategy);
-      savedCfgRef.current = JSON.stringify(r.strategy ?? strategy);
+      savedCfgRef.current = JSON.stringify(r.strategy ?? s);
       if (!opts?.silent) {
         setCfgMsg("✅ 已自动保存");
         setTimeout(() => setCfgMsg((m) => (m && m.startsWith("✅") ? null : m)), 2000);
@@ -168,6 +169,19 @@ export default function TradePlanTool() {
       setCfgMsg("❌ 保存失败：" + errMsg(e));
     }
   }, [strategy]);
+  // 配置修改统一入口：patchStrategy 计算 next 并 setStrategy，随后防抖自动保存（传最新 next，
+  // 避免 setTimeout 闭包捕获旧 strategy 导致保存旧值；防抖合并滑块/连续步进的多次触发）
+  const cfgSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleCfgSave = (strat: TradePlanStrategy) => {
+    if (cfgSaveTimer.current) clearTimeout(cfgSaveTimer.current);
+    cfgSaveTimer.current = setTimeout(() => { void saveCfg(strat, { silent: true }); }, 400);
+  };
+  const patchStrategy = (patch: (prev: TradePlanStrategy) => TradePlanStrategy) => {
+    if (!strategy) return;
+    const next = patch(strategy);
+    setStrategy(next);
+    scheduleCfgSave(next);
+  };
   const createSt = async () => {
     const name = newName.trim();
     if (!name) return;
@@ -196,27 +210,27 @@ export default function TradePlanTool() {
   };
 
   const setStockAt = (i: number, patch: Partial<{ code: string; name?: string; maxWeightPct: number }>) => {
-    if (!strategy) return;
-    const stocks = strategy.stocks.slice();
-    stocks[i] = { ...stocks[i], ...patch };
-    setStrategy({ ...strategy, stocks });
+    patchStrategy((s) => {
+      const stocks = s.stocks.slice();
+      stocks[i] = { ...stocks[i], ...patch };
+      return { ...s, stocks };
+    });
   };
   const setPosByCode = (code: string, patch: Partial<{ quantity: number; avgCost: number }>) => {
-    if (!strategy) return;
-    const positions = strategy.positions.slice();
-    const idx = positions.findIndex((p) => p.code === code);
-    if (idx >= 0) positions[idx] = { ...positions[idx], ...patch };
-    else if (code) positions.push({ code, quantity: patch.quantity ?? 0, avgCost: patch.avgCost ?? 0 });
-    setStrategy({ ...strategy, positions });
+    patchStrategy((s) => {
+      const positions = s.positions.slice();
+      const idx = positions.findIndex((p) => p.code === code);
+      if (idx >= 0) positions[idx] = { ...positions[idx], ...patch };
+      else if (code) positions.push({ code, quantity: patch.quantity ?? 0, avgCost: patch.avgCost ?? 0 });
+      return { ...s, positions };
+    });
   };
   const removeStockByCode = (code: string) => {
-    if (!strategy) return;
-    setStrategy({
-      ...strategy,
-      stocks: strategy.stocks.filter((x) => x.code !== code),
-      positions: strategy.positions.filter((p) => p.code !== code),
-    });
-    setTimeout(() => void saveCfg({ silent: true }), 0);
+    patchStrategy((s) => ({
+      ...s,
+      stocks: s.stocks.filter((x) => x.code !== code),
+      positions: s.positions.filter((p) => p.code !== code),
+    }));
   };
   const addNewStock = () => {
     if (!strategy || !newStock.code.trim()) return;
@@ -226,16 +240,15 @@ export default function TradePlanTool() {
       setTimeout(() => setAddMsg((m) => (m && m.startsWith("❌") ? null : m)), 3000);
       return;
     }
-    setStrategy({
-      ...strategy,
+    patchStrategy((s) => ({
+      ...s,
       stocks: [
         { code, name: newStock.name, ...(newStock.maxWeightPct && newStock.maxWeightPct > 0 ? { maxWeightPct: newStock.maxWeightPct } : {}) },
-        ...strategy.stocks,
+        ...s.stocks,
       ],
-    });
+    }));
     setNewStock({ code: "" });
     setAddMsg(null);
-    setTimeout(() => void saveCfg({ silent: true }), 0);
   };
   const mvOf = (code: string) => {
     const pos = strategy?.positions.find((p) => p.code === code);
@@ -402,8 +415,7 @@ export default function TradePlanTool() {
                     <Input
                       className="w-40 font-bold"
                       value={strategy.name}
-                      onChange={(e) => setStrategy({ ...strategy, name: e.target.value })}
-                      onBlur={() => void saveCfg({ silent: true })}
+                      onChange={(e) => patchStrategy((s) => ({ ...s, name: e.target.value }))}
                       placeholder="策略名称"
                     />
                     <span className="flex-1" />
@@ -418,11 +430,11 @@ export default function TradePlanTool() {
                       <div className="mb-2 grid grid-cols-2 gap-2">
                         <label>
                           <span className="text-[0.8rem] text-slate-500">总仓位（元）</span>
-                          <div className="mt-1"><StepInput value={strategy.totalCapital} onChange={(v) => setStrategy({ ...strategy, totalCapital: v })} step={10000} width="w-36" placeholder="如 1000000" /></div>
+                          <div className="mt-1"><StepInput value={strategy.totalCapital} onChange={(v) => patchStrategy((s) => ({ ...s, totalCapital: v }))} step={10000} width="w-36" placeholder="如 1000000" /></div>
                         </label>
                         <label>
                           <span className="text-[0.8rem] text-slate-500">单日加仓上限（元）</span>
-                          <div className="mt-1"><StepInput value={strategy.dailyAddLimit} onChange={(v) => setStrategy({ ...strategy, dailyAddLimit: v })} step={5000} width="w-36" placeholder="如 50000" /></div>
+                          <div className="mt-1"><StepInput value={strategy.dailyAddLimit} onChange={(v) => patchStrategy((s) => ({ ...s, dailyAddLimit: v }))} step={5000} width="w-36" placeholder="如 50000" /></div>
                         </label>
                       </div>
 
@@ -497,7 +509,7 @@ export default function TradePlanTool() {
                               <span className="text-[0.85rem] font-semibold text-slate-800">{s.name ? s.name + " " + s.code : s.code}</span>
                               {mv > 0 && <Badge variant="secondary" className="text-[0.74rem]">{cny(mv)} · {pct}%</Badge>}
                               <span className="flex-1" />
-                              <Button variant="secondary" size="sm" className="h-6 px-2 text-[0.76rem]" disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => { if (isEdit) void saveCfg({ silent: true }); setEditingCode(isEdit ? null : s.code); }} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</Button>
+                              <Button variant="secondary" size="sm" className="h-6 px-2 text-[0.76rem]" disabled={readonly} title={readonly ? "排序视图下请先切回「默认」再编辑" : isEdit ? "完成编辑" : "编辑标的/仓位"} onClick={() => setEditingCode(isEdit ? null : s.code)} type="button">{isEdit ? "✅ 完成" : "✏️ 编辑"}</Button>
                               <Button variant="destructive" size="sm" className="h-6 px-2 text-[0.76rem]" title="移除标的（同步删除当前仓位）" onClick={() => { if (confirm("移除标的 " + (s.name || s.code) + "？（同步删除其当前仓位）")) removeStockByCode(s.code); }} type="button">✕</Button>
                             </div>
                             {isEdit ? (
