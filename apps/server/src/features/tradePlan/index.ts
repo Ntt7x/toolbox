@@ -25,6 +25,7 @@ import {
   listDays,
   listStrategies,
   migrateLegacyConfig,
+  rebasePositions,
   replayPositions,
   updateStrategy,
 } from "./store.js";
@@ -113,14 +114,16 @@ export function register(app: Hono): void {
       const badPos = positions.find((p) => p.code && p.quantity > 0 && !(p.avgCost > 0));
       if (badPos) return c.json({ ok: false, message: `标的 ${badPos.code} 当前数量为 ${badPos.quantity}，成本价必填` }, 400);
     }
+    // 手动保存仓位 → 固化为基线（差值法：只固化手动调整量，避免已应用日度计划重复计入，见 store.rebasePositions）
+    // 注意：rebase 输入用「当前已加载的 cur」（getStrategy 结果），不能在 updateStrategy 返回值上自引用
+    const newBase = positions !== undefined ? rebasePositions(cur.basePositions ?? cur.positions ?? [], replayPositions(cur), positions) : undefined;
     const st = updateStrategy(id, {
       name: typeof raw.name === "string" ? raw.name : undefined,
       totalCapital,
       dailyAddLimit,
       stocks,
       positions,
-      // 手动保存仓位 → 固化为基线（日度计划重放的起点）
-      ...(positions !== undefined ? { basePositions: positions.map((p) => ({ ...p })) } : {}),
+      ...(newBase !== undefined ? { basePositions: newBase } : {}),
     });
     return c.json({ ok: true, strategy: st });
   });
@@ -158,9 +161,15 @@ export function register(app: Hono): void {
     const positions = replayPositions(st, date);
     const checkConfig = { ...st, positions };
     const result = checkTradePlan(checkConfig, items);
-    // 违反策略仓位管理（有 error 级告警）→ 拒绝保存
+    // 违反策略仓位管理（有 error 级告警）→ 拒绝保存；rejectReason 给出全部 error 具体原因（message + detail）
     if (!result.ok) {
-      return c.json({ ok: false, message: "计划违反策略仓位管理，无法保存", result, rejectReason: result.alerts.find((a) => a.level === "error")?.message }, 400);
+      const errs = result.alerts.filter((a) => a.level === "error");
+      return c.json({
+        ok: false,
+        message: "计划违反策略仓位管理，无法保存",
+        result,
+        rejectReason: errs.map((a) => (a.detail ? `${a.message}（${a.detail}）` : a.message)).join("；"),
+      }, 400);
     }
     const before = positions;
     const after = applyItems(before, items);
@@ -182,7 +191,9 @@ export function register(app: Hono): void {
     const q = c.req.query("month") ?? todayStr().slice(0, 7);
     const month = /^\d{4}-\d{2}$/.test(q) ? q : todayStr().slice(0, 7);
     const days: { date: string; strategies: { id: string; name: string; items: TradePlanItem[]; result: TradePlanCheckResult }[] }[] = [];
-    for (const st of listStrategies()) {
+    for (const stSum of listStrategies()) {
+      const st = getStrategy(stSum.id);
+      if (!st) continue;
       for (const d of listDays(st.id)) {
         if (!d.date.startsWith(month)) continue;
         let entry = days.find((x) => x.date === d.date);
@@ -190,7 +201,16 @@ export function register(app: Hono): void {
           entry = { date: d.date, strategies: [] };
           days.push(entry);
         }
-        entry.strategies.push({ id: st.id, name: st.name, items: d.items, result: d.result });
+        entry.strategies.push({
+          id: st.id,
+          name: st.name,
+          // 聚合时补股票名称（日历展示可读性；TradePlanItem.name 为展示字段）
+          items: d.items.map((it) => ({
+            ...it,
+            name: st.stocks.find((x) => x.code === it.code)?.name ?? it.name,
+          })),
+          result: d.result,
+        });
       }
     }
     days.sort((a, b) => (a.date < b.date ? -1 : 1));

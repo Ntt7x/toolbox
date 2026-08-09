@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyItems, checkTradePlan } from "./compute.js";
+import { rebasePositions } from "./store.js";
 import type { TradePlanCheckConfig } from "./compute.js";
 
 const cfg: TradePlanCheckConfig = {
@@ -107,4 +108,45 @@ test("checkTradePlan：加仓金额用本次 cost", () => {
 test("checkTradePlan：cost 缺省用当前均价", () => {
   const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 5 }]);
   assert.equal(r.totals.addTotal, 7000); // 5 × 1400
+});
+
+test("rebasePositions：手动固化只计入调整量，不双重计入已应用计划", () => {
+  const oldBase = [
+    { code: "A", quantity: 100, avgCost: 10 },
+    { code: "B", quantity: 50, avgCost: 20 },
+  ];
+  // 已应用计划：A +100、B -20 → 全量重放 = A:200 B:30
+  const replayed = [
+    { code: "A", quantity: 200, avgCost: 10 },
+    { code: "B", quantity: 30, avgCost: 20 },
+  ];
+  // 用户手动编辑当前仓位：A:250（比重放多 50）、B:30（未改）
+  const submitted = [
+    { code: "A", quantity: 250, avgCost: 10 },
+    { code: "B", quantity: 30, avgCost: 20 },
+  ];
+  const nb = rebasePositions(oldBase, replayed, submitted);
+  // 新 base：A = 100 + (250-200) = 150；B = 50 + (30-30) = 50
+  assert.equal(nb.find((x) => x.code === "A")?.quantity, 150);
+  assert.equal(nb.find((x) => x.code === "B")?.quantity, 50);
+  // 验证：新 base 重放已应用计划（A 增量 +100）= 提交值 250
+  const aBase = nb.find((x) => x.code === "A")?.quantity ?? 0; // 150
+  assert.equal(aBase + 100, 250);
+});
+
+test("rebasePositions：提交等于重放 → 基线不变（幂等）", () => {
+  const oldBase = [{ code: "A", quantity: 100, avgCost: 10 }];
+  const replayed = [{ code: "A", quantity: 200, avgCost: 10 }];
+  const nb = rebasePositions(oldBase, replayed, [{ code: "A", quantity: 200, avgCost: 10 }]);
+  assert.equal(nb.find((x) => x.code === "A")?.quantity, 100);
+});
+
+test("rebasePositions：新增 code 直接加入基线", () => {
+  const oldBase = [{ code: "A", quantity: 100, avgCost: 10 }];
+  const replayed = [{ code: "A", quantity: 100, avgCost: 10 }];
+  const nb = rebasePositions(oldBase, replayed, [
+    { code: "A", quantity: 100, avgCost: 10 },
+    { code: "C", quantity: 10, avgCost: 5 },
+  ]);
+  assert.equal(nb.find((x) => x.code === "C")?.quantity, 10);
 });

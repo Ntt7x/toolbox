@@ -1747,6 +1747,8 @@ export interface TradePlanStrategyDeleteResult {
 /** 日度计划条目（加/减仓以数量为单位） */
 export interface TradePlanItem {
   code: string;
+  /** 标的名称（可选；日历总计划聚合时由服务端从策略 stocks 补全，供展示） */
+  name?: string;
   /** 加仓 / 减仓 */
   action: "add" | "reduce";
   /** 数量（股）；金额 = 数量 × 成本价 */

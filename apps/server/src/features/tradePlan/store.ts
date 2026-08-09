@@ -63,6 +63,29 @@ export function getStrategy(id: string): TradePlanStrategy | null {
   return st;
 }
 
+/** 手动保存仓位时的基线重算（差值法，2026-08-10 修复重复应用）：
+ * 直接把当前 positions 固化为 base 会"双重计入"已应用日度计划（重放时再算一次）。
+ * 正确：新 base = 旧 base + (提交 positions − 全量重放结果)，即只固化"手动调整量"。
+ */
+export function rebasePositions(
+  oldBase: TradePlanPosition[],
+  replayed: TradePlanPosition[],
+  submitted: TradePlanPosition[],
+): TradePlanPosition[] {
+  const out = oldBase.map((b) => {
+    const submit = submitted.find((p) => p.code === b.code);
+    const re = replayed.find((p) => p.code === b.code);
+    if (!submit) return b;
+    const deltaQty = (submit.quantity ?? 0) - (re?.quantity ?? 0);
+    return { ...b, quantity: Math.max(0, (b.quantity ?? 0) + deltaQty), avgCost: submit.avgCost ?? b.avgCost };
+  });
+  // 提交中出现但旧基线没有的 code → 直接加入（新增仓位）
+  for (const p of submitted) {
+    if (!out.some((b) => b.code === p.code)) out.push({ ...p });
+  }
+  return out;
+}
+
 /** 重放所有已应用日度计划（按日期升序）→ 最新仓位；excludeDate 用于同日覆盖/删除时剔除该日 */
 export function replayPositions(st: TradePlanStrategy, excludeDate?: string): TradePlanPosition[] {
   let positions: TradePlanPosition[] = (st.basePositions ?? st.positions ?? []).map((p) => ({ ...p }));

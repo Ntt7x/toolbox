@@ -96,7 +96,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   const body = (await res.json().catch(() => null)) as (T & { message?: string }) | null;
   if (res.ok) return body as T;
-  throw new Error(body?.message ?? `API ${path} failed: ${res.status}`);
+  // 附加 rejectReason（如「计划违反策略仓位管理」的具体原因），errMsg 可直接展示
+  const reason = (body as { rejectReason?: string } | null)?.rejectReason;
+  throw new Error(reason ? `${body?.message ?? `API ${path} failed: ${res.status}`}：${reason}` : (body?.message ?? `API ${path} failed: ${res.status}`));
 }
 
 function jsonInit(method: string, body: unknown): RequestInit {
