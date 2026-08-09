@@ -10,7 +10,7 @@
 3. **读历史**：读最近一份 `docs/for_agent/history/` 归档，了解已完成/遗留（§8）。
 4. **读备忘录**：`node scripts/dev-utils/memo.mjs list`——处理 open 改进备忘录（§8.0）。
 5. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
-6. **验证→提交→推送**：L0 typecheck → 按 §5.1 分级验证 → `commit.mjs "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
+6. **验证→报告→等确认后提交**：L0 typecheck → 按 §5.1 分级验证 → **报告给用户（不自动提交）** → 用户确认分支处理正确后 → `commit.mjs "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
 
 **常用命令（高频，脚本细节见 §6.8 / scripts/README.md）**：
 | 用途 | 命令 |
@@ -91,7 +91,11 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - **每次修改（功能/修复/重构/文档）都必须新建 Git 分支**，禁止直接在 main 上开发：
   `git switch -c <type>/<简述>`（type：feat / fix / refactor / chore / docs）
-- 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）→ commit → `git push -u origin <分支>`
+- 在分支上完成改动 + **本地验证通过**（typecheck / 单测 / API 回归 / 页面 200）
+- ⚠️ **分支内工作默认不提交（2026-08-10 用户规则）**：改动在工作区保留、**不自动 commit/push**；
+  提交时机 = **用户确认分支正确处理问题后**（用户说"提交"/"可以了"/"验收通过"等）——
+  Agent 与用户之间是**反复改进循环**：改 → 报告 → 用户测试反馈 → 再改 → …… → 用户确认 → 才提交；
+  禁止"改完即自动提交到分支"（曾因自动提交让用户失去对分支内容的控制与检查窗口）
 - **必须等待用户验收通过后**才能合并到 main：`git switch main` → `git merge <分支>` → `git push origin main`（PowerShell 不支持 `&&`，分步执行）
 - 合并后删除远程分支（`git push origin --delete <分支>`）与本地分支（可选）
 - 用户明确要求直接改 main 的情况（如紧急修复）除外
@@ -101,6 +105,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - 身份：`kk <kk@localhost>`（全局已配）
 - 提交信息：`feat(scope): 摘要` + 空行 + 要点列表；中文
+- **提交时机由用户确认触发**（§4.1 规则）：分支内工作不自动提交；用户确认后按主题拆分提交（可一次或分多次）
 - 每完成一个功能批提交一次；`.env`、`.vscode/`、`.file/` 不入库（已 gitignore）
 - 提交前 `git status` 确认无测试残留（`$null` 之类的垃圾文件）
 - **每次阶段性提交前，必须同步更新 `docs/for_agent/` 下全部维护性文件**（见 §8）：
@@ -121,9 +126,19 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
 - **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，18 页 playwright，含页面内容断言）：仅以下场景必跑
 
+**影响面判定（2026-08-10 起，先判影响面再选级别——核心原则）**：
+> **按「哪些页面实际受影响」定级，不是按「改了多少文件」定级。** 多文件改动若只影响单个页面，仍属定向冒烟范围。
+
+| 影响面 | 判定方法 | 验证级别 |
+|---|---|---|
+| **页面级**：单页内改动（tools/XxxTool.tsx 内部） | 改动文件只有该页 | L0 + 该页定向冒烟（`--page /tools/x`） |
+| **组件/共享层级**：`components/ui/*.tsx`、`lib/`、hooks | **先 `grep` 使用方**（`grep -rl "@/components/ui/xxx" apps/web/src` 或全局搜组件名）→ 冒烟**所有使用方页面**（通常 1-2 个，与全量等价） | L0 + 使用方页面定向冒烟——**不因组件文件多而升 L3** |
+| **全局级**：`index.css` 主题层、`main.tsx`、`App.tsx` 布局/路由表、`api.ts` | 改动影响所有页面渲染/请求 | 才考虑 L3 |
+
 **L3 全量冒烟触发时机（严格执行，避免浪费）**：
 - 用户明确要求全量测试时
-- 大需求改动：新页面 / 新路由 / 多文件前端重构 / **页面加载逻辑改动**（useEffect/数据获取）
+- **影响面覆盖多数页面的**前端重构：布局/路由表/全局样式/全局请求层
+- 页面加载逻辑改动（useEffect/数据获取）**且该页属高频核心页**（或改的是通用加载 hook）
 - 提交/合并 main 前的收尾自检
 
 **测试场景对照表（改什么 → 测什么）**：
@@ -133,8 +148,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 | 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ API 断言（api-cli，§6.7：400/200 + message） |
 | 服务端纯计算 / 业务规则 | L0 + L1（compute 等单测） |
 | 前端单页内微调（UI 组件/文案/样式/类型） | L0 + **目标页定向冒烟**（`smoke-pages.mjs --page /tools/x`，比打开 200 更能发现 JS 崩溃/API 错误） |
+| 组件库改动（`components/ui/*.tsx`、shadcn 底层切换、lib/） | L0 + **grep 使用方 → 使用方页面定向冒烟**（不因组件文件多而升 L3；见上「影响面判定」） |
 | 前端页面加载逻辑（useEffect/API 请求/路由挂载） | L0 + **L3 冒烟**（历史教训：TradePlanTool 卡加载中，curl 测不出请求是否发出） |
-| 新页面 / 新路由 / 多文件前端重构 | L0 + L3 冒烟 + §5.2 菜单/路由/契约核对 |
+| 新页面 / 新路由 / 布局 / 路由表 / 全局样式重构 | L0 + L3 冒烟 + §5.2 菜单/路由/契约核对 |
 | shared 契约类型变更 | L0（全仓 tsc 抓所有引用）+ 受影响调用方定向验证 |
 | 脚本工具（dev-utils/） | 工具自测（self-test.mjs）+ 实跑一次目标场景 |
 | 提交 / 合并 main 前收尾 | L0 + L1 全量 + L3 冒烟 + 测试数据清理（§8.1） |
@@ -197,9 +213,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 5.4 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
 
-**组件库选型（2026-08-09 起）：新前端组件优先采用成熟组件库 `shadcn/ui`**
+**组件库选型（2026-08-09 起，2026-08-10 底层切 Base UI）：新前端组件优先采用成熟组件库 `shadcn/ui`**
 - 官方安装文档：https://ui.shadcn.com/docs/installation/vite（React 19 + Vite 兼容）
-- 定位：shadcn/ui 是**复制式**组件库（Radix 无头组件 + Tailwind 样式），组件源码复制进 `apps/web/src/components/ui/`，**可完全定制、无运行时包锁定**——适合"个人工具集 + 频繁迭代"
+- 定位：shadcn/ui 是**复制式**组件库（无头组件 + Tailwind 样式），组件源码复制进 `apps/web/src/components/ui/`，**可完全定制、无运行时包锁定**——适合"个人工具集 + 频繁迭代"
+- **底层（2026-08-10 切换）：Base UI（`@base-ui/react`）**，非 Radix——shadcn 官网 2026-07 起新项目默认 Base UI；切换/API 差异/踩坑**见 `docs/for_agent/domains/shadcn.md`**（Slider 单值/Seclet null/placeholder/自定义易被覆盖）
 - **适用范围**：复杂交互组件（对话框/下拉/开关/标签页/表格/表单/弹窗）优先 shadcn；**简单元素**（按钮/输入框/卡片）继续用现有 `styles.css` 工具类或内联样式——**存量页面渐进迁移，不强制重写**
 - **引入前提（已落地 2026-08-09，TradePlanTool 重写时）**：`tailwindcss` v4（`@tailwindcss/vite` 插件）+ `cn` 工具（clsx + tailwind-merge，`src/lib/utils.ts`）+ `components.json` + `@/` path alias（vite resolve.alias + tsconfig paths）+ CSS 变量 token（`src/index.css`，主色对齐 #2563eb）
 - **shadcn 使用经验（TradePlanTool 重写实践沉淀）**：
@@ -445,6 +462,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 | 领域 | 文档 | 何时看 |
 |---|---|---|
 | Reasonix ACP（协议/会话/进程/MCP/托管/引导词去重） | `domains/reasonix.md` | 涉足 Reasonix 会话/知识库会话复用 |
+| shadcn/ui 组件（Base UI 底层/API 差异/主题映射） | `domains/shadcn.md` | 涉足前端组件/页面 UI（新增组件、组件库维护） |
 | 浏览器自动化（DeepSeek 网页版 Chat） | `domains/features.md` | 改 browserChat / 网页自动化 |
 | 策略仓位管理（trade-plan） | `domains/features.md` | 改 trade-plan |
 | 数据可信度（cbRate 结构化输出） | `domains/features.md` | 改 LLM 结构化输出业务 |
@@ -489,6 +507,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 **开发者驱动 Agent 的默认行为**：
 - 用户说"处理备忘录"时，**默认只完成「修复型」改进**（fix），不擅自实现需求型
 - **需求型（feature）改进**必须等待用户显式确认（用户明确点名实现或说"全部处理"）后才做
+- **处理完的条目必须当场标记 status=done（硬性，勿遗漏）**：
+  每条 fix 处理并验证通过后**立即**执行 `node scripts/dev-utils/memo.mjs done <id>`（可多个 id 一起）；
+  收尾前 `memo.mjs list` 确认 open=0；曾发生「改完忘标记 done」导致用户重复催促，
+  处理与标记 done 视为同一动作、不可拆分
 - 处理完的条目在 memo:items 里标记 status=done；类型字段 `kind`（缺省 fix，旧数据兼容）
 
 ### 8.1 维护性文件同步规则（每次提交/归档必做）

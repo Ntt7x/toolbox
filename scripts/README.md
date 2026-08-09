@@ -33,10 +33,11 @@ scripts/
 | `test.mjs` | **模块单测快捷**（自动定位测试文件/全量） | `node scripts/dev-utils/test.mjs tradePlan` |
 | `commit.mjs` | **git 提交包装**（消息引号安全，自动 add+commit） | `node scripts/dev-utils/commit.mjs "feat(x): 说明"` |
 | `api-cli.mjs` | **API CLI**（curl 替代，Windows 引号安全） | `node scripts/dev-utils/api-cli.mjs GET /health` |
-| `smoke-pages.mjs` | 页面冒烟（17 页；**`--page <路径>` 定向单页**配合 L2） | `node scripts/dev-utils/smoke-pages.mjs [--page /tools/x]` |
+| `smoke-pages.mjs` | 页面冒烟（18 页；**`--page <路径>` 定向单页**配合 L2） | `node scripts/dev-utils/smoke-pages.mjs [--page /tools/x]` |
 | `api.mjs` | 通用 API 客户端：fetch+json 包装，非 2xx 抛带 message 的 Error（含 rejectReason） | `import { call, get, post, put, del } from "./api.mjs"` |
 | `e2e.mjs` | API E2E 断言脚手架：用例列表 + 统计 + 失败 exit 1 | 脚本内 `import { e2e, assert } from "./e2e.mjs"` |
 | `memo.mjs` | 改进备忘录 CLI：读 open / 批量 done / 新增（**每轮「处理备忘录」必用**） | `node scripts/dev-utils/memo.mjs list\|done <id>...\|add <text>` |
+> **cmd 分号防御**：`done` 自动剥离参数中的 `;` 粘连并跳过非 ID 参数（`done id1; node x` 不再误报 404） |
 | `kv.mjs` | KV/DB 只读检查：前缀过滤/统计/取值（查测试数据残留） | `node scripts/dev-utils/kv.mjs list\|count\|get <key>` |
 | `patch.mjs` | 文件文本替换执行器：patch.json 驱动，dry-run/原子写盘，CRLF 感知（**替代 node -e 长替换**） | `node scripts/dev-utils/patch.mjs <patch.json> [--apply]` |
 
@@ -46,7 +47,7 @@ scripts/
 
 ## 3. 使用规范
 
-**强制规则以 dev.md §4.8 为准（唯一来源）**，这里只列 README 特有提醒：
+**强制规则以 dev.md §6.8 为准（唯一来源）**，这里只列 README 特有提醒：
 - 工具表/归档表是"第 2 次需求先查表"的查表入口；新增工具记得同步 §1 目录树 + §2 工具表（§8.1 同步义务）
 
 ## 4. 历史临时脚本归档（出现过的需求 → 去向）
@@ -67,8 +68,8 @@ scripts/
 **踩坑记忆**（防重犯）：
 - `node -e` 长替换 → cmd 截断/引号剥落/CRLF 不匹配/反引号冲突（全踩过）→ 用 patch.mjs / write_file 脚本
 - 多 dev.mjs supervisor 并存互相打架（曾 2 supervisor + 6 tsx watch 同跑）→ dev.mjs 已单实例防重；怀疑时 `proc.mjs list`
-- Chrome profile 锁 → 失败重试前清锁；**勿 rmSync profile**（丢登录 cookie，见 dev.md §4.5）
-- 服务端校验假 200（tsx watch 偶发不热更新）→ 重启 server 再断言（dev.md §4.7）
+- Chrome profile 锁 → 失败重试前清锁；勿 rmSync profile（丢登录 cookie，见 dev.md §7.2）
+- 服务端校验假 200（tsx watch 偶发不热更新）→ 重启 server 再断言（dev.md §6.7）
 
 ## 5. 复用/进化流程（新需求怎么走）
 
@@ -78,10 +79,10 @@ scripts/
   → 2. 没有 → 判断是一次性还是可复用：
        一次性 → dev-utils/_tmp_*.mjs 跑完即删
        可复用 → 在 dev-utils/ 固化 + 在 §2 补一行 + 提交
-  → 3. 每次阶段性提交同步更新本文件与 dev.md（§4.8）
+  → 3. 每次阶段性提交同步更新本文件与 dev.md（§6.8）
 ```
 
 ## 6. 关联
 
-- dev.md §4.8 开发辅助脚本规范（强制）
+- dev.md §6.8 开发辅助脚本规范（强制）
 - dev.md §6 验证清单（smoke/单测/typecheck 流程）

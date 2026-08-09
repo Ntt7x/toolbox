@@ -88,7 +88,12 @@ if (touched.features.length > 0) {
 }
 if (touched.web.length > 0) {
   if (level === "PASS") level = "WARN";
-  issues.push(`🟢 触及前端 web/（${touched.web.length} 文件）→ 目标页定向冒烟（smoke-pages.mjs --page /tools/x；页面加载逻辑改动则 L3）`);
+  const uiFiles = touched.web.filter((f) => f.includes("/components/ui/") || f.includes("/lib/") || f.includes("/hooks/"));
+  if (uiFiles.length > 0) {
+    issues.push(`🟢 触及前端组件/共享层（${uiFiles.length} 文件）→ §5.1 影响面判定：grep 使用方（grep -rl "ui/${uiFiles[0].split("/").pop()?.replace(".tsx","")}" apps/web/src）→ 使用方页面定向冒烟（不因文件多而全量）`);
+  } else {
+    issues.push(`🟢 触及前端 web/（${touched.web.length} 文件）→ 目标页定向冒烟（smoke-pages.mjs --page /tools/x；页面加载逻辑改动则 L3）`);
+  }
 }
 
 // 报告
