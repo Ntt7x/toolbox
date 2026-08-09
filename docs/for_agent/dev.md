@@ -24,6 +24,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 │       ├── tools/             各工具页组件（GridPlanTool / CbRateTool / ReverseRepoTool / MedicalKbTool…）
 │       └── settings/          设置页（LlmSettings / AgentSessions / LocalData / MemoTool）
 └── docs/for_agent/    本目录：agent 规范沉淀
+    ├── dev.md                总纲（AGENTS.md 强制加载）：架构/流程/强制规则/验证/历史
+    └── domains/              专业领域经验（按需加载，dev.md 内指针）：reasonix / features / data-sources
 ```
 
 **分层铁律**：依赖方向 `features → core`，core 之间互不依赖；业务逻辑不进 core。
@@ -57,7 +59,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 4. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 
-### 4.0 成本原则：提示词/引导词最小冗余（2026-08-07 起，强制）
+### 4.1 成本原则：提示词/引导词最小冗余（2026-08-07 起，强制）
 
 **LLM 调用是花钱的，一切提示词与引导词设计以「减少重复冗余、最大化前缀缓存命中」为基本原则：**
 
@@ -77,7 +79,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 落实检查点：新增/修改任何 LLM 调用，先问「system 是否固定？变化内容是否都进了 user？能否用会话化减少重复？」
 
-### 4.0 LLM 用量切面（三层标注，2026-08-06 重构后规范）
+### 4.2 LLM 用量切面（三层标注，2026-08-06 重构后规范）
 
 每次 LLM 调用被切面记录到 `llmUsage:log`，**三层标注**各自职责：
 
@@ -99,40 +101,21 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 4. **前端展示**：按场景（业务/系统/测试）→ 按模式 → 按模块 三栏；旧数据无 mode/scene 兼容按 direct/module 推断。
 
 
-### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
+### 4.3 三种调用模式（direct / 自研会话 / Reasonix）
+
+#### 模式 1：直接调用 `chat(messages, { search?, json?, module? })`（core/llm.ts）
 - search=联网搜索（Responses API + web_search，服务端执行，仅 deepseek-v4-flash）；json=response_format json_object
 - **前缀稳定化约定**：system 保持逐字稳定（动态日期/标的/月份移到 user 消息），以命中 DeepSeek 前缀缓存（价 ~1/50）
 
-### 模式 2：自研 Cache 会话 `createChatSession / chatSessionAsk`（core/chatSession.ts）
+#### 模式 2：自研 Cache 会话 `createChatSession / chatSessionAsk`（core/chatSession.ts）
 - 借鉴 Reasonix "append-only context"：system 固定 + 每轮 append user/assistant；同会话连续调用前缀命中缓存
 - KV 持久化（chatSession:<id>），TTL 30 分钟；历史超长自动压缩（保留 system + 最近 6 轮）
 - 注意：`createChatSession` 返回对象，传给 `chatSessionAsk` 须用 `.id`
 - 实测：3 轮命中率 0% → 51% → 88.7%；适合批量/长任务（单次分析仍用模式 1）
 
-### 模式 3：Reasonix ACP `createReasonixSession / reasonixAsk / closeReasonixSession`（core/reasonix.ts）
-- 启动官方 reasonix 二进制（v1.20.0+）ACP 服务（stdio NDJSON JSON-RPC），享受其会话持久化/压缩/前缀稳定
-- 二进制：`llm.reasonixBin` 配置或 npm 包 `@reasonix/cli-<platform>-<arch>`（node_modules 内）
-- **协议要点（实测）**：`session/prompt` 参数 = `{ sessionId, prompt: [{type:"text",text}] }`（非标准 message）；
-  回答文本必须从 **`session/update` 通知的 `agent_message_chunk`** 收集（transcript .jsonl 不实时更新，勿读）
-- 同会话多轮实测会话保持正常（第 2 轮引用第 1 轮上下文）；reasonix 自带 system 开销大（~20k tokens）
-- 会话生命周期：创建→多轮 ask→close（释放资源）；进程惰性单例，shutdownReasonix() 回收
-- **显式进程管理（2026-08-06）**：`getAcpStatus`（PID/启动时间/未决请求）、`ensureAcpRunning`、`stopAcp`
-  （taskkill /T /F 进程树，连带 MCP 子进程；注册表保留，续问自动重启+resume）；shutdownReasonix = stopAcp
-- **MCP 配置（2026-08-06）**：`core/mcpConfig` 存 `settings:mcp.servers`（本地设置数据）；
-  默认 seed 内置知识库 kb（node+tsx+knowledgeMcp.ts，正斜杠路径——Windows 反斜杠会被 ESM loader
-  误判为 d: 协议、file:// URL 被 tsx 拼接错乱）；`enabledMcpServers` 供会话挂载；
-  **空数组=用户清空**（getMcpServers 只在从未配置/损坏时回退 seed）
-- **对话数据服务端托管（2026-08-06）**：reasonixAsk 成功即写 `reasonixHistory:<regId>`（user/assistant 成对，上限 300 条）；
-  `getReasonixHistory` / `deleteReasonixHistory`（随 closeReasonixSession 清理）；
-  `backfillReasonixHistory` 从 `%APPDATA%/reasonix/sessions/<sid>.jsonl` 回填存量会话历史
-  （幂等：已有托管数据跳过；user 消息剥离注入引导词提取真实问题）；详情路由惰性触发
-- **引导词去重（2026-08-07）**：knowledgeSession 的 Agent 引导词（knowledge.agent.guide / medical-kb.agent.guide）
-  **只在新会话首轮发送**——注册表记录渲染后引导词指纹 `guideFp`，后续轮次指纹相同则只发任务指令
-  （历史已含引导，省每轮 ~200-400 token 且前缀更干净）；模板升级 → 指纹变 → 自动重发；
-  会话重建（recreateSession）后新会话无历史，自动带引导词。
-- **知识库会话复用（2026-08-07）**：reasonix 进程重启后旧会话 `unknown session` 时**重建而非 drop**——
-  `recreateSession` 关闭旧会话并更新注册表（关闭失败也兜底删 `reasonixSession:` 注册表），
-  同一实例注册表始终指向唯一活跃会话，不产生孤儿堆积。
+#### 模式 3：Reasonix ACP
+
+- **专业领域文档**：Reasonix ACP 全部细节（协议要点 / 会话生命周期 / 进程管理 / MCP 配置 / 对话托管 / 引导词去重 / 会话复用）**见 `docs/for_agent/domains/reasonix.md`**——涉足 Reasonix 时按需加载。
 
 - 搜索模式**必须在提示词注入当前日期**（否则模型按训练知识理解"本月"）
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
@@ -140,35 +123,6 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **DeepSeek 联网搜索（Responses API + web_search）耗时 8~10 分钟是常态**（多步搜索），
   后台任务超时需留足（≥10 分钟）；前端「停止分析」可随时中断；长超时在此环境
   （Node 24 + tsx watch）偶发不触发（任务最终 done/TTL 清理兜底），属已知现象
-- **逆回购余额（reverse-repo）存量部分用默认种子 + KV seed**（`features/reverseRepo/monthlyData.ts`
-  默认值 → `seedMonthlyData()` 幂等 seed 进 `reverseRepo:monthly`，运行时从 KV 读）：
-  页面仅关注「买断式逆回购」；数据结构 = 逐笔操作流水（精确到年月日，41 笔）+ 月度汇总
-  （投放/净投放/累计净投放，每日经济新闻口径推算补充）；**存量余额 = 累计净投放**
-  （2026-03 锚点 7.2 万亿元，与对话中存量 6.3 万亿口径一致）；数据经用户多轮修订
-  （2025-10/11/12 原误记"无操作"已修正、2026-07 期限构成已修正）
-- **余额曲线高级加工（`deriveBalanceSeries`，连续不断档）**：2025-02~2026-02 无权威累计净投放，
-  **口径陷阱**：用户第一版"月末余额"实为**累计投放**（Σ投放，2025-02=58000），第三版"累计净投放"
-  才是真实存量（含到期）——两者混用会导致曲线断层/假值；统一口径后，缺失月份用
-  **模型推算**（逐月余额 = 上月 + Σ月度投放 − Σ逐笔到期，到期日 = 投放日 + 3/6 自然月），
-  推算点 `estimated:true`（前端空心灰点 + tooltip「模型推算」），权威锚点实心蓝点并**重置推算基线**
-  （防漂移累积）；输出截断到最新数据月（不展示未来推算）
-- **逆回购数据规整约定**：逐笔 operations（公告口径）与月度 rows（媒体口径）并行，个别月有差异
-  （如 2025-11 公告 8000 vs 媒体 15000）——**推算投放以 rows 为权威**（月度表一致），差异在
-  operations.source 标注；日期格式统一 YYYY-MM-DD / YYYY-MM（前端显示「月内」）；
-  无权威披露的 netChange/cumulativeNet 填 null 不编造；UpdateState 带 taskId 且 running
-  超 15 分钟降级 failed（防进程残留卡死）；数据源注册齐备（monthly/daily/monthlyUpdate 三 key）
-- **专题自选股（watchlist）**：每专题一个 KV 文档 `watchlist:<id>`（stocks 含 code/name/reason），
-  数据源 `watchlist:`（自选数据）+ `watchlist:fundamental:`（分析数据，TTL 2 年）；
-  个股名称解析复用 core/quote（标准行情工具）；财报分析 = LLM（watchlist.fundamental 提示词，
-  默认联网搜索 + robustJsonParse + KV 缓存）；**Hono 静态路由必须注册在 `/:id` 参数路由之前**
-  （否则被当 id 吞掉）
-- **逆回购月度数据触发式更新**（服务端自动，前端零改动）：`GET /tools/reverse-repo/monthly`
-  返回时计算 `missingMonths(rows)`——最新数据月 < 上个月 → 响应带 `stale/staleMonths` 并
-  自动 `createTask` 后台跑 `runMonthlyUpdate`（LLM 搜索补全缺失月份，`reverse-repo.monthly-update`
-  提示词）；防重（`reverseRepo:monthlyUpdate` KV 记 running，running 中不重复触发）；进度查
-  `GET /tools/reverse-repo/monthly/update-status`，手动触发 `POST .../refresh`；
-  **合并校验**：LLM 返回的月份必须 > 现有最大月且 ∈ expected，否则跳过（防乱序/重复/污染），
-  无有效写入 → failed 且不动 KV（幂等安全）
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
   默认值在 `core/prompts.ts` 集中 seed，运行时存 SQLite 可编辑可重置；
   服务端实际使用（cb-rate 拼 LLM 请求）与 web 页面「查看/复制程序性提示词」展示
@@ -234,16 +188,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   纯计算参数/公式（gridPlan compute）
 - 新功能落地检查：数据是否可被用户编辑？可编辑即应入库；入库后立即 `registerDataSource` 打页面 tag
 
-## 4.5 数据可信度（cb-rate 等 LLM 结构化输出）
+### 4.5 数据可信度（cbRate 等 LLM 结构化输出）
 
-- 响应带 `dataMode: search|knowledge`：search=联网实时；knowledge=模型训练知识（**可能过时/幻觉**）
-- **知识模式提示词必须防幻觉**：注入今天日期 + 明确"训练知识截止约 2025 年中，严禁编造今天之后
-  的会议与决策，拿不准用不确定/省略，asOf 用知识最新日期"；输出 knowledgeCutoff 字段
-- 不静默篡改 LLM 数据：action 非法 → 降级 hold 展示但加 bank.flags 标记；缺失央行 → missingBanks
-- **缓存 schema 升级必须改 key 版本**（如 cbRate: → cbRate:v2:），否则旧契约缓存被命中
-  返回污染数据（防幻觉前的编造内容还在 TTL 内）
-- **任务超时终态保护**（core/tasks）：fn 在超时后迟到返回不得覆盖 error/cancelled 终态
-  （DeepSeek search abort 无响应时尤其会触发，否则"卡死"后仍显示 running/done）
+- **专业领域文档**：数据可信度经验（dataMode、防幻觉、缓存 schema 版本、任务终态保护）**见 `docs/for_agent/domains/features.md`**。
 
 ## 4.6 前端异步任务（useAsyncTask，切页不丢状态的正确姿势）
 
@@ -258,11 +205,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **终态防重复**：settledRef 标记——error 帧/迟到轮询结果不得重复处理（防止 onerror 与
   error 帧双路径互相覆盖）
 
-- **东财 7x24 快讯（2026-08-07）**：`https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html`
-  返回 JSONP（`var ajaxResult={...}`，须正则剥 `var ` 前缀与尾分号再 JSON.parse），字段 `LivesList[].title/digest/showtime/url_w`；
-  缓存 10 分钟（`watchlist:hotnews`）；np-listapi 新版接口实测常返回空 list，勿用。
 
-## 4.9 LLM 调用开发经验总结（决策清单，2026-08-07 整合）
+## 4.7 LLM 调用开发经验总结（决策清单，2026-08-07 整合）
 
 **选择调用模式（先决策再写码）**：
 | 场景 | 模式 | 理由 |
@@ -286,41 +230,19 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - Reasonix 引导词每轮重复 → 首轮发 + 指纹去重（省 ~200-400 token/轮）
 
 **验证手段**：
-- LLM 用量切面（§4.0 三层标注）看 module 覆盖；会话列表（Agent 会话管理页）看会话是否按预期复用
+- LLM 用量切面（§4.2 三层标注）看 module 覆盖；会话列表（Agent 会话管理页）看会话是否按预期复用
 - 缓存命中实验：同一会话连续 ask，对比 usage 中 prompt tokens（命中后大幅下降）
 - 单测：`chatSession.test.ts` 会话语义/归档；`knowledgeSession.test.ts` 引导词指纹去重
 
-### 4.5 浏览器自动化（LLM 网页版/Chat 操作，2026-08-07 起）—— core/browser.ts + features/browserChat
+### 4.8 浏览器自动化（core/browser.ts + features/browserChat）
 
-本机浏览器自动化（playwright-core + 系统 Chrome/Edge，不下载浏览器）：
-- **能力**：core/browser 提供 findBrowser / sleep / launchPersistentContext（持久化 profile + 指纹伪装 + 启动失败按 profile 杀残留进程自愈，杀进程不删数据保留登录态 cookie）
-- **业务**：features/browserChat 一键「去 Chat」——打开 chat.deepseek.com → 开深度思考/智能搜索开关 → 填入提示词 → 自动发送
-- **踩坑经验（均为实测）**：
-  - DeepSeek 网页版**不支持 URL 预填**；未登录跳 /sign_in 且无输入框 → 必须登录态（持久化 profile 登录一次即记住）
-  - 输入框是 **React 受控组件**：fill() 直接设值不触发受控更新（静默失败）；keyboard.type 逐字符长文本会丢字；**正解 keyboard.insertText 整段插入**（走输入管线触发 onChange），填入后读回 inputValue 校验完整性
-  - 开关（深度思考/智能搜索）是 div.ds-toggle-button，**状态属性是 aria-pressed**（不是 aria-checked，后者恒 null）；点击后读回确认、未切换重试一次
-  - **顺序陷阱**：先开开关 → 再填入 → 发送前**重新点击输入框聚焦**（点开关会抢走焦点，Enter 会发给开关而不发送）→ 再 Enter
-  - **窗口焦点**：headful 启动后 page.bringToFront() 置前
-  - **profile 锁**：窗口未关/ctx.close 后进程未退出 → 同 profile 再启动失败（Target page, context or browser has been closed）→ 重试时按 --user-data-dir 匹配杀残留 Chrome 进程（仅 Windows，wmic/taskkill）
-  - 页面 URL 读取用安全包装（页面关闭时 page.url() 抛错）
+- **专业领域文档**：浏览器自动化经验（DeepSeek 网页版 Chat 操作、受控输入 insertText、aria-pressed、profile 锁）**见 `docs/for_agent/domains/features.md`**。
 
+### 4.9 策略仓位管理（trade-plan）
 
-### 4.6 策略仓位管理（trade-plan，2026-08）
-- 多策略持久化：单 KV 文档 `tradePlan:config` → `{ strategies: [{ id, name, totalCapital, dailyAddLimit, stocks: [{ code, name, maxWeightPct, initShares, initCost }] }] }`；日度计划 `tradePlan:day:<策略id>:<YYYY-MM-DD>`，日期即 id（一策略一天一份）
-- 校验纯服务端（无 LLM）：`checkTradePlan` 规则——标的必须∈策略、当日加仓≤日限、单标的上限%、总市值≤总仓位、减仓≤当前持仓、同 code 同日多操作→error「请合并为一个交易操作」；告警三级 error→warn→info 排序
-- 前端自动校验：600ms debounce（输入停止后自动跑 check，**不设手动校验按钮**）；save 被 error 阻断并弹错误级 alert
-- 标的搜索补全：复用 `watchlistSearchStock`；StockCodeInput 输入框内显示「名称 代码」（有名称时），用户手动输入自动清空名称（视为更换标的）——**只显示代码可读性差（备忘录教训）**
-- 类表单校验依赖：判定已配置用「存在有 code 的标的行」而非 `totalCapital !== undefined`（数字默认 0 恒非 undefined，曾导致提示永不出现）
-- 页面级冒烟：TradePlanTool 曾出现卡加载中（mount useEffect 被重构误删，curl 测 API 测不出）——凡改页面加载逻辑必须跑 `node scripts/dev-utils/smoke-pages.mjs`
-- **v2（2026-08-08）配置/当前仓位拆分**：`strategy.stocks` 只存标的与上限%（配置），`strategy.positions`（当前数量 quantity + 成本价 avgCost）独立管理——不再用「起始数量」概念；旧数据 getStrategy 时幂等迁移（initShares→positions，清内联字段）
-- 日度计划「保存即应用」：保存自动按计划更新 positions（加仓重算均价、减仓只减数量成本不变——`applyItems` 纯函数）；**同日覆盖**先按该日 `before` 快照回滚再重应用（幂等）；**删除已应用计划**自动回滚仓位——一致性由 before/after 快照保证
-- 大改前端组件慎用 node -e 字符串替换（CRLF/中文/反引号反复踩坑）——**直接 write_file 全量重写整个组件文件**更可靠
-- **v3（2026-08-08）日度计划按数量（股）操作**：`TradePlanItem.amount` 语义从金额改为股数，金额 = 股数 × 成本价（当前仓位 positions.avgCost）；未设成本价的标的直接 error「无法换算金额」；applyItems 数量直接加减（成本价不变）；单测/E2E 同步（加仓 4 股→addTotal 5600、覆盖/删除回滚）
-- 列表编辑/删除**用 code 定位而非 index**（排序视图/重渲染下 index 会错位导致按钮失效——备忘录教训）；排序视图仍禁用编辑防串改
-- **v4（2026-08-08）多日链一致性**：日度计划「应用/删除」从简单回滚 before 改为**基线（basePositions）+ 按日期升序重放**——删除中间某日后其余计划按序重算（旧实现回滚导致后续日结果丢失）；手动保存仓位 → 固化基线；同日覆盖 = 剔除该日重放 + 重应用（幂等）
-- 日度计划加仓支持**本次 cost**（可选，缺省用当前均价）：金额 = 数量 × cost，均价 = 重算（(旧量×旧价+量×价)/新量）
+- **专业领域文档**：策略仓位管理实现经验（配置/仓位拆分、日度计划按数量、保存即应用、基线+重放、校验分工）**见 `docs/for_agent/domains/features.md`**；通用原则见 §4.10（前后端分工）。
 
-### 4.7 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
+### 4.10 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
 
 **核心原则：所有业务规则校验一律在服务端做「权威校验」，前端只做「体验性校验」。** 前端校验可被绕过（直接调 API），绝不能当作安全/正确性边界。
 
@@ -336,7 +258,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **验证习惯**：改完服务端校验必须「重启 server + 直接 curl/脚本调 API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导）；前端改动按 §6.4 测试分级验证（页面加载逻辑改动必跑冒烟，小改动用 --page 定向冒烟）。
 
-### 4.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
+### 4.11 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
 **单源化**：脚本的**目录树 / 13 个工具用法 / 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**（导航/查表见 README §2 用途列）。README 缺失/过期时优先补 README（§8.1 同步义务）。
 
@@ -344,48 +266,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 1. 所有辅助脚本一律放 scripts/dev-utils/，**禁止仓库根目录散放 tmp_*.mjs**（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）
 2. 出现第 2 次相似脚本需求 → 先查 README §2 工具表 + §4 归档表 → 有现成直接用；缺能力在 dev-utils/ 固化（不是又写 tmp）
 3. 一次性调试脚本 → dev-utils/_tmp_*.mjs 跑完即删，严禁提交
-4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§4.6）
+4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§4.9 教训）
 5. 服务端单测/全量单测用 test.mjs；提交用 commit.mjs（消息引号安全）；API 验证用 api-cli.mjs；工具改动后必跑 self-test.mjs
-6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§4.7）
+6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§4.10）
 
-**同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §4.8 与工具实际一致（§8.1）。
+**同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §4.11 与工具实际一致（§8.1）。
 
 ## 5. 外部数据源经验
 
-- **知乎爬虫（多内容目标，2026-08 实测）**：
-  - 不局限用户：`parseZhihuTarget` 识别 **用户/问题/回答/文章/想法** 链接，或从分享文本自动提取链接（answer 路径须在 question 之前匹配：`question/{qid}/answer/{aid}`）
-  - **专栏文章（zhuanlan）**：`zhuanlan.zhihu.com/p/xxx` 与 `zhihu.com/p/xxx` 是**不同 id 体系**——专栏链接必须保留 zhuanlan 域名（规范化成 www.zhihu.com/p 会 404）；parseZhihuTarget 中专栏域须**最先匹配**；`ZH_LINK_RE` 用 `(?:[\w-]+\.)?zhihu\.com` 支持子域
-  - 用户 → 浏览器拦截签名 API + 滚动（断点续爬）；问题 → 拦截 `/api/v4/questions/{qid}/answers` 抓回答流；回答/文章/想法 → 打开详情页 DOM 提取正文（选择器：`.RichContent-inner`/`.Post-RichTextContainer`/`.RichText.ztext`/`.Post-RichText`/`.ArticleContent`）
-  - 断点续爬：进度存 `zhihuCrawl:progress:<id>`（seed/phaseIndex/commentsDone），数量上限 100/超时 20min 自动暂停、取消返回已抓结果、续爬 seed 去重
-  - 知乎新版评论 API：`/api/v4/comment_v5/{type}/{id}/root_comment`；入口是「N 条评论」按钮
-  - 风控 40362：临时限流，等待恢复；Chrome profile 锁残留 → launch 失败重试前 `rmSync(PROFILE_DIR)`
-- **知识库中心（虚拟知识库，2026-08）**：
-  - 领域知识库 = 实例前缀（`medical.`/`trading.`…）；虚拟知识库 = 多领域集合（KV `kbVirt:<name>`，名称支持中文）
-  - 虚拟库导入自动匹配：`kbImportFromChat(..., matchDomains)` 逐条静态关键词匹配（领域元数据 `kbDomain:<name>.keywords`）→ 写入 `medical.`/`trading.` 等前缀，无匹配归 `other.`（低成本；LLM 匹配可后续做兜底）
-  - 聚合问答：`kbAsk(question, { instances: [...] })` 多前缀检索 → 单次 LLM
-  - **领域特化模板（医学模板已迁入）**：`kbDomain:<name>` 支持 `askTemplate/extractTemplate`（问答/导入 system 模板）；`kbAsk/kbImportFromChat` 按实例读取（`getInstanceTemplate` 内联在 knowledge.ts，避免与 knowledgeHub 循环依赖），无配置回退 medical/通用；`seedMedicalTemplates(force)` 幂等初始化（force 强制还原内置医学模板）；路由 `POST /domain/medical/seed`
-  - **统一体验（2026-08）**：领域库与虚拟库「导入/问答」体感一致——前端合并列表（领域+虚拟混合，类型徽章/条数）、统一使用区；可显式新建领域库（`POST /domain`，重复拒绝；`generateTemplates: true` 可选 **LLM 自动生成 ask/extract 模板**，一次调用 json 输出，失败降级 warning）；**空领域库（无数据）也可加入虚拟库**（前端多选合并 instances∪domains）；虚拟库问答先**领域路由**（纯静态 `matchDomain` 问题关键词打分）→ 命中只检索最相关领域（省 token/聚焦），未命中降级全领域；导入自动分发到最匹配领域（**无匹配归虚拟库杂项领域**——名字含 other/杂项/misc 优先，其次第一个领域，勿硬编码 other）；ask 返回 `routed` 供前端展示自动路由提示
-  - **知识条目 key 支持中文**：`KEY_RE` 用 Unicode（`\p{L}\p{N}`）——zhihu 导入中文标题等场景 key 含中文合法（2026-08 改，勿回退 ASCII-only）
-  - **知乎爬虫导入虚拟库**：instances 接口返回虚拟库（type=virt，在前）+ 领域实例；import 到虚拟库按子领域关键词分发（无匹配归杂项），默认选中「我的」
-  - 医学知识库页面已删除（RehabMedicalTool），功能迁入知识库中心（领域库 medical + 模板）
-  - 数据源已注册：`kbVirt:`/`kbDomain:`（知识库中心）
-  - 前端交互要点：新建虚拟库用**领域多选 checkbox**（勿让用户手输领域名）；虚拟库卡片式列表展示总条目数
-- **A/H 股行情（多源，2026-08 实测选型）**：`core/quote.ts` 提供两个能力——
-  - `getQuoteSnapshot(code)`：**实时快照**（现价/涨跌/换手/PE/PB/市值/52周区间/币种），
-    腾讯 `qt.gtimg.cn` 主源（A/H 一体、字段最全、GBK 需 TextDecoder('gbk') 转码），
-    东财 `push2.eastmoney.com`（JSON 干净，secid=1.600519/0.000858/116.00700）与新浪
-    `hq.sinajs.cn`（需 Referer，字段贫乏）自动降级；KV 缓存 `quote:s:` 5 分钟（行情时效短）
-  - `queryMonthlyBoll(code)`：月 K → 月线 BOLL（网格计划用，腾讯 `web.ifzq.gtimg.cn` qfqmonth，
-    排除未完成当月）
-  - **腾讯快照字段表**（~ 分隔，A/H 前段同构）：3=价 4=昨收 5=开 31=涨跌 32=涨跌幅 33=高
-    34=低 36=量 37=额（A 股万元/港股元，均转亿）39=PE 45=总市值；**A 股** 38=换手 46=PB
-    47/48=52周高低；**港股** 46=TENCENT 占位 → PB=47、52周=48/49
-- **DeepSeek 分享提取**：`GET https://chat.deepseek.com/api/v0/share/content?share_id={id}`
-  （UA + Accept: application/json），消息含 role/content/thinking/inserted_at/accumulated_token_usage
-- 测试用真实分享 id：`u5myqtvktzo5gal4qi`；测试行情：`600519` / `hk00700`
-- 测试命令：`node "node_modules\.pnpm\tsx@4.23.5\node_modules\tsx\dist\cli.mjs" --test
-  apps/server/src/features/cbRate/cbRate.test.ts apps/server/src/core/tasks.test.ts`
-  （cbRate 单测 14 项 + tasks 单测 6 项，共 20 项，均须全绿）
+- **专业领域文档**：外部数据源（知乎爬虫 / 知识库中心 / A-H 行情多源 / DeepSeek 分享提取 / 东财快讯）经验**见 `docs/for_agent/domains/data-sources.md`**——涉足外部数据源时按需加载。
+- 测试资源：分享 id `u5myqtvktzo5gal4qi`；测试行情 `600519` / `hk00700`。
 
 ## 6. git 规范
 
@@ -447,7 +337,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 | 改动类型 | 验证级别 |
 |---|---|
-| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ curl 断言（§4.7：400/200 + message） |
+| 服务端路由 / 参数校验 | L0 + L1（该 feature 单测）+ curl 断言（§4.10：400/200 + message） |
 | 服务端纯计算 / 业务规则 | L0 + L1（compute 等单测） |
 | 前端单页内微调（UI 组件/文案/样式/类型） | L0 + **目标页定向冒烟**（`smoke-pages.mjs --page /tools/x`，比打开 200 更能发现 JS 崩溃/API 错误） |
 | 前端页面加载逻辑（useEffect/API 请求/路由挂载） | L0 + **L3 冒烟**（历史教训：TradePlanTool 卡加载中，curl 测不出请求是否发出） |
@@ -550,7 +440,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 `docs/for_agent/` 下所有文件均为**维护性文件**，每次**阶段性提交**与**归档**后必须整体同步，不允许只更新其中一部分：
 
 1. **维护性文件清单**：
-   - `docs/for_agent/dev.md`——常驻开发规范（架构/经验/约定），后续 Agent 的主依据；
+   - `docs/for_agent/dev.md`——常驻开发规范（架构/流程/强制规则/决策），后续 Agent 的主依据；
+   - `docs/for_agent/domains/*.md`——专业领域经验（reasonix / features / data-sources），**按需加载**：涉足对应领域时阅读并更新；
    - `docs/for_agent/history/*.md`——时间线记录（会话总结，只增不改）；
    - 根目录 `AGENTS.md`——强制加载入口（若 dev.md 目录结构/引用路径变化需同步）。
 2. **每次阶段性 git commit 前**（§6）：检查本次改动是否影响任何经验/约定/结构，
