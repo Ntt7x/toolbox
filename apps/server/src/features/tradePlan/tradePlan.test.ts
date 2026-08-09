@@ -108,3 +108,18 @@ test("checkTradePlan：cost 缺省用当前均价", () => {
   const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 5 }]);
   assert.equal(r.totals.addTotal, 7000); // 5 × 1400
 });
+
+test("checkTradePlan：无成本价但有行情 fallback → warn 估算且 ok", () => {
+  const r = checkTradePlan(cfg, [{ code: "300750", action: "add", amount: 5 }], { priceFallback: { "300750": 1500 } });
+  assert.equal(r.ok, true); // 无 error
+  const w = r.alerts.find((a) => a.level === "warn");
+  assert.ok(w && w.message.includes("按最新价 ¥1500 估算"), "应有按最新价估算 warn");
+  assert.equal(r.totals.addTotal, 7500); // 5 × 1500（fallback 参与金额换算）
+});
+
+test("checkTradePlan：三源都无成本 → 仍 error", () => {
+  const r = checkTradePlan(cfg, [{ code: "300750", action: "add", amount: 5 }], { priceFallback: {} });
+  assert.equal(r.ok, false);
+  const e = r.alerts.find((a) => a.level === "error");
+  assert.ok(e && e.message.includes("未设置成本价"));
+});

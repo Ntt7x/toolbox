@@ -15,6 +15,7 @@ import {
   type TradePlanStockCfg,
 } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
+import { getQuoteSnapshot } from "../../core/quote.js";
 import { applyItems, checkTradePlan } from "./compute.js";
 import {
   createDay,
@@ -134,6 +135,27 @@ export function register(app: Hono): void {
 
   // ---------- 日度计划（按策略） ----------
 
+  // 需要行情兜底的标的（无本次 cost 且无持仓均价）→ 批量取行情最新价
+  const buildPriceFallback = async (st: { positions?: TradePlanPosition[] }, items: TradePlanItemParsed[]) => {
+    const need: string[] = [];
+    for (const it of items) {
+      if (it.cost && it.cost > 0) continue;
+      const pos = st.positions?.find((p) => p.code === it.code);
+      if (pos?.avgCost && pos.avgCost > 0) continue;
+      if (!need.includes(it.code)) need.push(it.code);
+    }
+    if (need.length === 0) return undefined;
+    const map: Record<string, number> = {};
+    for (const code of need) {
+      try {
+        const snap = await getQuoteSnapshot(code, {});
+        const px = Number(snap?.price);
+        if (px > 0) map[code] = px;
+      } catch { /* 行情不可得则无 fallback（走 error 分支） */ }
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  };
+
   // 校验（preview，不入库）
   app.post(`${API_PREFIX}/tools/trade-plan/strategies/:id/check`, async (c: Context) => {
     const st = getStrategy(c.req.param("id")!);
@@ -141,7 +163,8 @@ export function register(app: Hono): void {
     const raw = (await c.req.json().catch(() => null)) as { items?: unknown } | null;
     const items = parseItems(raw?.items);
     if (!items) return c.json({ ok: false, message: "计划条目无效（需含代码/操作/金额）" }, 400);
-    const result = checkTradePlan(st, items);
+    const priceFallback = await buildPriceFallback(st, items);
+    const result = checkTradePlan(st, items, { priceFallback });
     return c.json({ ok: result.ok, result, previewOnly: true });
   });
 
@@ -157,7 +180,8 @@ export function register(app: Hono): void {
     // 仓位 = 基线重放（剔除该日后）→ 保证同日覆盖/多日链一致
     const positions = replayPositions(st, date);
     const checkConfig = { ...st, positions };
-    const result = checkTradePlan(checkConfig, items);
+    const priceFallback = await buildPriceFallback(checkConfig, items);
+    const result = checkTradePlan(checkConfig, items, { priceFallback });
     // 违反策略仓位管理（有 error 级告警）→ 拒绝保存
     if (!result.ok) {
       return c.json({ ok: false, message: "计划违反策略仓位管理，无法保存", result, rejectReason: result.alerts.find((a) => a.level === "error")?.message }, 400);
@@ -268,6 +292,8 @@ interface TradePlanItemParsed {
   code: string;
   action: "add" | "reduce";
   amount: number;
+  /** 本次成本价（可选） */
+  cost?: number;
   note?: string;
 }
 
