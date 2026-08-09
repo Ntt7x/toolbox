@@ -331,7 +331,7 @@ export default function TradePlanTool() {
         </div>
       </div>
       {msg && (
-        <div className={cn("mb-2 rounded-lg border px-3 py-2 text-[0.84rem]", msg.startsWith("❌") ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50")}>
+        <div className={cn("mb-2 flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[0.84rem] font-medium", msg.startsWith("❌") ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700")}>
           {msg}
         </div>
       )}
@@ -339,7 +339,7 @@ export default function TradePlanTool() {
       {/* 全部策略总计划日历（跨策略） */}
       <Card className="mb-3">
         <CardContent className="flex items-center gap-2 p-4">
-          <span className="font-bold">📅 全部策略总计划</span>
+          <span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-cyan-500 align-middle" /><span className="font-bold">📅 全部策略总计划</span>
           <Button variant="secondary" size="sm" onClick={() => setAllCalOpen((v) => !v)} type="button">
             {allCalOpen ? "收起" : "展开"}
           </Button>
@@ -352,7 +352,7 @@ export default function TradePlanTool() {
         {/* 左：策略列表 */}
         <Card>
           <CardContent className="p-4">
-            <div className="mb-2 font-bold">📁 策略仓位列表</div>
+            <div className="mb-2 font-bold"><span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-indigo-500 align-middle" />📁 策略仓位列表</div>
             <div className="mb-2 flex gap-1.5">
               <Input
                 className="min-w-0 flex-1"
@@ -393,6 +393,7 @@ export default function TradePlanTool() {
               <Card className="mb-3">
                 <CardContent className="p-4">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-block h-4 w-1 rounded-full bg-blue-500 align-middle" />
                     <span className="font-bold">⚙️ 策略仓位配置</span>
                     <Input
                       className="w-40 font-bold"
@@ -422,25 +423,44 @@ export default function TradePlanTool() {
                       </div>
 
                       <div className="mb-1.5 text-[0.82rem] font-semibold text-slate-500">交易标的与当前仓位（点击 ✏️ 编辑行；新增在下方区域完成）</div>
-                      {/* 当前仓位概览 */}
-                      <div className="mb-2 flex flex-wrap gap-2">
-                        {(() => {
-                          const totalMv = strategy.positions.reduce((a, p) => a + (p.quantity || 0) * (p.avgCost || 0), 0);
-                          const pct = strategy.totalCapital > 0 ? ((totalMv / strategy.totalCapital) * 100).toFixed(1) : "—";
-                          const held = strategy.positions.filter((p) => (p.quantity || 0) > 0).length;
-                          return (
-                            <>
-                              <Badge variant="secondary">当前总市值 {cny(totalMv)}</Badge>
-                              <Badge variant="secondary">总仓位占比 {pct}%</Badge>
-                              <Badge variant="secondary">持仓 {held} / {strategy.stocks.length} 标的</Badge>
-                              {strategy.totalCapital > 0 && <span className="text-[0.76rem] text-slate-500">剩余可用 {cny(Math.max(0, strategy.totalCapital - totalMv))}</span>}
-                            </>
-                          );
-                        })()}
-                      </div>
+                      {/* 当前仓位概览：彩色信息卡 + 占比色阶进度条 */}
+                      {(() => {
+                        const totalMv = strategy.positions.reduce((a, p) => a + (p.quantity || 0) * (p.avgCost || 0), 0);
+                        const pctNum = strategy.totalCapital > 0 ? (totalMv / strategy.totalCapital) * 100 : 0;
+                        const pct = strategy.totalCapital > 0 ? pctNum.toFixed(1) : "—";
+                        const held = strategy.positions.filter((p) => (p.quantity || 0) > 0).length;
+                        const barColor = pctNum > 80 ? "#dc2626" : pctNum > 50 ? "#d97706" : "#16a34a";
+                        const card = "rounded-lg border px-3 py-2";
+                        return (
+                          <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                            <div className={`${card} border-blue-100 bg-blue-50/70`}>
+                              <div className="text-[0.7rem] text-blue-700/70">总仓位</div>
+                              <div className="text-[0.95rem] font-bold text-blue-700">{cny(strategy.totalCapital)}</div>
+                            </div>
+                            <div className={`${card} border-indigo-100 bg-indigo-50/70`}>
+                              <div className="text-[0.7rem] text-indigo-700/70">当前总市值</div>
+                              <div className="text-[0.95rem] font-bold text-indigo-700">{cny(totalMv)}</div>
+                            </div>
+                            <div className={`${card} border-slate-100 bg-slate-50`}>
+                              <div className="text-[0.7rem] text-slate-500">总仓位占比</div>
+                              <div className="text-[0.95rem] font-bold" style={{ color: barColor }}>{pct}%</div>
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200/70">
+                                <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, pctNum)}%`, background: barColor }} />
+                              </div>
+                            </div>
+                            <div className={`${card} border-slate-100 bg-slate-50`}>
+                              <div className="text-[0.7rem] text-slate-500">剩余可用</div>
+                              <div className={`text-[0.95rem] font-bold ${strategy.totalCapital > 0 && totalMv > strategy.totalCapital ? "text-red-600" : "text-slate-800"}`}>
+                                {cny(Math.max(0, strategy.totalCapital - totalMv))}
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-[0.78rem] text-slate-500 lg:col-span-4">持仓 {held} / {strategy.stocks.length} 标的</div>
+                          </div>
+                        );
+                      })()}
                       {/* 新增区 */}
-                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2">
-                        <span className="flex-shrink-0 text-[0.8rem] font-semibold text-slate-500">＋ 新增标的</span>
+                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-blue-200 bg-blue-50/50 p-2">
+                        <span className="flex-shrink-0 text-[0.8rem] font-semibold text-blue-600">＋ 新增标的</span>
                         <StockCodeInput
                           code={newStock.code}
                           name={newStock.name}
@@ -512,7 +532,7 @@ export default function TradePlanTool() {
               <Card className="mb-3">
                 <CardContent className="p-4">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="font-bold">📅 日度交易计划</span>
+                    <span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-emerald-500 align-middle" /><span className="font-bold">📅 日度交易计划</span>
                     <Input type="date" className="h-9 w-36" value={date} onChange={(e) => setDate(e.target.value)} />
                     <span className="text-[0.78rem] text-slate-400">策略：{strategy.name}</span>
                   </div>
@@ -582,7 +602,7 @@ export default function TradePlanTool() {
                       💾 保存并应用
                     </Button>
                     <span className="text-[0.78rem] text-slate-400">保存后自动按计划更新当前仓位</span>
-                    {dayMsg && <span className={cn("text-[0.82rem]", dayMsg.startsWith("❌") ? "text-red-600" : "text-emerald-600")}>{dayMsg}</span>}
+                    {dayMsg && <span className={cn("rounded-md px-2 py-1 text-[0.82rem] font-medium", dayMsg.startsWith("❌") ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200")}>{dayMsg}</span>}
                   </div>
 
                   {displayResult && <ResultView result={displayResult} />}
@@ -593,7 +613,7 @@ export default function TradePlanTool() {
               <Card>
                 <CardContent className="p-4">
                   <div className="mb-2 flex items-center gap-2">
-                    <span className="font-bold">🗂️ 历史日度计划</span>
+                    <span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-violet-500 align-middle" /><span className="font-bold">🗂️ 历史日度计划</span>
                     <span className="flex-1" />
                     <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
                       {([["list", "📋 列表"], ["cal", "🗓️ 日历"]] as const).map(([v, l]) => (
@@ -743,7 +763,7 @@ function AllCalendar() {
   const selectedDay = byDate.get(selected);
 
   return (
-    <div className="mt-2 border-t border-dashed border-slate-200 pt-2">
+    <div className="mt-2 border-t border-dashed border-emerald-200 pt-2">
       <div className="mb-2 flex items-center gap-1.5">
         <Button variant="secondary" size="sm" onClick={() => setMonth(m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`)} type="button">◀</Button>
         <span className="flex-1 text-center font-bold">{month}</span>
@@ -864,14 +884,14 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
     <div className="mt-3 border-t border-dashed border-slate-200 pt-3">
       <div className="mb-2 flex flex-wrap gap-2">
         {[
-          { label: "当日加仓", value: cny(result.totals.addTotal) },
-          { label: "执行后总市值", value: cny(result.totals.totalMarketValue) },
-          { label: "总仓位占比", value: `${result.totals.positionPct.toFixed(1)}%` },
-          { label: "剩余可用", value: cny(Math.max(0, result.totals.remaining)) },
+          { label: "当日加仓", value: cny(result.totals.addTotal), tone: "bg-blue-50 border-blue-100 text-blue-700" },
+          { label: "执行后总市值", value: cny(result.totals.totalMarketValue), tone: "bg-indigo-50 border-indigo-100 text-indigo-700" },
+          { label: "总仓位占比", value: `${result.totals.positionPct.toFixed(1)}%`, tone: result.totals.positionPct > 80 ? "bg-red-50 border-red-200 text-red-700" : result.totals.positionPct > 50 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-emerald-50 border-emerald-100 text-emerald-700" },
+          { label: "剩余可用", value: cny(Math.max(0, result.totals.remaining)), tone: result.totals.remaining < 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-slate-50 border-slate-100 text-slate-800" },
         ].map((s) => (
-          <div key={s.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5">
-            <div className="text-[0.7rem] text-slate-500">{s.label}</div>
-            <div className="text-[0.95rem] font-bold text-slate-800">{s.value}</div>
+          <div key={s.label} className={`rounded-lg border px-3 py-1.5 ${s.tone}`}>
+            <div className="text-[0.7rem] opacity-70">{s.label}</div>
+            <div className="text-[0.95rem] font-bold">{s.value}</div>
           </div>
         ))}
       </div>
