@@ -338,7 +338,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 4.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
-**单源化**：脚本的**目录树 / 13 个工具用法 / 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**与**场景速查导航**。README 缺失/过期时优先补 README（§8.1 同步义务）。
+**单源化**：脚本的**目录树 / 13 个工具用法 / 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**（导航/查表见 README §2 用途列）。README 缺失/过期时优先补 README（§8.1 同步义务）。
 
 **强制规则（行为约束，与 README §3 互补）**：
 1. 所有辅助脚本一律放 scripts/dev-utils/，**禁止仓库根目录散放 tmp_*.mjs**（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）
@@ -347,22 +347,6 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 4. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）→ 用 patch.mjs 或 write_file 脚本（§4.6）
 5. 服务端单测/全量单测用 test.mjs；提交用 commit.mjs（消息引号安全）；API 验证用 api-cli.mjs；工具改动后必跑 self-test.mjs
 6. 服务端校验改完必须「重启 server + API 打 400/200 断言」（tsx watch 偶发不热更新，假 200 曾误导两次，§4.7）
-
-**常用场景速查（改什么 → 用什么；命令细节见 README §2）**：
-| 场景 | 工具 |
-|---|---|
-| 启动/重启 dev 环境 | dev.mjs |
-| 进程异常/残留排查 | proc.mjs |
-| 跑模块/全量单测 | test.mjs |
-| 提交改动 | commit.mjs |
-| API 验证（400/200 断言） | api-cli.mjs |
-| 页面小改动定向验证 | smoke-pages.mjs --page |
-| 大需求改动全量验证 | smoke-pages.mjs（L3，§6.4 触发时机） |
-| 处理备忘录 | memo.mjs |
-| 查测试数据残留 | kv.mjs |
-| 文件批量替换 | patch.mjs |
-| 浏览器元素探测 | browser-probe.mjs |
-| 工具改动回归 | self-test.mjs |
 
 **同步义务**：新增/修改脚本后——README §1 目录树 + §2 工具表补/改一行 → self-test 跑通 → 提交；每阶段提交核对 README 与 dev.md §4.8 与工具实际一致（§8.1）。
 
