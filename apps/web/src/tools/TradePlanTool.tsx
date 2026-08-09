@@ -493,7 +493,7 @@ export default function TradePlanTool() {
                       <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b", flexShrink: 0 }}>
                         上限
                         <input type="range" min={0} max={100} step={1} value={newStock.maxWeightPct ?? 0} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: Number(e.target.value) || undefined }))} style={{ width: 70, accentColor: "#2563eb" }} title="单标的上限（占总仓位百分比）" />
-                        <StepInput value={newStock.maxWeightPct ?? 0} onChange={(v) => setNewStock((st) => ({ ...st, maxWeightPct: Math.min(100, v) || undefined }))} step={5} max={100} width={54} placeholder="%" />
+                        <StepInput value={newStock.maxWeightPct ?? 0} onChange={(v) => setNewStock((st) => ({ ...st, maxWeightPct: Math.min(100, v) || undefined }))} step={1} max={100} width={54} placeholder="%" />
                       </label>
                       <button style={{ ...btn, padding: "0.35rem 0.8rem", fontSize: "0.8rem" }} onClick={addNewStock} disabled={!newStock.code.trim()} type="button">添加</button>
                       {addMsg && <span style={{ fontSize: "0.75rem", color: "#dc2626", flexShrink: 0 }}>{addMsg}</span>}
@@ -528,7 +528,7 @@ export default function TradePlanTool() {
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               单标的上限
                               <input type="range" min={0} max={100} step={1} value={s.maxWeightPct ?? 0} onChange={(e) => setStockAt(i, { maxWeightPct: Number(e.target.value) || 0 })} style={{ width: 80, accentColor: "#2563eb" }} />
-                              <StepInput value={s.maxWeightPct ?? 0} onChange={(v) => setStockAt(i, { maxWeightPct: v })} step={5} max={100} width={50} placeholder="--" />%
+                              <StepInput value={s.maxWeightPct ?? 0} onChange={(v) => setStockAt(i, { maxWeightPct: v })} step={1} max={100} width={50} placeholder="--" />%
                             </label>
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b" }}>
                               当前数量
