@@ -57,16 +57,34 @@ const numInput = (v: string) => Number(stripLeadZeros(v).replace(/[,，\s]/g, ""
 
 /** 数字输入 + 上下步进（▲▼ 调整；min/max 下限/上限，手动输入照常） */
 function StepInput({ value, onChange, step = 1, min = 0, max, width = 90, placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; width?: number; placeholder?: string }) {
+  // 半受控：输入过程保留原始文本（含中间态 "1."），失焦/步进时才 clamp 提交——否则 "1." 被 Number() 吞成 1，打不出小数点
+  const [text, setText] = useState<string | null>(null);
   // 精度：保留 6 位（防浮点噪声），不主动截断用户输入精度（如成本价 10.868）
   const clamp = (v: number) => {
     let r = Math.round(v * 1e6) / 1e6;
     if (max !== undefined) r = Math.min(max, r);
     return Math.max(min, r);
   };
-  const stepFn = (dir: 1 | -1) => () => onChange(clamp(value + dir * step));
+  const commit = (v: number) => {
+    onChange(clamp(v));
+    setText(null); // 回到跟随 value
+  };
+  const parsed = (): number => {
+    const n = numInput(text ?? "");
+    return Number.isFinite(n) ? n : 0;
+  };
+  const stepFn = (dir: 1 | -1) => () => commit(parsed() + dir * step);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-      <input style={{ ...input, width, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" value={value > 0 ? value.toLocaleString("zh-CN") : ""} onChange={(e) => onChange(clamp(numInput(e.target.value)))} placeholder={placeholder} />
+      <input
+        style={{ ...input, width, padding: "0.3rem 0.45rem" }}
+        type="text"
+        inputMode="decimal"
+        value={text ?? (value > 0 ? value.toLocaleString("zh-CN") : "")}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => { if (text !== null) commit(parsed()); }}
+        placeholder={placeholder}
+      />
       <span style={{ display: "inline-flex", flexDirection: "column", gap: 1 }}>
         <button type="button" onClick={stepFn(1)} title={`+${step}`} style={{ padding: "0 0.3rem", lineHeight: "0.85rem", fontSize: "0.5rem", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#475569" }}>▲</button>
         <button type="button" onClick={stepFn(-1)} title={`-${step}`} style={{ padding: "0 0.3rem", lineHeight: "0.85rem", fontSize: "0.5rem", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#475569" }}>▼</button>
