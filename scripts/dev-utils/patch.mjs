@@ -34,7 +34,8 @@ if (!Array.isArray(patches)) {
 }
 
 let allOk = true;
-const results = [];
+const contents = new Map(); // file → 当前（累积）content
+const results = []; // 写盘清单（file 去重）
 for (let i = 0; i < patches.length; i++) {
   const p = patches[i];
   if (!p?.file || typeof p.find !== "string") {
@@ -48,7 +49,12 @@ for (let i = 0; i < patches.length; i++) {
     allOk = false;
     continue;
   }
-  let content = readFileSync(file, "utf8");
+  // 同文件多补丁 → 基于累积 content 应用（避免后者覆盖前者）
+  let content = contents.get(file);
+  if (content === undefined) {
+    content = readFileSync(file, "utf8");
+    results.push(file);
+  }
   const want = typeof p.count === "number" ? p.count : 1;
   // 尝试 find 原样 + CRLF 版
   const tryFind = content.includes(p.find) ? p.find : content.includes(p.find.replace(/\n/g, "\r\n")) ? p.find.replace(/\n/g, "\r\n") : p.find;
@@ -68,8 +74,8 @@ for (let i = 0; i < patches.length; i++) {
     allOk = false;
     continue;
   }
-  const replaced = content.replace(tryFind, p.replace);
-  results.push({ file, content: replaced });
+  content = content.replace(tryFind, p.replace);
+  contents.set(file, content); // 累积更新
   console.log(`  [${i + 1}] ✅ ${file}：替换 ${found} 处`);
 }
 
@@ -81,5 +87,5 @@ if (!apply) {
   console.log(`═══ 全部通过（dry-run，未写盘）；加 --apply 应用 ═══`);
   process.exit(0);
 }
-for (const r of results) writeFileSync(r.file, r.content);
+for (const file of results) writeFileSync(file, contents.get(file));
 console.log(`═══ 已写盘 ${results.length} 个文件 ═══`);

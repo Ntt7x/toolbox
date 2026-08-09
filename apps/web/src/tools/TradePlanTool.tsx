@@ -473,7 +473,8 @@ export default function TradePlanTool() {
                       />
                       <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.76rem", color: "#64748b", flexShrink: 0 }}>
                         上限
-                        <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="%" value={newStock.maxWeightPct ?? ""} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: numInput(e.target.value) || undefined }))} />
+                        <input type="range" min={0} max={100} step={1} value={newStock.maxWeightPct ?? 0} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: Number(e.target.value) || undefined }))} style={{ width: 70, accentColor: "#2563eb" }} title="单标的上限（占总仓位百分比）" />
+                        <input style={{ ...input, width: 54, padding: "0.3rem 0.45rem" }} type="text" inputMode="numeric" placeholder="%" value={newStock.maxWeightPct ?? ""} onChange={(e) => setNewStock((st) => ({ ...st, maxWeightPct: Math.min(100, Math.max(0, numInput(e.target.value))) || undefined }))} />
                       </label>
                       <button style={{ ...btn, padding: "0.35rem 0.8rem", fontSize: "0.8rem" }} onClick={addNewStock} disabled={!newStock.code.trim()} type="button">添加</button>
                       {addMsg && <span style={{ fontSize: "0.75rem", color: "#dc2626", flexShrink: 0 }}>{addMsg}</span>}
@@ -560,7 +561,10 @@ export default function TradePlanTool() {
                       <option value="add">加仓</option>
                       <option value="reduce">减仓</option>
                     </select>
-                    <input style={{ ...input, width: 110, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="数量（股）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
+                    <input style={{ ...input, width: 100, padding: "0.4rem 0.55rem" }} type="text" inputMode="numeric" placeholder="数量（股）" value={it.amount > 0 ? it.amount.toLocaleString("zh-CN") : ""} onChange={(e) => setItemAt(i, { amount: numInput(e.target.value) })} />
+                    {it.action === "add" && (
+                      <input style={{ ...input, width: 90, padding: "0.4rem 0.55rem" }} type="text" inputMode="decimal" placeholder="成本价（可选）" value={it.cost ? it.cost.toFixed(2) : ""} onChange={(e) => setItemAt(i, { cost: Number(stripLeadZeros(e.target.value)) || undefined })} title="本次买入成本价；缺省用当前仓位成本价" />
+                    )}
                     {(() => {
                       const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
                       const est = it.amount * (it.cost && it.cost > 0 ? it.cost : price);
