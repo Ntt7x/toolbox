@@ -11,17 +11,24 @@
   },
   "dependencies": {
     "@toolbox/shared": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "echarts": "^6.1.0",
+    "lucide-react": "^1.30.0",
+    "radix-ui": "^1.6.7",
     "react": "^19",
     "react-dom": "^19",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "vite": "^6"
   }
