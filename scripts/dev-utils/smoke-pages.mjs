@@ -17,6 +17,9 @@ const pwPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..
 const { chromium } = require(pwPath);
 
 const WEB = process.env.SMOKE_WEB ?? "http://localhost:5173";
+
+// --page <path>：定向冒烟（只测一个页面，配合 §6.4 L2 小改动验证；不传则全量 17 页）
+const onlyPage = process.argv.includes("--page") ? process.argv[process.argv.indexOf("--page") + 1] : null;
 const PAGES = [
   "/",
   "/tools/grid-plan",
@@ -49,7 +52,7 @@ const browser = await chromium.launch({ headless: true, executablePath: CHROME, 
 const page = await browser.newPage();
 let fail = 0;
 
-for (const path of PAGES) {
+for (const path of onlyPage ? [onlyPage] : PAGES) {
   const problems = [];
   page.on("response", (r) => {
     if (r.url().includes("/api/") && r.status() >= 400) problems.push(`${r.status()} ${r.url().slice(0, 110)}`);

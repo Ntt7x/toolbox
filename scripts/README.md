@@ -26,7 +26,11 @@ scripts/
 |---|---|---|
 | `dev.mjs` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，**单实例防重**（start/restart 前杀旧 supervisor），端口清理 | `node scripts/dev-utils/dev.mjs start\|stop\|restart\|status\|kill-port <port>` |
 | `proc.mjs` | **进程诊断/清理**：端口占用 + supervisor 状态 + 全部 node 进程命令行（查残留 supervisor/tsx/vite） | `node scripts/dev-utils/proc.mjs status\|list\|kill <pid>\|kill-port <port>` |
-| `smoke-pages.mjs` | **页面冒烟**：17 页 playwright（页面渲染 + API 无 404/500/挂起），**页面大改后必跑** | `node scripts/dev-utils/smoke-pages.mjs` |
+
+| `test.mjs` | **模块单测快捷**（自动定位测试文件/全量） | `node scripts/dev-utils/test.mjs tradePlan` |
+| `commit.mjs` | **git 提交包装**（消息引号安全，自动 add+commit） | `node scripts/dev-utils/commit.mjs "feat(x): 说明"` |
+| `api-cli.mjs` | **API CLI**（curl 替代，Windows 引号安全） | `node scripts/dev-utils/api-cli.mjs GET /health` |
+| `smoke-pages.mjs` | 页面冒烟（17 页；**`--page <路径>` 定向单页**配合 L2） | `node scripts/dev-utils/smoke-pages.mjs [--page /tools/x]` |
 | `api.mjs` | 通用 API 客户端：fetch+json 包装，非 2xx 抛带 message 的 Error（含 rejectReason） | `import { call, get, post, put, del } from "./api.mjs"` |
 | `e2e.mjs` | API E2E 断言脚手架：用例列表 + 统计 + 失败 exit 1 | 脚本内 `import { e2e, assert } from "./e2e.mjs"` |
 | `memo.mjs` | 改进备忘录 CLI：读 open / 批量 done / 新增（**每轮「处理备忘录」必用**） | `node scripts/dev-utils/memo.mjs list\|done <id>...\|add <text>` |
