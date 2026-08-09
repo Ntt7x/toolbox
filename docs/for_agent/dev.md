@@ -339,14 +339,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 **scripts/ 目录结构（全部集中，根目录不放脚本）**：
 ```
 scripts/
-├── README.md                    总入口说明（scripts/ 根只放入口，脚本全在 dev-utils/）
+├── README.md                    唯一文档：设计思想（集中/整合/复用/进化）+ 工具速查表 + 规范 + 历史归档
 └── dev-utils/
-    ├── dev.mjs                   开发进程管理器（supervisor：start/stop/restart/status/kill-port）
+    ├── dev.mjs                   开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
     ├── proc.mjs                  进程诊断/清理 CLI（status/list/kill/kill-port；查残留 supervisor/tsx）
     ├── smoke-pages.mjs           页面冒烟（17 页 playwright；页面大改后必跑）
-    ├── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs   见 README
-    ├── README.md                 工具表 + 规则
-    └── ARCHIVE.md                历史临时脚本归档
+    └── api.mjs / memo.mjs / kv.mjs / e2e.mjs / patch.mjs / browser-probe.mjs
 ```
 
 **所有开发辅助脚本一律集中放 scripts/dev-utils/**（API 客户端 / 备忘录 CLI / KV 检查 / E2E 脚手架），禁止在仓库根目录散放 tmp_*.mjs（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）。
@@ -356,7 +354,7 @@ scripts/
 - memo.mjs：备忘录 CLI——node scripts/dev-utils/memo.mjs list / done <id>... / add <text>（每轮「处理备忘录」必用）
 - kv.mjs：KV/DB 只读检查——node scripts/dev-utils/kv.mjs list <前缀> / count <前缀> / get <key>（查测试数据残留/数据分布）
 - e2e.mjs：API E2E 断言脚手架——import { e2e, assert } from './e2e.mjs'，声明用例列表跑断言，失败即 exit 1
-- 用法详见 scripts/dev-utils/README.md
+- 用法详见 scripts/README.md（§2 工具速查表）
 
 **规则**：
 1. 发现第二次出现相似脚本需求（fetch 包装/读 kv/标记备忘录/替换文件）→ 先用现成工具，缺能力则在 dev-utils/ 内新增可复用函数（不是又写一个根目录 tmp）
@@ -364,7 +362,7 @@ scripts/
 3. 大段文件替换禁止 node -e（cmd 引号/中文/反引号地狱）——写 .mjs 脚本文件执行（见 §4.6）
 4. 集成验证（E2E）用 e2e.mjs 脚手架组织；服务端校验改完必须「重启 server + 脚本打 400/200 断言」（§4.7）
 5. 文件文本替换用 patch.mjs（patch.json 驱动，dry-run/原子写盘），禁止 node -e 长替换；浏览器调试用 browser-probe.mjs
-6. 历史临时脚本的归类与去向见 scripts/dev-utils/ARCHIVE.md——新脚本需求先查该表与 README，出现第 2 次即固化
+6. 历史临时脚本的归类与去向见 scripts/README.md（§4 归档表）——新脚本需求先查该表与 README，出现第 2 次即固化
 
 ## 5. 外部数据源经验
 
