@@ -55,6 +55,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 新增工具 = 建 `features/xxx/`（导出 `meta` + `register(app)`）→ shared 加契约 → web 建 `tools/XxxTool.tsx` 并注册进 `toolPages` + `MENU_GROUPS`（分组：后台 / 交易 / 工具，见 §5.2 菜单三件套）。
 前端 UI 组件：复杂交互优先用 shadcn/ui（§5.4 组件库选型），简单元素用现有样式体系。
 
+**外部 RPC 接入形态（2026-08-10 起）**：服务端架构支持 `api(ts) → api/rpc`——TS api 层（Hono 路由）经 RPC 调用独立的外部 RPC 服务（如 C# 服务）。RPC 服务一律按「外部系统」接入：在 features 层包装调用（遵守 `features → core → 外部系统` 单向依赖铁律），并在 dependencyGraph 的 `EXTERNAL_EDGES` 登记；传输/协议形态（HTTP/JSON、gRPC 等）**未定，只记方向不写死实现**。TS 契约（packages/shared）与 RPC 侧类型无直接共享，双端契约需经 OpenAPI 生成或手工对齐。
+
 ## 2. 开发流程（契约驱动）
 
 1. **先写 shared 契约**（类型 + 注释），前后端共享，绝不直接改对方类型
