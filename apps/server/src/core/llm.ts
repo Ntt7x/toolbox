@@ -428,8 +428,8 @@ function localDay(iso: string): string {
 }
 
 /** 用量汇总（总数 + 按模块 + 按天；按天含当日模块明细，供单日扇形图） */
-// DeepSeek 公开定价近似（deepseek-chat，USD/百万 token；2026-08）：输入 0.27 / 缓存命中 0.07 / 输出 1.10；汇率 7.2
-const DS_PRICE = { inputUsd: 0.27, cacheHitUsd: 0.07, outputUsd: 1.1, usdCny: 7.2 };
+// DeepSeek 公开定价近似（deepseek-chat，USD/百万 token；2026-08）：v4-flash 输入 0.14 / 缓存命中 0.0028 / 输出 0.28（2026-08-10 官方价）；汇率 7.2
+const DS_PRICE = { inputUsd: 0.14, cacheHitUsd: 0.0028, outputUsd: 0.28, usdCny: 7.2 };   // deepseek-v4-flash 官方价（旧 v3 价 0.27/0.07/1.10 偏贵，已更新）
 function estimateCostUsd(hit: number, miss: number, completion: number): number {
   return (hit * DS_PRICE.cacheHitUsd + miss * DS_PRICE.inputUsd + completion * DS_PRICE.outputUsd) / 1e6;
 }
