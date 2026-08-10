@@ -66,10 +66,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ## 3. 环境与工具注意（Windows）
 
-- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；命令前设 PATH——cmd：`set "PATH=D:\Softwares\nodejs;%PATH%"`；PowerShell（当前 bash 工具）：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH`
+- node 在 `D:\Softwares\nodejs`（**不在 PATH**）；命令前设 PATH（bash 工具按 cmd 语法）：`set "PATH=D:\Softwares\nodejs;%PATH%"`
 - dev 服务：`pnpm dev` 后台跑（tsx watch + vite HMR 都正常）
-- bash 工具解析器在 cmd/PowerShell 间不稳定：**分号 `;` 会被当参数**，
-  一条命令只做一件事；提交用 `commit.mjs`（消息引号安全，自动 add+commit+push，§6.8）
+- **bash 工具执行层 = cmd.exe（实测 2026-08-10）**：环境说明虽声称 PowerShell，实际命令由 cmd.exe 执行——`echo %COMSPEC%` 展开正常，而 `$PSVersionTable` / `Get-Date` 等 PowerShell 语法报「不是内部或外部命令」。因此（硬性规则）：
+  1. **命令中禁止出现 `;`**：cmd 中它不是分隔符，整串会被拼成单个参数（例：`git status --short --branch; git branch -a` 报 `unknown option 'branch;'`）
+  2. **禁止 PowerShell 专用语法**：`$env:...` / `Get-Date` / `Select-Object` 等在 bash 工具内一律不可用（仅 cmd 语法 + 现有工具可用）
+  3. **一条命令只做一件事**；多命令拆成多次工具调用，勿用 `&` / `&&` 拼接（同样会被截断/拼接为参数）
+  4. 需要日期用 `echo %DATE%`（或 `git log -1 --format=%ad --date=short`）；取目录最新文件用专用 ls 工具或 `dir /b`（cmd 无 Select-Object/tail）
+  - 例外：给用户在**真实 PowerShell 终端**手动执行的说明（§3.1 等标注「终端手动」处）不受此限；bash 工具内一律按 cmd 写
+  - 根因在宿主工具层（bash 工具由 cmd 解析），仓库内无法根治，只能统一规避；违反会浪费多轮排查，故列为硬性
+- 提交用 `commit.mjs`（消息引号安全，自动 add+commit+push，§6.8）
 - typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
 
 ### 3.1 开发进程管理（scripts/dev-utils/dev.mjs，2026-08-07 起强制）
@@ -81,7 +87,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - `stop`：写 `.file/dev.stop` 标记（supervisor 不再拉起并自行退出）+ 杀进程树 + 清端口；
   - 子进程日志在 `.file/dev-logs/{server,web}.log`（排查服务崩溃看这里）；
 - 排查步骤：`node scripts/dev-utils/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
-- 后台运行 start 用 PowerShell 语法：`$env:PATH = "D:\Softwares\nodejs;" + $env:PATH; cd D:\Agent\toolbox; node scripts/dev-utils/dev.mjs start`。
+- 后台运行 start（bash 工具内按 cmd 语法，终端手动可换 PowerShell）：`set "PATH=D:\Softwares\nodejs;%PATH%" && cd /d D:\Agent\toolbox && node scripts/dev-utils/dev.mjs start`
 
 
 ## 4. git 规范
@@ -501,7 +507,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。
 
-- **新 Agent 开工前**：先读最近一份 history（`ls docs/for_agent/history/ | sort | Select-Object -Last 1`，PowerShell），了解已完成/遗留，避免重复开发
+- **新 Agent 开工前**：先读最近一份 history（用 ls 工具列 `docs/for_agent/history/`，取文件名日期序号最大的一篇；命名 `YYYY-MM-DD-NN.md`，NN 越大越新；cmd 下无 Select-Object/tail），了解已完成/遗留，避免重复开发
 - **每个 Agent 会话结束时**：在 `docs/for_agent/history/` 追加一份总结，命名 `YYYY-MM-DD-NN.md`（NN 为当日序号）
 - 总结格式：时间、会话主题、按序完成的功能（含文件/API）、git commit、**遗留/规划事项**（🔮 未实现 🚧 未提交）
 - 历史文件只增不改（除非事实错误），保持时间线完整
