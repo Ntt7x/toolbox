@@ -36,6 +36,15 @@ function priceOf(config: TradePlanCheckConfig, code: string): number {
   return p?.avgCost ?? 0;
 }
 
+/** 有效成本价：本次 cost（含负/零合法）→ 持仓均价 → 行情最新价 fallback（三源任一） */
+function effectivePriceOf(config: TradePlanCheckConfig, items: TradePlanItem[], fallback: Record<string, number> | undefined, code: string): number {
+  const itemCost = items.find((it) => it.code === code)?.cost;
+  if (typeof itemCost === "number" && !isNaN(itemCost)) return itemCost;   // 本次 cost 优先（负/零成本合法）
+  const avg = priceOf(config, code);
+  if (avg > 0) return avg;
+  return fallback?.[code] ?? 0;
+}
+
 /** 某标的当前数量（股） */
 function qtyOf(config: TradePlanCheckConfig, code: string): number {
   const p = config.positions.find((x) => x.code === code);
@@ -63,7 +72,11 @@ export function applyItems(positions: TradePlanPosition[], items: TradePlanItem[
   return out;
 }
 
-export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanItem[]): TradePlanCheckResult {
+export function checkTradePlan(
+  config: TradePlanCheckConfig,
+  items: TradePlanItem[],
+  opts?: { priceFallback?: Record<string, number> },
+): TradePlanCheckResult {
   const alerts: TradePlanAlert[] = [];
   const totalCapital = config.totalCapital || 0;
   const dailyAddLimit = config.dailyAddLimit || 0;
@@ -99,21 +112,36 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
   }
 
-  // 成本价检查：操作标的须有成本（本次 cost 或当前仓位 avgCost），金额 = 数量 × 成本价
+  // 成本价检查：三源（本次 cost（含负/零合法）/ 持仓均价 / 行情最新价 fallback）都无才 error；仅 fallback 时 warn 按市价估算
+  const fallback = opts?.priceFallback;
   const itemCostOf = (code: string) => items.find((it) => it.code === code)?.cost;   // 缺省 undefined；负/零成本合法
-  const missingPrice = [...byCode.keys()].filter((code) => typeof itemCostOf(code) !== "number" && priceOf(config, code) <= 0);
+  const missingPrice = [...byCode.keys()].filter((code) => typeof itemCostOf(code) !== "number" && effectivePriceOf(config, items, fallback, code) <= 0);
   for (const code of missingPrice) {
     alerts.push({
       level: "error",
       code,
       message: `标的 ${code} 未设置成本价，无法换算金额`,
-      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请填写本次成本价或在「当前仓位」填写该标的的成本价",
+      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请填写本次成本价、在「当前仓位」填写成本价，或确认该标的行情可获取",
     });
+  }
+  // 无持仓成本但可按最新价估算 → warn（价格 = 数量 × 行情价）
+  for (const code of byCode.keys()) {
+    const itemCost = items.find((it) => it.code === code)?.cost ?? 0;
+    const avg = priceOf(config, code);
+    const fb = fallback?.[code] ?? 0;
+    if (itemCost <= 0 && avg <= 0 && fb > 0) {
+      alerts.push({
+        level: "warn",
+        code,
+        message: `标的 ${code} 未设置成本价，按最新价 ¥${fb} 估算`,
+        detail: "建议在「当前仓位」填写该标的的实际成本价，金额将更准确",
+      });
+    }
   }
 
   // 2. 单日加仓上限（金额 = 加仓股数 × 成本价（本次 cost 优先））
   const addTotal = [...byCode.entries()].reduce((a, [code, v]) => {
-    const cost = (() => { const c = itemCostOf(code); return typeof c === "number" && !isNaN(c) ? c : priceOf(config, code); })();   // 负/零成本合法
+    const cost = effectivePriceOf(config, items, fallback, code);
     return a + v.add * cost;
   }, 0);
   if (dailyAddLimit > 0 && addTotal > dailyAddLimit) {
@@ -136,7 +164,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
   for (const pos of afterPositions) {
     const stock = config.stocks.find((s) => s.code === pos.code);
     const v = byCode.get(pos.code) ?? { add: 0, reduce: 0 };
-    const price = priceOf(config, pos.code);
+    const price = effectivePriceOf(config, items, fallback, pos.code);
     const curQty = qtyOf(config, pos.code);
     const marketValue = (pos.quantity || 0) * (pos.avgCost || 0);
 
@@ -166,7 +194,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
     }
 
     seenCodes.add(pos.code);
-    const addAmount = v.add * (() => { const c = itemCostOf(pos.code); return typeof c === "number" && !isNaN(c) ? c : price; })();
+    const addAmount = v.add * price;
     if (curQty === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
     after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount });
   }
@@ -174,7 +202,7 @@ export function checkTradePlan(config: TradePlanCheckConfig, items: TradePlanIte
   // 计划中出现但无仓位记录的标的（applyItems 已补空仓位；非法标的另行告警）
   for (const [code, v] of byCode) {
     if (seenCodes.has(code)) continue;
-    const price = priceOf(config, code);
+    const price = effectivePriceOf(config, items, fallback, code);
     const marketValue = Math.max(0, (qtyOf(config, code) + v.add - v.reduce) * price);
     const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
     after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add * price });
