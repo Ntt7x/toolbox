@@ -247,6 +247,27 @@ export default function LlmSettings() {
           )}
         </div>
 
+        {/* 关键指标卡（放在图表前，避免被扇形图遮挡） */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.7rem", marginBottom: "0.9rem" }}>
+          {[
+            { label: "总调用", value: `${usage?.total.calls ?? 0}`, unit: "次" },
+            { label: "输入", value: ((usage?.total.promptTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
+            { label: "输出", value: ((usage?.total.completionTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
+            { label: "合计", value: ((usage?.total.totalTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
+            { label: "缓存命中", value: ((usage?.total.cacheRate ?? 0) * 100).toFixed(1), unit: "%", sub: `${((usage?.total.cacheHitTokens ?? 0) / 1000).toFixed(1)}k / ${((usage?.total.cacheMissTokens ?? 0) / 1000).toFixed(1)}k 输入` },
+            { label: "估算费用", value: `¥${(usage?.total.costCny ?? 0).toFixed(2)}`, unit: "≈", sub: `$${(usage?.total.costUsd ?? 0).toFixed(2)} · 按公开价近似` },
+          ].map((s) => (
+            <div key={s.label} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "0.6rem 0.85rem" }}>
+              <div style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 500 }}>{s.label}</div>
+              <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#1e293b", lineHeight: 1.3 }}>
+                {s.value}
+                <span style={{ fontSize: "0.75rem", fontWeight: 500, color: "#94a3b8", marginLeft: "0.25rem" }}>{s.unit}</span>
+              </div>
+              {"sub" in s && s.sub && <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>{s.sub}</div>}
+            </div>
+          ))}
+        </div>
+
         {/* 图表：逐日条形图 + 单日扇形图 */}
         {(usage?.byDay.length ?? 0) > 0 && (
           <div style={{ marginBottom: "0.7rem", padding: "0.6rem 0.8rem", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
@@ -296,26 +317,6 @@ export default function LlmSettings() {
 
         {/* 本地用量汇总 */}
         <div style={{ fontSize: "0.85rem" }}>
-          {/* 关键指标卡 */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.7rem", marginBottom: "0.9rem" }}>
-            {[
-              { label: "总调用", value: `${usage?.total.calls ?? 0}`, unit: "次" },
-              { label: "输入", value: ((usage?.total.promptTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
-              { label: "输出", value: ((usage?.total.completionTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
-              { label: "合计", value: ((usage?.total.totalTokens ?? 0) / 1000).toFixed(1), unit: "k tokens" },
-              { label: "缓存命中", value: ((usage?.total.cacheRate ?? 0) * 100).toFixed(1), unit: "%", sub: `${((usage?.total.cacheHitTokens ?? 0) / 1000).toFixed(1)}k / ${((usage?.total.cacheMissTokens ?? 0) / 1000).toFixed(1)}k 输入` },
-              { label: "估算费用", value: `¥${(usage?.total.costCny ?? 0).toFixed(2)}`, unit: "≈", sub: `$${(usage?.total.costUsd ?? 0).toFixed(2)} · 按公开价近似` },
-            ].map((s) => (
-              <div key={s.label} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "0.6rem 0.85rem" }}>
-                <div style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 500 }}>{s.label}</div>
-                <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#1e293b", lineHeight: 1.3 }}>
-                  {s.value}
-                  <span style={{ fontSize: "0.75rem", fontWeight: 500, color: "#94a3b8", marginLeft: "0.25rem" }}>{s.unit}</span>
-                </div>
-                {"sub" in s && s.sub && <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>{s.sub}</div>}
-              </div>
-            ))}
-          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.8rem" }}>
             <div>
               <div style={{ fontWeight: 600, marginBottom: "0.3rem", color: "#64748b", fontSize: "0.78rem" }}>按调用模式</div>
