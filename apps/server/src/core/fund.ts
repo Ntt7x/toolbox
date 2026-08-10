@@ -53,7 +53,38 @@ async function fetchFundInfo(code: string): Promise<Partial<FundSnapshot>> {
   };
 }
 
-/** 场外基金净值快照（缓存 10 分钟；force 可绕过） */
+/** GBK 转码（新浪返回 GBK；Node 内置 ICU） */
+function decodeGbk(buf: ArrayBuffer): string {
+  return new TextDecoder("gbk").decode(buf);
+}
+
+/** 新浪基金兜底（净值基础字段）：of{code} → 名称,单位净值,累计净值,昨净值,日增长率%,日期 */
+async function fetchSinaFund(code: string): Promise<Partial<FundSnapshot>> {
+  const url = `https://hq.sinajs.cn/list=of${code}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://finance.sina.com.cn" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`新浪基金响应异常（HTTP ${res.status}）`);
+  const text = decodeGbk(await res.arrayBuffer());
+  const m = text.match(/="([^"]*)"/);
+  if (!m || !m[1]) throw new Error("新浪基金未返回数据");
+  const f = m[1].split(",");
+  if (f.length < 6) throw new Error("新浪基金字段不足");
+  const num = (v: string): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) && n !== 0 ? n : undefined;
+  };
+  return {
+    name: f[0] || undefined,
+    nav: num(f[1]),
+    totalNav: num(f[2]),
+    pct: num(f[4]),
+    navDate: f[5] || undefined,
+  };
+}
+
+/** 场外基金净值快照（多源：天天基金 → 新浪兜底；缓存 10 分钟；force 可绕过） */
 export async function getFundSnapshot(codeInput: string, opts: { force?: boolean } = {}): Promise<FundSnapshot> {
   const code = codeInput.trim();
   if (!isFundCode(code)) {
@@ -67,21 +98,29 @@ export async function getFundSnapshot(codeInput: string, opts: { force?: boolean
       return { ...cached, source: `${cached.source ?? "cache"}` };
     }
   }
-  try {
-    const part = await fetchFundInfo(code);
-    const snapshot: FundSnapshot = {
-      ok: true,
-      code,
-      ...part,
-      source: "eastmoney-fund",
-      ts: new Date().toISOString(),
-    };
-    if (!snapshot.name && !snapshot.nav) throw new Error("基金数据为空");
-    kvSet(cacheKey, snapshot);
-    return snapshot;
-  } catch (e) {
-    return { ok: false, code, message: e instanceof Error ? e.message : String(e) };
+  const attempts: { name: string; fn: () => Promise<Partial<FundSnapshot>> }[] = [
+    { name: "eastmoney-fund", fn: () => fetchFundInfo(code) },
+    { name: "sina-fund", fn: () => fetchSinaFund(code) },
+  ];
+  const errors: string[] = [];
+  for (const a of attempts) {
+    try {
+      const part = await a.fn();
+      const snapshot: FundSnapshot = {
+        ok: true,
+        code,
+        ...part,
+        source: a.name,
+        ts: new Date().toISOString(),
+      };
+      if (!snapshot.name && !snapshot.nav) throw new Error(`${a.name} 返回空数据`);
+      kvSet(cacheKey, snapshot);
+      return snapshot;
+    } catch (e) {
+      errors.push(`${a.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
+  return { ok: false, code, message: `基金行情源均不可用（${errors.join("；")}）` };
 }
 
 /** 批量基金快照（逐只 + 缓存） */

@@ -313,8 +313,8 @@ export default function WatchlistTool() {
         setQuotes((prev) => {
           const next = { ...prev };
           for (const q of r.quotes) {
-            if (!q.ok || !q.code) continue;
-            next[q.code] = q; // normCode：sh688102 / 基金 161725
+            if (!q.code) continue;
+            next[q.code] = q; // normCode：sh688102 / 基金 161725（失败项也保留，展示失败原因）
             const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
             if (bare !== q.code) next[bare] = q; // 纯数字：688102（表格行 code 兼容）
           }
@@ -792,7 +792,17 @@ export default function WatchlistTool() {
                 {t.name}
                 {t.description ? <span style={{ color: "#94a3b8", marginLeft: "0.25rem", fontSize: "0.8rem" }}>ℹ️</span> : null}
               </span>
-              <span style={{ color: "#94a3b8", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{t.stockCount} 只</span>
+              <span style={{ color: "#94a3b8", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                {t.stockCount} 只
+                {t.avgPct !== undefined && (
+                  <span
+                    title={`当日平均涨幅（等权，${t.avgCount ?? 0} 只有行情）`}
+                    style={{ color: t.avgPct >= 0 ? "#dc2626" : "#16a34a", fontWeight: 700, marginLeft: "0.35rem" }}
+                  >
+                    {t.avgPct >= 0 ? "+" : ""}{t.avgPct.toFixed(2)}%
+                  </span>
+                )}
+              </span>
 
               {/* 描述悬浮卡片（自定义，可读全文） */}
               {hoverInfo === t.id && t.description ? (
@@ -1254,6 +1264,8 @@ export default function WatchlistTool() {
                               </div>
                             </>
                           )
+                        ) : q && !q.ok ? (
+                          <span style={{ color: "#d97706", fontSize: "0.75rem", whiteSpace: "nowrap" }} title={q.message || "行情获取失败（多源均不可用）"}>⚠️ 无行情</span>
                         ) : (
                           <span style={{ color: "#94a3b8" }}>—</span>
                         )}

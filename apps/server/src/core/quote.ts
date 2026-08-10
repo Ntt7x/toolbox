@@ -327,7 +327,8 @@ export async function getQuoteSnapshot(codeInput: string, opts: { force?: boolea
   return { ok: false, code: parsed.normCode, message: `行情源均不可用（${errors.join("；")}）` };
 }
 
-/** 腾讯批量快照（一次请求多个代码，返回 map：normCode → 快照） */
+/** 腾讯批量快照（一次请求多个代码，返回 map：normCode → 快照）。
+ * 逐行容错：单只解析失败（字段不足/异常代码）只跳过该只，不拖垮整批（其余代码仍走批量结果）。 */
 async function fetchTencentBatch(parsedList: ParsedCode[]): Promise<Map<string, Partial<QuoteSnapshot>>> {
   const url = `https://qt.gtimg.cn/q=${parsedList.map((p) => `${p.market}${p.code}`).join(",")}`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(10000) });
@@ -339,7 +340,11 @@ async function fetchTencentBatch(parsedList: ParsedCode[]): Promise<Map<string, 
     if (!m || !m[3]) continue;
     const market = m[1] as "sh" | "sz" | "hk" | "bj";
     const normCode = `${m[1]}${m[2]}`;
-    out.set(normCode, parseTencent(m[3], market));
+    try {
+      out.set(normCode, parseTencent(m[3], market));
+    } catch {
+      // 单只解析失败（如退市/新上市字段不足）→ 跳过，调用方对该代码走单源降级
+    }
   }
   if (out.size === 0) throw new Error("腾讯批量未返回数据");
   return out;
@@ -385,10 +390,11 @@ export async function getQuoteSnapshots(codes: string[], opts: { force?: boolean
       const part = batch?.get(code);
       if (part) {
         snapshot = { ok: true, code, ...part, source: "tencent", ts: new Date().toISOString() };
-        if (!snapshot.price && !snapshot.name) snapshot = null;
+        // 无价（未开盘/停牌/字段缺失，price 为 0 或 undefined）→ 降级单源补价；无名无价同样降级
+        if (!snapshot.price || !snapshot.name) snapshot = null;
       }
       if (!snapshot) {
-        // 单代码降级（东财→新浪）
+        // 单代码降级（东财→新浪；未命中批量/批量失败/无价的代码都走这里）
         snapshot = await getQuoteSnapshot(code, { force: true });
       }
       if (snapshot) {

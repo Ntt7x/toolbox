@@ -40,6 +40,13 @@
   - **腾讯快照字段表**（~ 分隔，A/H 前段同构）：3=价 4=昨收 5=开 31=涨跌 32=涨跌幅 33=高
     34=低 36=量 37=额（A 股万元/港股元，均转亿）39=PE 45=总市值；**A 股** 38=换手 46=PB
     47/48=52周高低；**港股** 46=TENCENT 占位 → PB=47、52周=48/49
+- 批量行情 getQuoteSnapshots：腾讯批量优先 → 批量失败逐代码单源降级；**批量逐行容错**
+  （2026-08-10 起：单只解析失败只跳过该只，不再拖垮整批）；批量命中但**无价**（未开盘/停牌
+  price 0 或缺失）也降级单源补价
+- **场外基金净值多源（2026-08-10）**：fund.ts 天天基金主源（fundmobapi，字段全含经理/风险等级）→
+  **新浪兜底** `hq.sinajs.cn/list=of{code}`（GBK + Referer finance.sina.com.cn；字段：
+  名称,单位净值,累计净值,昨净值,日增长率%,日期 → name/nav/totalNav/pct/navDate）；缓存 10 分钟
+  （fund:s:）
 - **DeepSeek 分享提取**：`GET https://chat.deepseek.com/api/v0/share/content?share_id={id}`
   （UA + Accept: application/json），消息含 role/content/thinking/inserted_at/accumulated_token_usage
 - 测试用真实分享 id：`u5myqtvktzo5gal4qi`；测试行情：`600519` / `hk00700`

@@ -24,6 +24,7 @@ import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } f
 import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName, extendPrompt } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
 import { getFundSnapshots } from "../../core/fund.js";
+import type { WatchlistSummary } from "@toolbox/shared";
 
 // 注册数据源：专题自选股（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -62,6 +63,71 @@ function isValidCode(code: string): boolean {
   return /^(sh|sz|hk)?\d{5,6}$/i.test(code);
 }
 
+// ---------- 列表等权平均涨幅 ----------
+
+/** 单次行情批量上限（与 /quotes 接口一致） */
+const QUOTES_BATCH = 40;
+
+/**
+ * 为专题列表附当日平均涨幅（等权）：
+ * 收集各专题全部股票/基金代码 → 分 40 只一批批量行情（复用 5 分钟缓存，避免与详情页重复拉取）
+ * → 每专题对「有行情且涨跌幅可用」的标的取算术平均（等权）。
+ * 全部无行情 → avgPct 缺省（前端不展示）。
+ */
+async function attachAvgPct(topics: WatchlistSummary[]): Promise<WatchlistSummary[]> {
+  if (topics.length === 0) return topics;
+  // 轻量摘要不含 stocks → 取详情收集各专题代码
+  const topicCodes = new Map<string, { code: string; isFund: boolean }[]>();
+  for (const t of topics) {
+    const full = getTopic(t.id);
+    const codes: { code: string; isFund: boolean }[] = [];
+    for (const s of full?.stocks ?? []) {
+      codes.push(s.kind === "fund" ? { code: s.code, isFund: true } : { code: s.code, isFund: false });
+    }
+    if (codes.length > 0) topicCodes.set(t.id, codes);
+  }
+  if (topicCodes.size === 0) return topics;
+
+  const all = [...topicCodes.values()].flat();
+  const stockCodes = [...new Set(all.filter((x) => !x.isFund).map((x) => x.code))];
+  const fundCodes = [...new Set(all.filter((x) => x.isFund).map((x) => x.code))];
+  const chunk = <T,>(arr: T[], n: number): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  };
+  const [stockGroups, fundGroups] = await Promise.all([
+    Promise.all(chunk(stockCodes, QUOTES_BATCH).map((c) => getQuoteSnapshots(c))),
+    Promise.all(chunk(fundCodes, QUOTES_BATCH).map((c) => getFundSnapshots(c))),
+  ]);
+
+  // 索引：normCode（sh600519）+ 裸码（600519）双键 → 兼容专题内用户输入的任意写法；基金为纯数字
+  const pctByCode = new Map<string, number>();
+  for (const q of [...stockGroups.flat(), ...fundGroups.flat()]) {
+    if (q.ok && typeof q.pct === "number") {
+      pctByCode.set(q.code, q.pct);
+      const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
+      if (bare !== q.code) pctByCode.set(bare, q.pct);
+    }
+  }
+
+  return topics.map((t) => {
+    const codes = topicCodes.get(t.id);
+    if (!codes || codes.length === 0) return t;
+    let sum = 0;
+    let n = 0;
+    for (const x of codes) {
+      const pct = pctByCode.get(x.code);
+      if (typeof pct === "number") {
+        sum += pct;
+        n += 1;
+      }
+    }
+    if (n === 0) return t;
+    return { ...t, avgPct: Math.round((sum / n) * 10000) / 10000, avgCount: n };
+  });
+}
+
 export function register(app: Hono): void {
   // 股票名称搜索（东财 suggest：名称 → 代码候选，添加股票用）
   app.get(`${API_PREFIX}/tools/watchlist/search-stock`, async (c) => {
@@ -98,9 +164,11 @@ export function register(app: Hono): void {
     }
   });
 
-  // 专题列表（轻量）
-  app.get(`${API_PREFIX}/tools/watchlist`, (c) => {
-    return c.json({ ok: true, topics: listTopics() });
+  // 专题列表（轻量 + 当日平均涨幅：等权平均，有行情股票的涨跌幅算术平均；走行情 5 分钟缓存）
+  app.get(`${API_PREFIX}/tools/watchlist`, async (c) => {
+    const topics = listTopics();
+    const withPct = await attachAvgPct(topics);
+    return c.json({ ok: true, topics: withPct });
   });
 
   // 新建专题
