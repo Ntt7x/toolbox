@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   TradePlanAlert,
   TradePlanCheckResult,
+  TradePlanDealSummary,
   TradePlanItem,
   TradePlanStrategy,
   TradePlanStrategySummary,
@@ -40,14 +41,15 @@ const itemText = (it: TradePlanItem, price?: number) => {
   const cost = it.cost ?? price;
   const money = typeof cost === "number" && !isNaN(cost) ? it.amount * cost : 0;   // 负/零成本合法
   const act = it.action === "add" ? "加仓" : "减仓";
-  return `${it.name ? it.name + " " : ""}${it.code} ${act} ${it.amount.toLocaleString("zh-CN")} 股${money !== 0 ? ` ≈ ${cny2(money)}` : ""}`;
+  const px = typeof cost === "number" && !isNaN(cost) && cost !== 0 ? costFmt(cost) : "";
+  return `${it.name ? it.name + " " : ""}${it.code} ${act} ${it.amount.toLocaleString("zh-CN")} 股${px ? ` @ ¥${px}` : ""}${money !== 0 ? ` ≈ ${cny2(money)}` : ""}`;
 };
 /** 消除前导零（如 "007" → "7"；避免输入框/计算异常） */
 const stripLeadZeros = (v: string) => v.replace(/^0+(?=\d)/, "");
 const numInput = (v: string) => Number(stripLeadZeros(v).replace(/[,，\s]/g, "")) || 0;
 
 /** 数字输入 + 上下步进（半受控：输入过程保留原始文本含中间态 "1."，失焦/步进才提交） */
-function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; width?: string; placeholder?: string }) {
+function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", placeholder, title }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; width?: string; placeholder?: string; title?: string }) {
   const [text, setText] = useState<string | null>(null);
   const clamp = (v: number) => {
     let r = Math.round(v * 1e6) / 1e6;
@@ -77,6 +79,7 @@ function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", pl
         onChange={(e) => setText(e.target.value)}
         onBlur={() => { if (text !== null) commit(parsed()); }}
         placeholder={placeholder}
+        title={title}
       />
       <span className="inline-flex flex-col gap-px">
         <Button type="button" variant="ghost" size="icon" className="h-3.5 w-4 text-[0.5rem] leading-none" onClick={stepFn(1)} title={`+${step}`}>▲</Button>
@@ -91,6 +94,8 @@ export default function TradePlanTool() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [strategy, setStrategy] = useState<TradePlanStrategy | null>(null);
   const [pnl, setPnl] = useState<TradePlanPnl | null>(null);   // 盈亏（详情接口附行情）
+  const [deals, setDeals] = useState<TradePlanDealSummary | null>(null);   // 交易复盘（详情接口附）
+  const [showDeals, setShowDeals] = useState(false);   // 交易复盘明细展开
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -145,6 +150,7 @@ export default function TradePlanTool() {
         setStrategy(r.strategy);
         savedCfgRef.current = JSON.stringify(r.strategy);
         setPnl(r.pnl ?? null);   // 盈亏（详情接口附行情计算）
+        setDeals(r.deals ?? null);   // 交易复盘（详情接口附）
       }
       setResult(null);
       setViewDay(null);
@@ -336,7 +342,8 @@ export default function TradePlanTool() {
         const r = await api.tradePlanCreateDay(strategy.id, date, useItems);
         setResult(null);   // 保存成功：清检查结果，只保留「✅ 已保存并应用」提示（不与检查提示混淆）
         setItems([]);   // 保存成功即清空输入，防止重复保存同一计划
-        setDayMsg(r.day?.applied ? `✅ 已保存 ${r.day.date} 并应用（当前仓位已自动更新）` : r.message ?? "已保存");
+        const baseMsg = r.day?.applied ? `✅ 已保存 ${r.day.date} 并应用（当前仓位已自动更新）` : r.message ?? "已保存";
+        setDayMsg(r.chainWarnings && r.chainWarnings.length > 0 ? `${baseMsg}\n⚠️ ${r.chainWarnings.join("\n⚠️ ")}` : baseMsg);
         await loadDays(strategy.id);
         if (r.strategy) {
           setStrategy(r.strategy);
@@ -358,13 +365,16 @@ export default function TradePlanTool() {
     if (!strategy) return;
     if (!confirm("删除该日度计划？已应用的计划会同步回滚当前仓位。")) return;
     try {
-      await api.tradePlanDeleteDay(strategy.id, dayId);
+      const r = await api.tradePlanDeleteDay(strategy.id, dayId);
       if (viewDay?.id === dayId) setViewDay(null);
+      if (r.chainWarnings && r.chainWarnings.length > 0) {
+        setDayMsg(`⚠️ 已删除，但后续计划无法完整执行：\n${r.chainWarnings.join("\n⚠️ ")}`);
+      }
       await loadDays(strategy.id);
-      const r = await api.tradePlanStrategy(strategy.id);
-      if (r.ok && r.strategy) {
-        setStrategy(r.strategy);
-        savedCfgRef.current = JSON.stringify(r.strategy);
+      const r2 = await api.tradePlanStrategy(strategy.id);
+      if (r2.ok && r2.strategy) {
+        setStrategy(r2.strategy);
+        savedCfgRef.current = JSON.stringify(r2.strategy);
       }
     } catch (e) {
       setDayMsg("❌ " + errMsg(e));
@@ -410,7 +420,7 @@ export default function TradePlanTool() {
               <div className="mb-2 font-bold"><span className="mr-1.5 inline-block h-4 w-1 rounded-full bg-blue-500 align-middle" />📊 总仓位概览</div>
               {(() => {
                 const totCap = strategies.reduce((a, x) => a + (x.totalCapital || 0), 0);
-                const totMv = strategies.reduce((a, x) => a + (x.totalCapital || 0) * ((x.positionPct ?? 0) / 100), 0);
+                const totMv = strategies.reduce((a, x) => a + (x.pnl?.totalMv ?? 0), 0);   // 市价口径（与详情/概览一致；不再用成本口径 positionPct 反推）
                 const totPct = totCap > 0 ? ((totMv / totCap) * 100).toFixed(1) : "—";
                 const remain = Math.max(0, totCap - totMv);
                 const card = "rounded-md border px-2 py-1.5";
@@ -577,6 +587,68 @@ export default function TradePlanTool() {
                           </div>
                         );
                       })()}
+                      {/* 交易复盘（Deal：加仓→清仓按笔配对，平均成本法归因；学习自 profitmaker Deals） */}
+                      {deals && deals.closedCount + deals.openCount > 0 && (() => {
+                        const d = deals;
+                        const cell = "rounded-md border px-2 py-1";
+                        const openDays = d.deals.filter((x) => x.status === "open");
+                        return (
+                          <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50/70 p-2">
+                            <div className="mb-1.5 flex items-center gap-1.5">
+                              <span className="text-[0.82rem] font-semibold text-slate-700">📈 交易复盘</span>
+                              <span className="text-[0.7rem] text-slate-400">加仓→清仓按笔配对 · 平均成本法</span>
+                              <span className="flex-1" />
+                              {d.deals.length > 0 && (
+                                <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[0.72rem]" onClick={() => setShowDeals((v) => !v)} type="button">
+                                  {showDeals ? "▾ 收起明细" : "▸ 交易明细"}
+                                </Button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">已完结 / 在途</div>
+                                <div className="text-[0.85rem] font-bold">{d.closedCount} / {d.openCount} 笔</div>
+                              </div>
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">胜率</div>
+                                <div className="text-[0.85rem] font-bold text-emerald-700">{d.winRate !== undefined ? d.winRate.toFixed(1) + "%" : "—"}</div>
+                              </div>
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">已实现盈亏</div>
+                                <div className={`text-[0.85rem] font-bold ${d.realizedPnl >= 0 ? "text-red-600" : "text-emerald-600"}`}>{d.realizedPnl >= 0 ? "+" : ""}{cny2(d.realizedPnl)}</div>
+                              </div>
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">总盈利 / 总亏损</div>
+                                <div className="text-[0.82rem] font-bold"><span className="text-red-600">{cny2(d.totalProfit)}</span> / <span className="text-emerald-600">{cny2(d.totalLoss)}</span></div>
+                              </div>
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">平均持仓</div>
+                                <div className="text-[0.85rem] font-bold">{d.avgDays !== undefined ? d.avgDays.toFixed(1) + " 天" : "—"}</div>
+                              </div>
+                              <div className={`${cell} border-slate-200 bg-white`}>
+                                <div className="text-[0.7rem] text-slate-500">在途最长</div>
+                                <div className="text-[0.85rem] font-bold">{openDays.length > 0 ? Math.max(...openDays.map((x) => x.days ?? 0)) + " 天" : "—"}</div>
+                              </div>
+                            </div>
+                            {showDeals && (
+                              <div className="mt-1.5 max-h-40 overflow-auto rounded-md border border-slate-200 bg-white text-[0.76rem]">
+                                {d.deals.map((dl, i) => (
+                                  <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-slate-100 px-2 py-1 last:border-0">
+                                    <span className="font-semibold">{strategy?.stocks.find((s) => s.code === dl.code)?.name ?? dl.code}</span>
+                                    <span className={dl.status === "open" ? "text-blue-600" : "text-slate-500"}>{dl.status === "open" ? "🟦 在途" : "🟩 已完结"}</span>
+                                    <span className="text-slate-500">{dl.entryDate}{dl.exitDate ? ` → ${dl.exitDate}` : ""}</span>
+                                    <span className="text-slate-400">{dl.days} 天 · 买 {dl.buyQty.toLocaleString("zh-CN")} 股 @ {costFmt(dl.avgCost)}</span>
+                                    {dl.status === "closed" && dl.pnl !== undefined && (
+                                      <span className={`font-semibold ${dl.pnl >= 0 ? "text-red-600" : "text-emerald-600"}`}>{dl.pnl >= 0 ? "+" : ""}{cny2(dl.pnl)}</span>
+                                    )}
+                                    {dl.status === "open" && dl.qty > 0 && <span className="text-slate-400">剩 {dl.qty.toLocaleString("zh-CN")} 股</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* 新增区 */}
                       <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-blue-200 bg-blue-50/50 p-2">
                         <span className="flex-shrink-0 text-[0.8rem] font-semibold text-blue-600">＋ 新增标的</span>
@@ -686,16 +758,14 @@ export default function TradePlanTool() {
                         </SelectContent>
                       </Select>
                       <StepInput value={it.amount} onChange={(v) => setItemAt(i, { amount: v })} step={100} width="w-24" placeholder="数量（股）" />
-                      {it.action === "add" && (
-                        <StepInput value={it.cost ?? 0} onChange={(v) => setItemAt(i, { cost: v || undefined })} step={0.01} width="w-20" placeholder="成本价（可选）" />
-                      )}
+                      <StepInput value={it.cost ?? 0} onChange={(v) => setItemAt(i, { cost: v || undefined })} step={0.01} width="w-24" placeholder={it.action === "add" ? "买入价（必填）" : "卖出价（必填）"} title={it.action === "add" ? "买入价：本次加仓的成交价，用于重算持仓均价" : "卖出价：本次减仓的成交价，用于计算卖出回款"} />
                       {(() => {
                         const price = strategy.positions.find((p) => p.code === it.code)?.avgCost ?? 0;
                         const cost = typeof it.cost === "number" && !isNaN(it.cost) ? it.cost : price;   // 负/零成本合法
                         const est = it.amount * cost;
                         return (
-                          <span className={cn("w-24 flex-shrink-0 text-[0.72rem]", typeof cost === "number" && !isNaN(cost) ? "text-slate-500" : "text-amber-700")}>
-                            {typeof cost === "number" && !isNaN(cost) ? `≈ ${cny2(est)}` : "未设成本价"}
+                          <span className={cn("w-24 flex-shrink-0 text-[0.72rem]", typeof cost === "number" && !isNaN(cost) && cost !== 0 ? "text-slate-500" : "text-amber-700")}>
+                            {typeof cost === "number" && !isNaN(cost) && cost !== 0 ? `≈ ${cny2(est)}` : "请填买入价/卖出价"}
                           </span>
                         );
                       })()}
@@ -720,8 +790,8 @@ export default function TradePlanTool() {
                     <Button
                       className={cn(result && !result.ok && "bg-slate-400")}
                       onClick={() => void runCheck(true)}
-                      disabled={checking || items.length === 0 || items.some((it) => !it.code) || stockOptions.length === 0 || (result !== null && !result.ok)}
-                      title={result && !result.ok ? "违反策略仓位管理，无法保存" : items.some((it) => !it.code) ? "请先为每个操作选择交易标的" : "保存并应用为日度计划"}
+                      disabled={checking || items.length === 0 || items.some((it) => !it.code) || items.some((it) => !it.amount || !Number.isInteger(it.amount)) || items.some((it) => !it.cost || it.cost <= 0) || stockOptions.length === 0 || (result !== null && !result.ok)}
+                      title={result && !result.ok ? "违反策略仓位管理，无法保存" : items.some((it) => !it.code) ? "请先为每个操作选择交易标的" : items.some((it) => !it.amount || !Number.isInteger(it.amount)) ? "数量（股）必须为正整数" : items.some((it) => !it.cost || it.cost <= 0) ? "请为每个操作填写买入价/卖出价（>0）" : "保存并应用为日度计划"}
                       type="button"
                     >
                       💾 保存并应用
@@ -1016,6 +1086,7 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
       <div className="mb-2 flex flex-wrap gap-2">
         {[
           { label: "当日加仓", value: cny(result.totals.addTotal), tone: "bg-blue-50 border-blue-100 text-blue-700" },
+          { label: "当日减仓回款", value: cny(result.totals.reduceTotal), tone: "bg-cyan-50 border-cyan-100 text-cyan-700" },
           { label: "执行后总市值", value: cny(result.totals.totalMarketValue), tone: "bg-indigo-50 border-indigo-100 text-indigo-700" },
           { label: "总仓位占比", value: `${result.totals.positionPct.toFixed(1)}%`, tone: result.totals.positionPct > 80 ? "bg-red-50 border-red-200 text-red-700" : result.totals.positionPct > 50 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-emerald-50 border-emerald-100 text-emerald-700" },
           { label: "剩余可用", value: cny(Math.max(0, result.totals.remaining)), tone: result.totals.remaining < 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-slate-50 border-slate-100 text-slate-800" },
@@ -1044,7 +1115,7 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
         <Table className="mt-2 text-[0.8rem]">
           <TableHeader>
             <TableRow>
-              {["标的", "持仓市值", "占比", "份额", "成本", "本次加仓"].map((h) => (
+              {["标的", "持仓市值", "占比", "份额", "成本", "操作价", "本次加仓", "实现盈亏"].map((h) => (
                 <TableHead key={h}>{h}</TableHead>
               ))}
             </TableRow>
@@ -1057,7 +1128,17 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
                 <TableCell>{p.weightPct.toFixed(1)}%</TableCell>
                 <TableCell>{p.shares.toLocaleString("zh-CN")}</TableCell>
                 <TableCell>{costFmt(p.avgCost)}</TableCell>
+                <TableCell>{p.tradePrice !== undefined && p.tradePrice !== 0 ? `¥${costFmt(p.tradePrice)}` : "—"}</TableCell>
                 <TableCell>{p.addAmount !== 0 ? cny2(p.addAmount) : "—"}</TableCell>
+                <TableCell>
+                  {p.realizedPnl !== undefined && p.realizedPnl !== 0 ? (
+                    <span style={{ color: p.realizedPnl >= 0 ? "#dc2626" : "#16a34a" }} title="减仓已实现盈亏 = (卖出价 − 持仓均价) × 减仓数量">
+                      {cny2(p.realizedPnl)}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

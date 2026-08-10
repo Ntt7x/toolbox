@@ -15,6 +15,8 @@ import {
   type TradePlanAlert,
   type TradePlanAfterPosition,
   type TradePlanCheckResult,
+  type TradePlanDeal,
+  type TradePlanDealSummary,
   type TradePlanItem,
   type TradePlanPosition,
 } from "@toolbox/shared";
@@ -117,11 +119,13 @@ export function checkTradePlan(
   const itemCostOf = (code: string) => items.find((it) => it.code === code)?.cost;   // 缺省 undefined；负/零成本合法
   const missingPrice = [...byCode.keys()].filter((code) => typeof itemCostOf(code) !== "number" && effectivePriceOf(config, items, fallback, code) <= 0);
   for (const code of missingPrice) {
+    const act = items.find((it) => it.code === code)?.action ?? "add";
+    const label = act === "add" ? "买入价" : "卖出价";
     alerts.push({
       level: "error",
       code,
-      message: `标的 ${code} 未设置成本价，无法换算金额`,
-      detail: "日度计划按数量（股）操作，金额 = 数量 × 成本价；请填写本次成本价、在「当前仓位」填写成本价，或确认该标的行情可获取",
+      message: `标的 ${code} 未设置本次${label}，无法换算金额`,
+      detail: "日度计划按数量（股）操作，金额 = 数量 × 本次交易价格；请填写买入价（加仓）/卖出价（减仓），或确认该标的行情可获取",
     });
   }
   // 无持仓成本但可按最新价估算 → warn（价格 = 数量 × 行情价）
@@ -143,6 +147,11 @@ export function checkTradePlan(
   const addTotal = [...byCode.entries()].reduce((a, [code, v]) => {
     const cost = effectivePriceOf(config, items, fallback, code);
     return a + v.add * cost;
+  }, 0);
+  // 当日减仓回款（金额 = 减仓股数 × 卖出价；profitmaker credited 口径，仅供展示）
+  const reduceTotal = [...byCode.entries()].reduce((a, [code, v]) => {
+    const price = effectivePriceOf(config, items, fallback, code);
+    return a + v.reduce * price;
   }, 0);
   if (dailyAddLimit > 0 && addTotal > dailyAddLimit) {
     alerts.push({
@@ -195,8 +204,13 @@ export function checkTradePlan(
 
     seenCodes.add(pos.code);
     const addAmount = v.add * price;
+    // 减仓已实现盈亏：卖出价 vs 当前持仓均价（减仓不改变均价，锁定卖出部分的盈亏）
+    const realizedPnl =
+      v.reduce > 0 && typeof pos.avgCost === "number" && !isNaN(pos.avgCost)
+        ? Math.round((price - pos.avgCost) * v.reduce * 100) / 100
+        : undefined;
     if (curQty === 0 && v.add === 0 && v.reduce === 0 && marketValue === 0) continue; // 未持仓且本次无操作 → 不展示
-    after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount });
+    after.push({ code: pos.code, name: stock?.name, shares: pos.quantity, avgCost: pos.avgCost, marketValue, weightPct, addAmount, tradePrice: price, ...(realizedPnl !== undefined ? { realizedPnl } : {}) });
   }
 
   // 计划中出现但无仓位记录的标的（applyItems 已补空仓位；非法标的另行告警）
@@ -205,7 +219,7 @@ export function checkTradePlan(
     const price = effectivePriceOf(config, items, fallback, code);
     const marketValue = Math.max(0, (qtyOf(config, code) + v.add - v.reduce) * price);
     const weightPct = totalCapital > 0 ? (marketValue / totalCapital) * 100 : 0;
-    after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add * price });
+    after.push({ code, name: undefined, shares: 0, avgCost: 0, marketValue, weightPct, addAmount: v.add * price, tradePrice: price });
   }
   after.sort((a, b) => b.marketValue - a.marketValue);
 
@@ -242,5 +256,91 @@ export function checkTradePlan(
   });
 
   const ok = alerts.filter((a) => a.level === "error").length === 0;
-  return { ok, alerts, after, totals: { addTotal, totalMarketValue, positionPct, remaining } };
+  return { ok, alerts, after, totals: { addTotal, reduceTotal, totalMarketValue, positionPct, remaining } };
+}
+
+// ============================================================
+// 交易复盘（Deal）：把零散的加仓/减仓组织成「一笔完整交易」
+// 段模型：某标的从零仓位开始建仓（entry）→ 途中加仓/减仓 → 数量归零清仓（exit）= 一笔 deal。
+// 平均成本法归因：段内累计买入金额（buyAmount）vs 段内卖出回款（sellAmount）；
+// 清仓时 pnl = sellAmount − buyAmount，计入已实现盈亏。
+// 纯函数：只依赖日度计划（已应用）的日期/条目，与行情无关。
+// ============================================================
+
+const DAY_MS = 86400000;
+
+/** entry→exit 自然日差（同日 0 天） */
+function dateDays(entry: string, exit: string): number {
+  const d = Math.round((Date.parse(exit) - Date.parse(entry)) / DAY_MS);
+  return Number.isFinite(d) ? Math.max(0, d) : 0;
+}
+
+/** 今日（本地，YYYY-MM-DD） */
+function todayStr(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * 构建交易复盘：按标的×交易段把已应用日度计划配对成 Deal（加仓=entry、减仓=exit）。
+ * 返回 closed（已清仓，含 pnl/时长）+ open（在途，days 计至今）+ 汇总（胜率/已实现盈亏/平均持仓天数）。
+ */
+export function buildDeals(days: { date: string; items: TradePlanItem[]; applied: boolean }[]): TradePlanDealSummary {
+  const applied = days
+    .filter((d) => d.applied && Array.isArray(d.items))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  const openByCode = new Map<string, TradePlanDeal>();
+  const closed: TradePlanDeal[] = [];
+
+  for (const d of applied) {
+    for (const it of d.items) {
+      if (it.action === "add" && it.amount > 0) {
+        let deal = openByCode.get(it.code);
+        if (!deal || deal.qty <= 0) {
+          deal = { code: it.code, status: "open", entryDate: d.date, buyQty: 0, buyAmount: 0, sellAmount: 0, qty: 0, avgCost: 0 };
+          openByCode.set(it.code, deal);
+        }
+        const cost = typeof it.cost === "number" && !isNaN(it.cost) ? it.cost : deal.avgCost; // 缺价用段内均价兜底
+        deal.buyQty += it.amount;
+        deal.buyAmount += it.amount * cost;
+        deal.qty += it.amount;
+        deal.avgCost = deal.buyQty > 0 ? deal.buyAmount / deal.buyQty : 0;
+      } else if (it.action === "reduce" && it.amount > 0) {
+        const deal = openByCode.get(it.code);
+        if (!deal || deal.qty <= 0) continue; // 减仓超出在途 → 数据异常，容错跳过
+        const sellQty = Math.min(it.amount, deal.qty);
+        const sellPrice = typeof it.cost === "number" && !isNaN(it.cost) ? it.cost : deal.avgCost; // 缺价用段内均价兜底
+        deal.sellAmount += sellQty * sellPrice;
+        deal.qty -= sellQty;
+        if (deal.qty <= 0) {
+          deal.status = "closed";
+          deal.exitDate = d.date;
+          deal.days = dateDays(deal.entryDate, d.date);
+          deal.pnl = Math.round((deal.sellAmount - deal.buyAmount) * 100) / 100;
+          closed.push(deal);
+          openByCode.delete(it.code);
+        }
+      }
+    }
+  }
+
+  const open: TradePlanDeal[] = [...openByCode.values()]
+    .map((d) => ({ ...d, days: dateDays(d.entryDate, todayStr()) }))
+    .sort((a, b) => (a.entryDate < b.entryDate ? -1 : 1));
+  const closedSorted = closed.sort((a, b) => ((a.exitDate ?? "") < (b.exitDate ?? "") ? 1 : -1));
+
+  const closedCount = closed.length;
+  const realizedPnl = Math.round(closed.reduce((a, d) => a + (d.pnl ?? 0), 0) * 100) / 100;
+  const totalProfit = Math.round(closed.filter((d) => (d.pnl ?? 0) > 0).reduce((a, d) => a + (d.pnl ?? 0), 0) * 100) / 100;
+  const totalLoss = Math.round(Math.abs(closed.filter((d) => (d.pnl ?? 0) < 0).reduce((a, d) => a + (d.pnl ?? 0), 0)) * 100) / 100;
+  return {
+    deals: [...open, ...closedSorted],
+    closedCount,
+    openCount: open.length,
+    winRate: closedCount > 0 ? (closed.filter((d) => (d.pnl ?? 0) > 0).length / closedCount) * 100 : undefined,
+    realizedPnl,
+    totalProfit,
+    totalLoss,
+    avgDays: closedCount > 0 ? closed.reduce((a, d) => a + (d.days ?? 0), 0) / closedCount : undefined,
+  };
 }

@@ -12,7 +12,7 @@ import {
   type TradePlanStrategySummary,
 } from "@toolbox/shared";
 import { kvGet, kvSet, kvDelete, kvCount } from "../../core/kvStore.js";
-import { applyItems } from "./compute.js";
+import { applyItems, checkTradePlan } from "./compute.js";
 
 const STRATEGY_PREFIX = "tradePlan:strategy:";
 const STRATEGY_LIST = "tradePlan:strategies:list";
@@ -66,19 +66,21 @@ export function getStrategy(id: string): TradePlanStrategy | null {
 /** 手动保存仓位时的基线重算（差值法，2026-08-10 修复重复应用）：
  * 直接把当前 positions 固化为 base 会"双重计入"已应用日度计划（重放时再算一次）。
  * 正确：新 base = 旧 base + (提交 positions − 全量重放结果)，即只固化"手动调整量"。
+ * 提交中已删除的标的（前端移除标的）→ 从基线移除（否则重放时已删标的重放复活）。
  */
 export function rebasePositions(
   oldBase: TradePlanPosition[],
   replayed: TradePlanPosition[],
   submitted: TradePlanPosition[],
 ): TradePlanPosition[] {
-  const out = oldBase.map((b) => {
+  const out: TradePlanPosition[] = [];
+  for (const b of oldBase) {
     const submit = submitted.find((p) => p.code === b.code);
     const re = replayed.find((p) => p.code === b.code);
-    if (!submit) return b;
+    if (!submit) continue; // 提交中已删除该标的 → 从基线移除（2026-08-10 修复：否则重放会复活已删标的）
     const deltaQty = (submit.quantity ?? 0) - (re?.quantity ?? 0);
-    return { ...b, quantity: Math.max(0, (b.quantity ?? 0) + deltaQty), avgCost: submit.avgCost ?? b.avgCost };
-  });
+    out.push({ ...b, quantity: Math.max(0, (b.quantity ?? 0) + deltaQty), avgCost: submit.avgCost ?? b.avgCost });
+  }
   // 提交中出现但旧基线没有的 code → 直接加入（新增仓位）
   for (const p of submitted) {
     if (!out.some((b) => b.code === p.code)) out.push({ ...p });
@@ -96,6 +98,44 @@ export function replayPositions(st: TradePlanStrategy, excludeDate?: string): Tr
     positions = applyItems(positions, d.items);
   }
   return positions;
+}
+
+/** 重放「某日期之前」的已应用计划（严格 < date，不含该日与之后）→ 该日应用前的仓位。
+ * 覆盖（重刷）历史日计划时用作 before 快照与校验基础——2026-08-10 修复：
+ * 旧实现用 replayPositions(st, date) 只剔除该日，会把「该日之后的计划」也重放进 before，
+ * 导致校验的当前持仓被未来计划污染（误拦减仓）、快照错误。 */
+export function replayBefore(st: TradePlanStrategy, date: string): TradePlanPosition[] {
+  let positions: TradePlanPosition[] = (st.basePositions ?? st.positions ?? []).map((p) => ({ ...p }));
+  const applied = listDays(st.id)
+    .filter((d) => d.applied && d.date < date && Array.isArray(d.items))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  for (const d of applied) {
+    positions = applyItems(positions, d.items);
+  }
+  return positions;
+}
+
+/** 校验「已应用计划链」在重放时是否出现无法完整执行的计划（如减仓超过当前持仓）。
+ * 覆盖/删除日计划后调用：若后续某日因仓位变化无法完整执行，返回可读警告（供前端提示）。
+ * 数学上重放会 clamp 截断（不能负持仓），此函数让「静默截断」变得可见。 */
+export function appliedDayWarnings(st: TradePlanStrategy, excludeDate?: string): string[] {
+  let positions: TradePlanPosition[] = (st.basePositions ?? st.positions ?? []).map((p) => ({ ...p }));
+  const warnings: string[] = [];
+  const applied = listDays(st.id)
+    .filter((d) => d.applied && d.date !== excludeDate && Array.isArray(d.items))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  for (const d of applied) {
+    const r = checkTradePlan(
+      { totalCapital: st.totalCapital, dailyAddLimit: st.dailyAddLimit, stocks: st.stocks, positions },
+      d.items,
+    );
+    const blocked = r.alerts.filter((a) => a.level === "error");
+    if (blocked.length > 0) {
+      warnings.push(`${d.date} 的计划无法完整执行：${blocked.map((a) => a.detail ?? a.message).join("；")}`);
+    }
+    positions = applyItems(positions, d.items);
+  }
+  return warnings;
 }
 
 /** 旧数据迁移：stocks[].initShares/initCost（或旧 initialPositions）→ positions，并清掉内联字段 */
@@ -221,7 +261,8 @@ export function createDay(
     createdAt: new Date().toISOString(),
   };
   kvSet(DAY_PREFIX + strategyId + ":" + day.id, day);
-  const list = (listDayIds(strategyId) ?? []).filter((x) => x !== day.id);
+  // 覆盖时同时移除旧 dayId，避免列表残留死 id（2026-08-10 修复）
+  const list = (listDayIds(strategyId) ?? []).filter((x) => x !== day.id && x !== existing?.id);
   list.unshift(day.id);
   kvSet(DAY_LIST_PREFIX + strategyId, list.slice(0, MAX_DAYS_PER_STRATEGY));
   return day;

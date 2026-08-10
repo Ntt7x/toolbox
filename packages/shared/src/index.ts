@@ -1277,6 +1277,10 @@ export interface WatchlistSummary {
   stockCount: number;
   /** 当前仓位占比 %（总市值/总仓位，未配置时缺省） */
   positionPct?: number;
+  /** 当日平均涨幅 %（等权：专题内有行情的股票/基金涨跌幅算术平均；全部无行情时缺省） */
+  avgPct?: number;
+  /** 参与平均统计的数量（有行情且涨跌幅可用的股票/基金数） */
+  avgCount?: number;
   updatedAt: string;
 }
 
@@ -1739,6 +1743,57 @@ export interface TradePlanStrategyResult {
   message?: string;
   /** 盈亏汇总（仅详情接口 GET /strategies/:id 附行情计算） */
   pnl?: TradePlanPnl;
+  /** 交易复盘（Deal：加仓→清仓按笔配对；仅详情接口附） */
+  deals?: TradePlanDealSummary;
+}
+
+/**
+ * 一笔完整交易（Deal）：从零仓位建仓（entry）到清仓（exit）的入→出周期；
+ * 在途（open）= 当前仍持有。盈亏按平均成本法归因到段内（buyAmount vs sellAmount）。
+ */
+export interface TradePlanDeal {
+  code: string;
+  /** 标的名称（详情接口从策略 stocks 补全） */
+  name?: string;
+  /** open=在途（尚未清仓）；closed=已完结（数量归零） */
+  status: "open" | "closed";
+  /** 建仓日期（本段第一笔加仓） */
+  entryDate: string;
+  /** 清仓日期（数量归零的减仓日；在途缺省） */
+  exitDate?: string;
+  /** 持仓天数（closed 为 entry→exit 自然日差；在途为 entry→今天） */
+  days?: number;
+  /** 本段累计买入数量（股） */
+  buyQty: number;
+  /** 本段累计买入金额（元） */
+  buyAmount: number;
+  /** 本段卖出回款（元）= 卖出数量 × 卖出价 */
+  sellAmount: number;
+  /** 段内剩余数量（在途 > 0） */
+  qty: number;
+  /** 段内平均成本 = buyAmount / buyQty */
+  avgCost: number;
+  /** 已实现盈亏（closed）= sellAmount − buyAmount；在途缺省 */
+  pnl?: number;
+}
+
+/** 交易复盘汇总（按标的×交易段） */
+export interface TradePlanDealSummary {
+  deals: TradePlanDeal[];
+  /** 已完结笔数 */
+  closedCount: number;
+  /** 在途笔数 */
+  openCount: number;
+  /** 胜率 %（closed 中盈利笔数占比；无 closed 缺省） */
+  winRate?: number;
+  /** 已实现总盈亏（closed pnl 合计，元） */
+  realizedPnl: number;
+  /** 总盈利（closed pnl>0 合计，元） */
+  totalProfit: number;
+  /** 总亏损（closed pnl<0 绝对值合计，元） */
+  totalLoss: number;
+  /** 平均持仓天数（closed） */
+  avgDays?: number;
 }
 
 /** 单标的盈亏（详情接口附行情计算；最新价 vs 成本价） */
@@ -1771,16 +1826,17 @@ export interface TradePlanStrategyDeleteResult {
 }
 
 
-/** 日度计划条目（加/减仓以数量为单位） */
+/** 日度计划条目（加/减仓以数量为单位；每次操作必须填写本次交易价格） */
 export interface TradePlanItem {
   code: string;
   /** 标的名称（可选；日历总计划聚合时由服务端从策略 stocks 补全，供展示） */
   name?: string;
   /** 加仓 / 减仓 */
   action: "add" | "reduce";
-  /** 数量（股）；金额 = 数量 × 成本价 */
+  /** 数量（股）；金额 = 数量 × 本次交易价格 */
   amount: number;
-  /** 本次操作成本价（可选；缺省用当前仓位成本价） */
+  /** 本次交易价格（必填，>0）：加仓 = 买入价，减仓 = 卖出价。
+   * 金额 = 数量 × 价格；加仓用买入价重算持仓均价，减仓用卖出价计算卖出回款（持仓均价不变）。 */
   cost?: number;
   note?: string;
 }
@@ -1810,12 +1866,18 @@ export interface TradePlanAfterPosition {
   weightPct: number;
   /** 本次加仓金额 */
   addAmount: number;
+  /** 本次操作价格（加仓=买入价 / 减仓=卖出价；三源解析，兼容缺省） */
+  tradePrice?: number;
+  /** 减仓已实现盈亏（元）= (卖出价 − 当前持仓均价) × 减仓数量；加仓/无减仓缺省 */
+  realizedPnl?: number;
 }
 
 /** 校验汇总 */
 export interface TradePlanCheckTotals {
   /** 当日加仓合计（元） */
   addTotal: number;
+  /** 当日减仓回款（元）= 减仓股数 × 卖出价 */
+  reduceTotal: number;
   /** 执行后总市值（元） */
   totalMarketValue: number;
   /** 执行后总仓位占比 % */
@@ -1866,6 +1928,8 @@ export interface TradePlanCheckResponse {
   day?: TradePlanDay;
   /** 应用后最新策略（含已更新的当前仓位） */
   strategy?: TradePlanStrategy;
+  /** 覆盖保存后：后续已应用计划中无法完整执行的警告（如减仓超过当前持仓） */
+  chainWarnings?: string[];
   message?: string;
 }
 
@@ -1878,6 +1942,8 @@ export interface TradePlanDayListResult {
 /** 删除响应 */
 export interface TradePlanDeleteResult {
   ok: boolean;
+  /** 删除后：其余已应用计划中无法完整执行的警告（如减仓超过当前持仓） */
+  chainWarnings?: string[];
   message?: string;
 }
 

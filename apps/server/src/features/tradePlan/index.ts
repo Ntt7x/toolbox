@@ -17,17 +17,19 @@ import {
 } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
-import { applyItems, checkTradePlan } from "./compute.js";
+import { applyItems, buildDeals, checkTradePlan } from "./compute.js";
 import {
   createDay,
   createStrategy,
   deleteDay,
   deleteStrategy,
+  appliedDayWarnings,
   getStrategy,
   listDays,
   listStrategies,
   migrateLegacyConfig,
   rebasePositions,
+  replayBefore,
   replayPositions,
   updateStrategy,
 } from "./store.js";
@@ -63,7 +65,10 @@ export function register(app: Hono): void {
     const out = await Promise.all(
       list.map(async (s) => {
         const full = getStrategy(s.id);
-        return { ...s, pnl: full ? await attachPnl(full) : null };
+        const pnl = full ? await attachPnl(full) : null;
+        // positionPct 统一为「最新价市值占比」（与详情/概览一致；store 内为成本口径兜底，这里覆盖）
+        const positionPct = pnl && s.totalCapital > 0 ? Math.round((pnl.totalMv / s.totalCapital) * 1000) / 10 : s.positionPct;
+        return { ...s, positionPct, pnl };
       }),
     );
     return c.json({ ok: true, strategies: out });
@@ -108,11 +113,12 @@ export function register(app: Hono): void {
     };
   }
 
-  // 单策略详情（附盈亏：最新价 vs 成本价；行情走 KV 缓存，失败静默跳过）
+  // 单策略详情（附盈亏：最新价 vs 成本价 + 交易复盘 deals；行情走 KV 缓存，失败静默跳过）
   app.get(`${API_PREFIX}/tools/trade-plan/strategies/:id`, async (c: Context) => {
     const st = getStrategy(c.req.param("id")!);
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
-    return c.json({ ok: true, strategy: st, pnl: await attachPnl(st) });
+    const deals = buildDeals(listDays(st.id));
+    return c.json({ ok: true, strategy: st, pnl: await attachPnl(st), deals });
   });
 
   // 新建策略（名称唯一）
@@ -150,6 +156,20 @@ export function register(app: Hono): void {
     if (totalCapital === undefined && raw.totalCapital !== undefined) return c.json({ ok: false, message: "总仓位必须为非负数值" }, 400);
     if (dailyAddLimit === undefined && raw.dailyAddLimit !== undefined) return c.json({ ok: false, message: "单日加仓上限必须为非负数值" }, 400);
     const stocks = raw.stocks !== undefined ? parseStocks(raw.stocks) : undefined;
+    // 服务端权威校验：maxWeightPct 越界 400（2026-08-10：此前 parseStocks 静默丢弃，违反 §6.7）
+    if (Array.isArray(raw.stocks)) {
+      for (const x of raw.stocks) {
+        if (typeof x !== "object" || x === null) continue;
+        const mw = (x as { maxWeightPct?: unknown }).maxWeightPct;
+        if (mw !== undefined && mw !== null) {
+          const n = Number(mw);
+          if (!Number.isFinite(n) || n < 0 || n > 100) {
+            const code = String((x as { code?: unknown }).code ?? "").trim();
+            return c.json({ ok: false, message: `标的 ${code || "(未填代码)"} 的仓位上限需在 0-100% 之间` }, 400);
+          }
+        }
+      }
+    }
     // 服务端查重：同一策略不允许重复 code
     if (stocks && stocks.length > 0) {
       const seen = new Set<string>();
@@ -212,13 +232,15 @@ export function register(app: Hono): void {
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
     const raw = (await c.req.json().catch(() => null)) as { items?: unknown } | null;
     const items = parseItems(raw?.items);
-    if (!items) return c.json({ ok: false, message: "计划条目无效（需含代码/操作/金额）" }, 400);
+    if (!items) return c.json({ ok: false, message: "计划条目无效（需含代码/操作/数量）" }, 400);
+    const priceErr = itemsPriceError(items);
+    if (priceErr) return c.json({ ok: false, message: `计划条目无效：${priceErr}` }, 400);
     const priceFallback = await buildPriceFallback(st, items);
     const result = checkTradePlan(st, items, { priceFallback });
     return c.json({ ok: result.ok, result, previewOnly: true });
   });
 
-  // 创建日度计划（校验 → 保存 → 自动应用更新当前仓位；同日覆盖先回滚再重应用）
+  // 创建日度计划（校验 → 保存 → 自动应用更新当前仓位；同日覆盖：before 只用该日之前状态，应用后全量重放）
   app.post(`${API_PREFIX}/tools/trade-plan/strategies/:id/day`, async (c: Context) => {
     const st = getStrategy(c.req.param("id")!);
     if (!st) return c.json({ ok: false, message: "策略不存在" }, 404);
@@ -226,9 +248,13 @@ export function register(app: Hono): void {
     const date = typeof raw?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : todayStr();
     const items = parseItems(raw?.items);
     if (!items || items.length === 0) return c.json({ ok: false, message: "计划条目无效（需至少一条）" }, 400);
+    const priceErr = itemsPriceError(items);
+    if (priceErr) return c.json({ ok: false, message: `计划条目无效：${priceErr}` }, 400);
 
-    // 仓位 = 基线重放（剔除该日后）→ 保证同日覆盖/多日链一致
-    const positions = replayPositions(st, date);
+    // 覆盖（重刷）语义（2026-08-10 修复）：before/校验基础 = 仅该日之前的仓位
+    // （旧实现 replayPositions(st, date) 只剔除该日、会把该日之后计划重放进 before，
+    //   导致校验持仓被未来计划污染、减仓误拦、快照错误）
+    const positions = replayBefore(st, date);
     const checkConfig = { ...st, positions };
     const priceFallback = await buildPriceFallback(checkConfig, items);
     const result = checkTradePlan(checkConfig, items, { priceFallback });
@@ -246,8 +272,12 @@ export function register(app: Hono): void {
     const after = applyItems(before, items);
     const now = new Date().toISOString();
     const day = createDay(st.id, date, items, result, { applied: true, before, after, appliedAt: now });
-    updateStrategy(st.id, { positions: after }); // 自动更新当前仓位（基线不变）
-    return c.json({ ok: true, result, day, strategy: getStrategy(st.id) });
+    // 当前仓位 = 全量重放（新计划已入 KV；含该日之后的后续计划，避免丢失后续日影响）
+    const latest = getStrategy(st.id)!;
+    updateStrategy(st.id, { positions: replayPositions(latest) });
+    // 后续已应用计划链校验：无法完整执行的（如减仓超持仓）给出可见警告（不再静默截断）
+    const chainWarnings = appliedDayWarnings(latest);
+    return c.json({ ok: true, result, day, strategy: getStrategy(st.id), chainWarnings });
   });
 
   // 历史列表
@@ -302,7 +332,9 @@ export function register(app: Hono): void {
       updateStrategy(id, { positions: after });
     }
     deleteDay(id, dayId);
-    return c.json({ ok: true });
+    // 删除后剩余计划链校验（S7：减仓超持仓等无法完整执行 → 可见警告）
+    const chainWarnings = appliedDayWarnings(getStrategy(id)!, day.date);
+    return c.json({ ok: true, chainWarnings });
   });
 }
 
@@ -333,16 +365,17 @@ function parsePositions(raw: unknown): TradePlanPosition[] {
     .filter((x) => x.code);
 }
 
-function parseItems(raw: unknown): TradePlanItemParsed[] | null {
+export function parseItems(raw: unknown): TradePlanItemParsed[] | null {
   if (!Array.isArray(raw)) return null;
   const items: TradePlanItemParsed[] = [];
   for (const x of raw) {
-    if (typeof x !== "object" || x === null) continue;
+    if (typeof x !== "object" || x === null) return null;
     const it = x as { code?: unknown; action?: unknown; amount?: unknown; cost?: unknown; note?: unknown };
     const code = typeof it.code === "string" ? it.code.trim() : "";
     const action = it.action === "reduce" ? "reduce" : it.action === "add" ? "add" : null;
     const amount = num(it.amount);
-    if (!code || !action || amount === undefined || amount <= 0) continue;
+    // 任一条目非法（缺代码/操作/数量<=0/非整数股）→ 整批拒绝（2026-08-10：不再静默丢条目，用户能看到完整 400）
+    if (!code || !action || amount === undefined || amount <= 0 || !Number.isInteger(amount)) return null;
     const cost = num(it.cost);
     items.push({
       code,
@@ -353,6 +386,18 @@ function parseItems(raw: unknown): TradePlanItemParsed[] | null {
     });
   }
   return items.length > 0 ? items : null;
+}
+
+/** 价格必填权威校验（新提交的日度计划）：加仓 = 买入价、减仓 = 卖出价，均须 >0。
+ * 返回错误消息；全部合法返回 null。旧数据/纯函数层保持三源兜底，不受影响。 */
+export function itemsPriceError(items: TradePlanItemParsed[]): string | null {
+  for (const it of items) {
+    if (typeof it.cost !== "number" || it.cost <= 0) {
+      const label = it.action === "add" ? "买入价" : "卖出价";
+      return `${it.code} 的操作缺少${label}：金额 = 数量 × 价格，请填写本次交易价格（>0）`;
+    }
+  }
+  return null;
 }
 
 interface TradePlanItemParsed {

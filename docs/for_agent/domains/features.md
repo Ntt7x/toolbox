@@ -37,6 +37,15 @@
 - **v4（2026-08-08）多日链一致性**：日度计划「应用/删除」从简单回滚 before 改为**基线（basePositions）+ 按日期升序重放**——删除中间某日后其余计划按序重算（旧实现回滚导致后续日结果丢失）；手动保存仓位 → 固化基线；同日覆盖 = 剔除该日重放 + 重应用（幂等）
 - 日度计划加仓支持**本次 cost**（可选，缺省用当前均价）：金额 = 数量 × cost，均价 = 重算（(旧量×旧价+量×价)/新量）
 - **v5（2026-08-10）负成本盈亏展示**：avgCost<0（成本已回本/做空记账）——**显示盈亏金额、不显示盈亏比例**（负成本比例无意义；金额 = 市值−成本 数学一致展示）——服务端 `attachPnl` 负成本标的返回 `pnl`（金额）+ `costNegative:true`（无 pnlPct），计入 totalPnl/totalMv、`negCount` 计数、不参与 totalCost；`totalPnlPct` 存在负成本标的一律 undefined（前端显示—）；前端三处（列表卡/概览卡/持仓行）显示「盈/亏 ¥X（—）」
+- **v6（2026-08-10）买入价/卖出价必填 + 交易复盘（Deal）**：
+  - 加仓输入**买入价**、减仓输入**卖出价**（`TradePlanItem.cost` = 本次交易价 >0，路由层 `itemsPriceError` 权威校验；纯函数层保留三源兜底兼容存量）；金额 = 数量 × 本次价格；`realizedPnl` = (卖出价−当前均价)×减仓数量
+  - **交易复盘（学习自 profitmaker Deals）**：`buildDeals`（compute.ts 纯函数）把已应用日度计划按**标的×交易段**配对成完整交易（零仓位建仓 entry → 加仓/减仓 → 数量归零清仓 exit），平均成本法归因（段内 buyAmount vs sellAmount），closed 笔统计 **pnl/持仓天数/胜率/已实现盈亏/平均持仓**；详情接口附 `deals`，前端「📈 交易复盘」卡（6 指标 + 可展开明细）；未应用计划不计入
+  - 当日减仓回款 `reduceTotal`（卖出价×数量，profitmaker credited 口径）进 totals 与 ResultView 卡
+  - **错漏修复**：① rebasePositions 提交中删除的标的从基线移除（防已删标的重放复活）；② createDay 同日覆盖清理 DAY_LIST 死 id；③ 列表 positionPct 改最新价市值口径（与详情一致）；④ parseItems 数量必须正整数、非法条目**整批拒绝**（不再静默丢条目）；⑤ maxWeightPct 越界服务端 400（此前静默丢弃）
+- **v6b（2026-08-10）重刷/覆盖语义修复（S7/S8，重刷日度计划暴露）**：
+  - **S8 [严重]** 覆盖（重刷）历史日计划时旧实现 `replayPositions(st, date)` 只剔除该日、**把该日之后已应用计划也重放进 before** → 校验持仓被未来计划污染（减仓误拦 400）、before/after 快照错误 → 新增 `replayBefore(st, date)`（仅 < date），覆盖路由用它做 before/校验基础；应用后 positions 用**全量重放** `replayPositions(st)`（含后续日，不丢链）
+  - **S7 [静默截断]** 覆盖/删除中间日后，后续日计划减仓超持仓被 applyItems clamp 截断但无提示 → 新增 `appliedDayWarnings(st, excludeDate)`（全量重放逐日 checkTradePlan 收集 error 级），覆盖/删除响应附 `chainWarnings`，前端保存/删除后提示「⚠️ X 日计划无法完整执行：…」
+  - 验证：三日链（base100 +D1+10 +D2+10 −D3−20）重刷 D2 减 95——修复前误拦 400（持仓被污染成 90），修复后通过（before=110）且 chainWarnings 提示 D3 超出 5 股
 
 ## 数据可信度（cbRate 等 LLM 结构化输出）
 
@@ -75,6 +84,14 @@
   个股名称解析复用 core/quote（标准行情工具）；财报分析 = LLM（watchlist.fundamental 提示词，
   默认联网搜索 + robustJsonParse + KV 缓存）；**Hono 静态路由必须注册在 `/:id` 参数路由之前**
   （否则被当 id 吞掉）
+- **专题列表等权平均涨幅（2026-08-10）**：`GET /tools/watchlist` 列表接口为 async，附
+  `avgPct/avgCount`（专题内有行情股票的涨跌幅**算术平均**；行情分 40 只一批批量拉取，复用
+  quote:s: 5 分钟缓存，不与详情页重复拉取；索引 normCode+裸码双键兼容用户任意代码写法）；
+  前端列表行「N 只」旁红涨绿跌徽章（title 显示参与统计数）；全部无行情 → avgPct 缺省不展示
+- **行情多源兜底（2026-08-10）**：quote.ts 腾讯批量**逐行容错**（单只解析失败只跳过该只，
+  不再拖垮整批，坏代码走单源降级）+ 批量命中**无价降级**（price 缺失/为 0 也降级东财/新浪补价）；
+  fund.ts 场外基金天天基金主源失败自动降级**新浪**（`hq.sinajs.cn/list=of{code}`）；
+  行情失败项前端显示「⚠️ 无行情」+ title 展示失败原因（不再静默「—」）
 - **逆回购月度数据触发式更新**（服务端自动，前端零改动）：`GET /tools/reverse-repo/monthly`
   返回时计算 `missingMonths(rows)`——最新数据月 < 上个月 → 响应带 `stale/staleMonths` 并
   自动 `createTask` 后台跑 `runMonthlyUpdate`（LLM 搜索补全缺失月份，`reverse-repo.monthly-update`

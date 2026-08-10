@@ -1,7 +1,8 @@
 // 交易规划校验计算单测（v3：日度计划按数量（股）操作）
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyItems, checkTradePlan } from "./compute.js";
+import { applyItems, buildDeals, checkTradePlan } from "./compute.js";
+import { itemsPriceError, parseItems } from "./index.js";
 import { rebasePositions } from "./store.js";
 import type { TradePlanCheckConfig } from "./compute.js";
 
@@ -53,10 +54,10 @@ test("减仓数量超过当前持仓 → error 且市值不为负", () => {
   assert.equal(m.marketValue, 0);
 });
 
-test("未设置成本价的标的 → error（金额无法换算）", () => {
+test("未设置成本的标的 → error（金额无法换算）", () => {
   const r = checkTradePlan(cfg, [{ code: "300750", action: "add", amount: 100 }]);
   assert.equal(r.ok, false);
-  assert.ok(r.alerts.some((a) => a.level === "error" && a.message.includes("未设置成本价")));
+  assert.ok(r.alerts.some((a) => a.level === "error" && a.message.includes("无法换算金额")));
 });
 
 test("同一标的多个操作 → error（一标的一天一个操作）", () => {
@@ -182,5 +183,170 @@ test("checkTradePlan：三源都无成本 → 仍 error", () => {
   const r = checkTradePlan(cfg, [{ code: "300750", action: "add", amount: 5 }], { priceFallback: {} });
   assert.equal(r.ok, false);
   const e = r.alerts.find((a) => a.level === "error");
-  assert.ok(e && e.message.includes("未设置成本价"));
+  assert.ok(e && e.message.includes("无法换算金额"));
+});
+
+// ---------- 价格必填（v6：加仓=买入价、减仓=卖出价，路由层权威校验） ----------
+
+test("parseItems：合法条目解析（含价格）", () => {
+  const items = parseItems([
+    { code: "600519", action: "add", amount: 10, cost: 1500 },
+    { code: "300750", action: "reduce", amount: 5, cost: 1600 },
+  ]);
+  assert.ok(items);
+  assert.equal(items!.length, 2);
+  assert.equal(items![0].cost, 1500);
+});
+
+test("parseItems：缺代码/数量<=0/空 → null", () => {
+  assert.equal(parseItems(null), null);
+  assert.equal(parseItems([]), null);
+  assert.equal(parseItems([{ action: "add", amount: 10 }]), null); // 无 code → 过滤为空
+  assert.equal(parseItems([{ code: "600519", action: "add", amount: 0 }]), null); // 数量 <=0
+});
+
+test("itemsPriceError：全部有价格 → null", () => {
+  const items = parseItems([
+    { code: "600519", action: "add", amount: 10, cost: 1500 },
+    { code: "300750", action: "reduce", amount: 5, cost: 1600 },
+  ]);
+  assert.ok(items);
+  assert.equal(itemsPriceError(items!), null);
+});
+
+test("itemsPriceError：加仓缺买入价 → 报错含「买入价」", () => {
+  const items = parseItems([{ code: "600519", action: "add", amount: 10 }]);
+  assert.ok(items);
+  const err = itemsPriceError(items!);
+  assert.ok(err && err.includes("600519") && err.includes("买入价"), err ?? "");
+});
+
+test("itemsPriceError：减仓缺卖出价 → 报错含「卖出价」", () => {
+  const items = parseItems([{ code: "300750", action: "reduce", amount: 5 }]);
+  assert.ok(items);
+  const err = itemsPriceError(items!);
+  assert.ok(err && err.includes("卖出价"), err ?? "");
+});
+
+test("itemsPriceError：价格 <=0 → 报错（真实成交价须 >0）", () => {
+  const items = parseItems([{ code: "600519", action: "add", amount: 10, cost: 0 }]);
+  assert.ok(items);
+  assert.ok(itemsPriceError(items!) !== null); // cost 0 不入 parseItems → 视为缺价
+});
+
+test("checkTradePlan：减仓计算已实现盈亏（卖出价−均价）×数量", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "reduce", amount: 10, cost: 1500 }]);
+  assert.equal(r.ok, true);
+  const m = r.after.find((p) => p.code === "600519")!;
+  assert.equal(m.realizedPnl, (1500 - 1400) * 10); // 卖出价 1500 vs 均价 1400 × 10 股 = 1000
+  assert.equal(m.shares, 10); // 20 - 10
+  assert.equal(m.avgCost, 1400); // 减仓不改变均价
+});
+
+test("checkTradePlan：减仓亏损时 realizedPnl 为负", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "reduce", amount: 5, cost: 1300 }]);
+  const m = r.after.find((p) => p.code === "600519")!;
+  assert.equal(m.realizedPnl, (1300 - 1400) * 5); // -500
+});
+
+test("checkTradePlan：加仓不产生 realizedPnl", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "add", amount: 10, cost: 1500 }]);
+  const m = r.after.find((p) => p.code === "600519")!;
+  assert.equal(m.realizedPnl, undefined);
+});
+
+test("parseItems：数量非整数（0.5 股）→ 整批 null（不再静默丢条目）", () => {
+  assert.equal(parseItems([{ code: "600519", action: "add", amount: 100.5, cost: 1500 }]), null);
+  // 2 条中 1 条非法 → 整批拒绝（用户能看到 400 而非少条计划）
+  assert.equal(parseItems([
+    { code: "600519", action: "add", amount: 100, cost: 1500 },
+    { code: "300750", action: "add", amount: 0.5, cost: 100 },
+  ]), null);
+});
+
+test("checkTradePlan：totals 含当日减仓回款 reduceTotal（卖出价×数量）", () => {
+  const r = checkTradePlan(cfg, [{ code: "600519", action: "reduce", amount: 10, cost: 1500 }]);
+  assert.equal(r.totals.reduceTotal, 15000);
+});
+
+// ---------- 交易复盘（Deal：加仓→清仓按笔配对，平均成本法） ----------
+
+const day = (date: string, items: { code: string; action: "add" | "reduce"; amount: number; cost?: number }[]) => ({ date, applied: true as const, items });
+
+test("buildDeals：建仓→加仓→清仓 → 1 笔 closed，pnl/持仓天数/胜率正确", () => {
+  const s = buildDeals([
+    day("2026-08-01", [{ code: "A", action: "add", amount: 100, cost: 10 }]),
+    day("2026-08-03", [{ code: "A", action: "add", amount: 100, cost: 12 }]),
+    day("2026-08-05", [{ code: "A", action: "reduce", amount: 200, cost: 15 }]),
+  ]);
+  assert.equal(s.closedCount, 1);
+  assert.equal(s.openCount, 0);
+  const d = s.deals.find((x) => x.code === "A")!;
+  assert.equal(d.status, "closed");
+  assert.equal(d.buyQty, 200);
+  assert.equal(d.buyAmount, 100 * 10 + 100 * 12); // 2200
+  assert.equal(d.sellAmount, 200 * 15); // 3000
+  assert.equal(d.pnl, 800);
+  assert.equal(d.days, 4); // 08-01 → 08-05
+  assert.equal(d.avgCost, 11); // 2200/200
+  assert.equal(s.winRate, 100);
+  assert.equal(s.realizedPnl, 800);
+  assert.equal(s.avgDays, 4);
+});
+
+test("buildDeals：在途 deal（未清仓）status=open，不结算 pnl", () => {
+  const s = buildDeals([day("2026-08-10", [{ code: "A", action: "add", amount: 100, cost: 10 }])]);
+  assert.equal(s.closedCount, 0);
+  assert.equal(s.openCount, 1);
+  const d = s.deals.find((x) => x.code === "A")!;
+  assert.equal(d.status, "open");
+  assert.equal(d.qty, 100);
+  assert.equal(d.pnl, undefined);
+  assert.equal(s.winRate, undefined);
+  assert.equal(s.realizedPnl, 0);
+});
+
+test("buildDeals：部分减仓再清仓 = 1 笔；两段买卖 = 2 笔，胜率/已实现盈亏正确", () => {
+  const s = buildDeals([
+    day("2026-08-01", [{ code: "A", action: "add", amount: 100, cost: 10 }]),
+    day("2026-08-04", [{ code: "A", action: "reduce", amount: 40, cost: 11 }]),
+    day("2026-08-06", [{ code: "A", action: "reduce", amount: 60, cost: 13 }]),
+    day("2026-08-08", [{ code: "B", action: "add", amount: 50, cost: 20 }]),
+    day("2026-08-09", [{ code: "B", action: "reduce", amount: 50, cost: 18 }]),
+  ]);
+  assert.equal(s.closedCount, 2);
+  assert.equal(s.openCount, 0);
+  const a = s.deals.find((x) => x.code === "A")!;
+  assert.equal(a.pnl, 40 * 11 + 60 * 13 - 100 * 10); // 1220 − 1000 = 220
+  const b = s.deals.find((x) => x.code === "B")!;
+  assert.equal(b.pnl, 50 * 18 - 50 * 20); // −100
+  assert.equal(s.winRate, 50); // A 盈 B 亏
+  assert.equal(s.realizedPnl, 120); // 220 − 100
+  assert.equal(s.totalProfit, 220);
+  assert.equal(s.totalLoss, 100);
+});
+
+test("buildDeals：未应用计划不计入交易复盘", () => {
+  const s = buildDeals([
+    day("2026-08-01", [{ code: "A", action: "add", amount: 100, cost: 10 }]),
+    { date: "2026-08-03", applied: false, items: [{ code: "A", action: "reduce", amount: 100, cost: 15 }] },
+  ]);
+  assert.equal(s.openCount, 1); // 减仓未应用 → 仍是 open
+  assert.equal(s.closedCount, 0);
+});
+
+test("rebasePositions：提交中删除的标的 → 从基线移除（防重放复活已删标的）", () => {
+  const oldBase = [
+    { code: "A", quantity: 100, avgCost: 10 },
+    { code: "B", quantity: 50, avgCost: 20 },
+  ];
+  const replayed = [
+    { code: "A", quantity: 200, avgCost: 10 },
+    { code: "B", quantity: 30, avgCost: 20 },
+  ];
+  // 用户删除 B（提交中无 B）
+  const submitted = [{ code: "A", quantity: 250, avgCost: 10 }];
+  const nb = rebasePositions(oldBase, replayed, submitted);
+  assert.equal(nb.some((x) => x.code === "B"), false); // B 从基线移除
+  assert.equal(nb.find((x) => x.code === "A")?.quantity, 150); // A: 100 + (250−200)
 });
