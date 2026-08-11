@@ -527,6 +527,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   处理与标记 done 视为同一动作、不可拆分
 - 处理完的条目在 memo:items 里标记 status=done；类型字段 `kind`（缺省 fix，旧数据兼容）
 
+**memo 复用脚本指引（2026-08-10 强化）**——处理 memo 全流程用 `scripts/dev-utils/memo.mjs`：
+- **开工感知**：`memo.mjs stats`（open/doing/done 统计 + 未完成按页面分组）→ `memo.mjs list` 看明细
+- **聚焦**：`memo.mjs bypage <页面关键词>`（如 `bypage 策略仓位管理`）——只列某页面未完成，避免 200 条全量刷屏
+- **进度**：`memo.mjs recent [N]`（默认 5）——了解最近已处理，避免重复开发
+- **批量 done**：`memo.mjs done <id>...`（多 id 空格分隔；cmd 分号防御已内置）
+
+**memo 指令感知（新会话/用户说"memo"时）**：
+- 用户说「处理备忘录」/「处理 memo」→ 先 `memo.mjs stats` + `list` → **逐条先理解业务概念与逻辑**（不要拿到就改）→ 建分支 → 实现 → 验证 → **当场 `done`**
+- 用户说「其中较早的 X 已经完成了」→ **先核实**（grep 代码/查 API/看页面）功能是否已实现 → **已实现则直接标记 done，不重复实现**（曾发生：财报分析会话复用早已实现，memo 是旧反馈）
+- Agent 主动新增 memo 只能用 agent 型且严格区分（见上）；不得替用户新增 fix/feature 型
+
 ### 8.1 维护性文件同步规则（每次提交/归档必做）
 
 - **测试数据必须清理（硬性）**：任何测试/冒烟产生的临时数据，交付前必须删除并验证无残留——包括：临时领域库/虚拟库/知识条目（`it_*`/`test*`/`zh_*` 等前缀）、导入历史（`kbImport:history`）、LLM 用量记录（`llmUsage:` 测试 module 记录）。**单测必须在 `finally` 中彻底清理其创建的 KV**（注意前缀：领域元数据是 `kbDomain:`，删它用 `deleteDomain`；虚拟库是 `kbVirt:`，删它用 `deleteVirtKb`——勿混用，否则残留）。提交前跑 `node scripts/dev-utils/api-cli.mjs GET /tools/overview` 或本地数据管理页确认无 `testdomain_`/`it_` 等残留。

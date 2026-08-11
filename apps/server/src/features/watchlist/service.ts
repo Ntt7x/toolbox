@@ -18,7 +18,9 @@ import type { WatchlistFundamentalResult, WatchlistStock, WatchlistTopic } from 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
 export const FUNDAMENTAL_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
-const FUNDAMENTAL_PREFIX = "watchlist:fundamental:";
+// 结果缓存 key 模板版本：提示词/输出结构升级时 +1（防旧缓存命中返回旧格式，dev.md §7.4 教训）
+const FUNDAMENTAL_CACHE_V = "v1";
+const FUNDAMENTAL_PREFIX = `watchlist:fundamental:${FUNDAMENTAL_CACHE_V}:`;
 
 function todayStr(): string {
   const now = new Date();

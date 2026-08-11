@@ -36,7 +36,7 @@ scripts/
 | `smoke-pages.mjs` | 页面冒烟（18 页；**`--page <路径>` 定向单页**配合 L2） | `node scripts/dev-utils/smoke-pages.mjs [--page /tools/x]` |
 | `api.mjs` | 通用 API 客户端：fetch+json 包装，非 2xx 抛带 message 的 Error（含 rejectReason） | `import { call, get, post, put, del } from "./api.mjs"` |
 | `e2e.mjs` | API E2E 断言脚手架：用例列表 + 统计 + 失败 exit 1 | 脚本内 `import { e2e, assert } from "./e2e.mjs"` |
-| `memo.mjs` | 改进备忘录 CLI：读 open / 批量 done / 新增（**每轮「处理备忘录」必用**） | `node scripts/dev-utils/memo.mjs list\|done <id>...\|add <text>` |
+| `memo.mjs` | 改进备忘录 CLI：读 open / 批量 done / 新增 / 统计 / 最近 / 按页面过滤（**每轮「处理备忘录」必用**） | `node scripts/dev-utils/memo.mjs list\|done <id>...\|add <text>\|stats\|recent\|bypage <关键词>` |
 > **cmd 分号防御**：`done` 自动剥离参数中的 `;` 粘连并跳过非 ID 参数（`done id1; node x` 不再误报 404） |
 | `kv.mjs` | KV/DB 只读检查：前缀过滤/统计/取值（查测试数据残留） | `node scripts/dev-utils/kv.mjs list\|count\|get <key>` |
 | `patch.mjs` | 文件文本替换执行器：patch.json 驱动，dry-run/原子写盘，CRLF 感知（**替代 node -e 长替换**） | `node scripts/dev-utils/patch.mjs <patch.json> [--apply]` |
