@@ -277,7 +277,11 @@ export default function TradePlanTool() {
   };
   const mvOf = (code: string) => {
     const pos = strategy?.positions.find((p) => p.code === code);
-    return (pos?.quantity || 0) * (pos?.avgCost || 0);
+    if (!pos || (pos.quantity || 0) <= 0) return 0;
+    // 当前市值（最新价，fallback 成本价）——排序用市值而非成本（memo msohisx9）；
+    // 内联计算避免引用后定义变量（marketValueOf/latestPriceOf 在其后声明，TDZ 崩溃）
+    const price = pnl?.byCode[code]?.latestPrice ?? pos.avgCost ?? 0;
+    return pos.quantity * price;
   };
   const viewStocks = useMemo(() => {
     if (!strategy || sortMode === "none") return strategy?.stocks ?? [];
@@ -286,7 +290,7 @@ export default function TradePlanTool() {
       return sortMode === "desc" ? d : -d;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategy, sortMode]);
+  }, [strategy, sortMode, pnl]);
   const setItemAt = (i: number, patch: Partial<TradePlanItem>) => {
     const next = items.slice();
     next[i] = { ...next[i], ...patch };
