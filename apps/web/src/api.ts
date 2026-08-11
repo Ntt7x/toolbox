@@ -63,6 +63,9 @@
   type MemoDetailResult,
   type MemoListResult,
   type MemoUpdateRequest,
+  type TodoListResult,
+  type TodoMutateResult,
+  type TodoUpdateRequest,
   type BookConfig,
   type BookFavoritesResult,
   type BookHistoryResult,
@@ -230,6 +233,13 @@ export const api = {
   memoUpdate: (id: string, patch: MemoUpdateRequest) =>
     request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  // 待办清单（用户日常 todo）
+  todoList: () => request<TodoListResult>("/tools/todo"),
+  todoAdd: (text: string) => request<TodoMutateResult>("/tools/todo", jsonInit("POST", { text })),
+  todoUpdate: (id: string, patch: TodoUpdateRequest) =>
+    request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  todoDelete: (id: string) => request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  todoClearDone: () => request<TodoMutateResult>("/tools/todo/clear-done", jsonInit("POST", {})),
   // 书籍下载（zlib）
   booksSearch: (q: string, page = 1, limit = 20) =>
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),

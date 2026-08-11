@@ -34,6 +34,7 @@ import * as knowledgeHubFeature from "./features/knowledgeHub/index.js";
 import * as newsCenterFeature from "./features/newsCenter/index.js";
 import * as tradePlanFeature from "./features/tradePlan/index.js";
 import * as browserChatFeature from "./features/browserChat/index.js";
+import * as todoFeature from "./features/todo/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -63,6 +64,7 @@ const tools: ToolMeta[] = [
   knowledgeHubFeature.meta,
   newsCenterFeature.meta,
   tradePlanFeature.meta,
+  todoFeature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -94,6 +96,8 @@ zhihuCrawlerFeature.register(app);
 browserChatFeature.register(app);
 tradePlanFeature.register(app);
 knowledgeHubFeature.register(app);
+// 待办清单（用户日常 todo）
+todoFeature.registerTodoFeature(app);
 // 新闻中心：注册东财源 + 路由
 newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);
 newsCenterFeature.register(app);

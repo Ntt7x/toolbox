@@ -1403,12 +1403,39 @@ export interface MemoCreateRequest {
   kind?: MemoKind;
 }
 
+/** 待办清单条目（用户日常个人 todo；区别于开发者驱动的改进备忘录 memo） */
+export interface TodoItem {
+  id: string;
+  text: string;
+  done: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TodoListResult {
+  ok: true;
+  items: TodoItem[];
+}
+
+export interface TodoCreateRequest {
+  text: string;
+}
+
+export interface TodoMutateResult {
+  ok: true;
+  items: TodoItem[];
+}
+
+/** 更新：切换完成状态 / 改文本 */
+export interface TodoUpdateRequest {
+  done?: boolean;
+  text?: string;
+}
+
 export interface MemoCreateResult {
   ok: true;
   item: MemoItem;
-}
-
-/** 更新：改文本 / 改状态 / 改类型 */
+}/** 更新：改文本 / 改状态 / 改类型 */
 export interface MemoUpdateRequest {
   text?: string;
   status?: MemoStatus;
