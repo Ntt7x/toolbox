@@ -134,12 +134,38 @@ function conversationText(messages: { role: string; content: string }[]): string
   return parts.join("\n\n").slice(0, CONVERSATION_LIMIT);
 }
 
+/** 从对话文本提取该股票的关键理由句（代码后文含"龙头/领先/核心/市占率/最大"等，截 60 字） */
+function extractReasonFromText(text: string, code: string): string {
+  const digits = code.replace(/^0+/, "");
+  const idx = text.indexOf(`${digits}.HK`);
+  const after = idx >= 0 ? text.slice(idx) : text;
+  // 去 [AI]/[用户] 前缀
+  const clean = after.replace(/^\[(AI|USER|用户|助手)\][\s:：]*/, "");
+  const sentences = clean.split(/[。；\n]/);
+  const kw = /龙头|领先|核心|市占率|最大|第一|龙头|国内/;
+  const hit = sentences.find((s) => kw.test(s) && s.length > 8 && s.length < 90);
+  const raw = hit ?? sentences[0] ?? "";
+  return raw
+    .replace(/^\d{3,6}\.HK[）)是：:、\s]*/, "")   // 去代码前缀（01763.HK）是
+    .replace(/\[reference:\d+\]/g, "")           // 去引用标记
+    .replace(/^[）)是：:、\s]+/, "")
+    .trim()
+    .slice(0, 60);
+}
+
 /** 校验股票条目（6 位数字代码 + 名称），非法剔除 */
 function normalizeImportedStock(s: unknown): WatchlistStock | null {
   if (!s || typeof s !== "object") return null;
   const r = s as Record<string, unknown>;
-  const code = typeof r.code === "string" ? r.code.trim() : "";
-  if (!/^\d{6}$/.test(code)) return null;
+  const raw0 = typeof r.code === "string" ? r.code.trim() : "";
+  // 容错：去交易所后缀（01763.HK / 600519.SH 等）再规范化
+  const raw = raw0.toUpperCase().replace(/\.(HK|SH|SZ|BJ)$/, "").trim();
+  // 代码规范化：A股/ETF 6 位；港股 5 位（裸数字含前导 0，或 HK 前缀 3-5 位）→ 统一裸 5 位（与现有专题一致，如 01763/00700）
+  let code = "";
+  if (/^\d{6}$/.test(raw)) code = raw;
+  else if (/^HK\d{3,5}$/.test(raw)) code = raw.slice(2).replace(/^0+/, "").padStart(5, "0");
+  else if (/^\d{3,5}$/.test(raw)) code = raw.padStart(5, "0");
+  if (!code) return null;
   const name = typeof r.name === "string" ? r.name.trim().slice(0, 20) : "";
   const reason = typeof r.reason === "string" ? r.reason.trim().slice(0, 120) : "";
   if (!name && !reason) return null;
@@ -177,6 +203,33 @@ export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal
   const stocks = (Array.isArray(p.stocks) ? p.stocks : [])
     .map(normalizeImportedStock)
     .filter((s): s is WatchlistStock => !!s);
+  // 兜底：LLM 未识别时从对话文本正则提取带明确市场后缀的股票代码（01763.HK / 600519.SH 等）
+  if (stocks.length === 0) {
+    const rawText = typeof text === "string" ? text : "";
+    const codes = [...new Set(
+      [...(rawText.match(/(?:HK|SH|SZ|BJ)?\d{3,6}\.(?:HK|SH|SZ|BJ)/gi) ?? [])]
+        .map((m) => {
+          const upper = m.toUpperCase();
+          const market = upper.match(/\.(HK|SH|SZ|BJ)$/)?.[1] ?? "";
+          const digits = upper.replace(/\.(HK|SH|SZ|BJ)$/, "");
+          if (market === "HK") return digits.replace(/^HK/, "").padStart(5, "0");
+          return digits.replace(/^(HK|SH|SZ|BJ)/, "");
+        })
+        .filter((c) => /^\d{5,6}$/.test(c)),
+    )];
+    if (codes.length > 0) {
+      // 兜底候选：名称由 confirm 时行情工具补全（可靠）；理由尽力从代码后文提取关键句
+      stocks.push(...codes.map((code) => {
+        const reason = extractReasonFromText(rawText, code) || "（由 Chat 对话代码提取）";
+        return { code, reason };
+      }));
+    }
+  }
+  if (stocks.length === 0) {
+    // 诊断信息：LLM 原始 stocks 内容（定位是 LLM 空输出还是代码格式过滤）
+    const rawStocks = Array.isArray(p.stocks) ? JSON.stringify(p.stocks).slice(0, 200) : "（非数组）";
+    throw new Error(`Chat 对话中未识别到可补充的个股（LLM 原始 stocks：${rawStocks}）`);
+  }
   return { name, description, stocks };
 }
 

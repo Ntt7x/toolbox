@@ -348,6 +348,12 @@ export function register(app: Hono): void {
     // codes 指定 → 只导入勾选的；null → 全部
     const selected = codes ? preview.stocks.filter((s) => codes.includes(s.code)) : preview.stocks;
     if (selected.length === 0) return c.json({ ok: false, message: "未选择任何个股" }, 400);
+    // 补名：无 name 的候选用行情工具解析（A股/港股/ETF 名称，缓存优先）
+    for (const s of selected) {
+      if (!s.name) {
+        try { s.name = await resolveStockName(s.code); } catch { /* 保留 code 展示 */ }
+      }
+    }
     const updated = updateTopic(id, { addStocks: selected });
     if (!updated) return c.json({ ok: false, message: "补充失败" }, 500);
     // 用后即焚
