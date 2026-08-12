@@ -246,9 +246,9 @@ export const api = {
   // 新闻中心（多源配置 + 展示）
   newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
   newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
-  newsItems: (sources?: string[]) =>
-    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string; source: string; sourceName: string }[]; errors: string[]; fromCache: boolean[]; message?: string }>(
-      `/tools/news/items${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}`,
+  newsItems: (sources?: string[], page = 1) =>
+    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string; source: string; sourceName: string }[]; errors: string[]; fromCache: boolean[]; page: number; message?: string }>(
+      `/tools/news/items${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}${sources && sources.length ? "&" : "?"}page=${page}`,
     ),
   // 改进备忘录（TODO list）
   memoList: () => request<MemoListResult>("/tools/memo"),

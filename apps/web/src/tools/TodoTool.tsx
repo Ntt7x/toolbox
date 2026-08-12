@@ -15,6 +15,9 @@ const card: React.CSSProperties = {
   marginBottom: "1rem",
 };
 
+/** 周期标签（memo msq2mrqy：每日/每周/每月） */
+const REPEAT_LABEL: Record<string, string> = { daily: "每日", weekly: "每周", monthly: "每月" };
+
 export default function TodoTool() {
   const [items, setItems] = useState<TodoItem[]>([]);
   const [text, setText] = useState("");
@@ -63,7 +66,24 @@ export default function TodoTool() {
 
   const toggle = async (it: TodoItem) => {
     try {
+      if (it.repeat) {
+        // 周期任务：完成本次 → 自动重置（保持未完成，刷新 updatedAt 记录）
+        const r = await api.todoUpdate(it.id, { done: false });
+        setItems(r.items);
+        setMsg({ kind: "ok", text: `✅ 已记录 ${REPEAT_LABEL[it.repeat]} 任务的本次完成（自动重置）` });
+        return;
+      }
       const r = await api.todoUpdate(it.id, { done: !it.done });
+      setItems(r.items);
+    } catch (e) {
+      setMsg({ kind: "err", text: errMsg(e) });
+    }
+  };
+
+  /** 设置周期 */
+  const setRepeat = async (it: TodoItem, repeat: "daily" | "weekly" | "monthly" | "none") => {
+    try {
+      const r = await api.todoUpdate(it.id, { repeat });
       setItems(r.items);
     } catch (e) {
       setMsg({ kind: "err", text: errMsg(e) });
@@ -190,6 +210,17 @@ export default function TodoTool() {
                       </span>
                     )}
                     <span style={{ fontSize: "0.7rem", color: "#94a3b8", flexShrink: 0 }}>{it.updatedAt.slice(0, 10)}</span>
+                    <select
+                      value={it.repeat ?? "none"}
+                      onChange={(e) => void setRepeat(it, e.target.value as "daily" | "weekly" | "monthly" | "none")}
+                      title="周期（完成后自动重置）"
+                      style={{ flexShrink: 0, fontSize: "0.72rem", padding: "0.15rem 0.3rem", borderRadius: 6, border: "1px solid #e2e8f0", background: it.repeat ? "#eff6ff" : "#fff", color: it.repeat ? "#2563eb" : "#94a3b8", cursor: "pointer" }}
+                    >
+                      <option value="none">无</option>
+                      <option value="daily">每日</option>
+                      <option value="weekly">每周</option>
+                      <option value="monthly">每月</option>
+                    </select>
                     <button
                       onClick={() => setSubOpen((s) => ({ ...s, [it.id]: !s[it.id] }))}
                       title={subs.length > 0 ? `子任务 ${subs.length} 个（点击展开/收起）` : "添加子任务"}

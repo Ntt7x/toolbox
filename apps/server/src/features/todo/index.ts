@@ -37,13 +37,14 @@ export function registerTodoFeature(app: Hono) {
     return c.json({ ok: true, items: addTodo(text, parentId) });
   });
 
-  // 更新（切换完成 / 改文本）
+  // 更新（切换完成 / 改文本 / 改周期）
   app.put(`${API_PREFIX}/tools/todo/:id`, async (c: Context) => {
     const body = (await c.req.json().catch(() => null)) as TodoUpdateRequest | null;
-    const patch: { done?: boolean; text?: string } = {};
+    const patch: { done?: boolean; text?: string; repeat?: "daily" | "weekly" | "monthly" | "none" } = {};
     if (body && typeof body.done === "boolean") patch.done = body.done;
     if (body && typeof body.text === "string" && body.text.trim()) patch.text = body.text.trim();
-    if (!("done" in patch) && !("text" in patch)) return c.json({ ok: false, message: "无有效更新字段" }, 400);
+    if (body && (body.repeat === "daily" || body.repeat === "weekly" || body.repeat === "monthly" || body.repeat === "none")) patch.repeat = body.repeat;
+    if (!("done" in patch) && !("text" in patch) && !("repeat" in patch)) return c.json({ ok: false, message: "无有效更新字段" }, 400);
     const items = updateTodo(c.req.param("id")!, patch);
     if (!items) return c.json({ ok: false, message: "待办不存在" }, 404);
     return c.json({ ok: true, items });

@@ -30,8 +30,8 @@ export interface NewsSourceDef {
   id: string;
   name: string;
   desc: string;
-  /** 拉取实现（须自带超时；返回按时间降序的条目） */
-  fetch: () => Promise<{ title: string; digest: string; time: string; url: string }[]>;
+  /** 拉取实现（须自带超时；返回按时间降序的条目；page 可选，1 起，用于分页获取更多） */
+  fetch: (page?: number) => Promise<{ title: string; digest: string; time: string; url: string }[]>;
   /** 缓存 TTL（默认 10 分钟） */
   ttlMs?: number;
 }
@@ -69,7 +69,7 @@ export function setEnabledSources(ids: string[]): { ok: boolean; message?: strin
 }
 
 /** 拉取指定源新闻（带缓存；单源失败降级旧缓存/记错误，不阻塞其他源） */
-export async function fetchNews(sourceIds?: string[]): Promise<{ ok: boolean; items: NewsItem[]; errors: string[]; fromCache: boolean[] }> {
+export async function fetchNews(sourceIds?: string[], page = 1): Promise<{ ok: boolean; items: NewsItem[]; errors: string[]; fromCache: boolean[] }> {
   const ids = sourceIds && sourceIds.length > 0 ? sourceIds : enabledIds();
   const items: NewsItem[] = [];
   const errors: string[] = [];
@@ -78,7 +78,8 @@ export async function fetchNews(sourceIds?: string[]): Promise<{ ok: boolean; it
     const src = sources.find((s) => s.id === id);
     if (!src) continue;
     const ttl = src.ttlMs ?? DEFAULT_TTL;
-    const cached = kvGet<{ _at?: string; items?: { title: string; digest: string; time: string; url: string }[] }>(`${CACHE_PREFIX}${id}`);
+    // 缓存按源+页码隔离（分页后旧缓存不污染，memo msq32kgv）
+    const cached = kvGet<{ _at?: string; items?: { title: string; digest: string; time: string; url: string }[] }>(`${CACHE_PREFIX}${id}:p${page}`);
     const at = cached?._at ? Date.parse(cached._at) : NaN;
     if (cached?.items && Number.isFinite(at) && Date.now() - at < ttl) {
       items.push(...cached.items.map((i) => ({ ...i, source: src.id, sourceName: src.name })));
@@ -86,8 +87,8 @@ export async function fetchNews(sourceIds?: string[]): Promise<{ ok: boolean; it
       continue;
     }
     try {
-      const list = await src.fetch();
-      kvSet(`${CACHE_PREFIX}${id}`, { _at: new Date().toISOString(), items: list });
+      const list = await src.fetch(page);
+      kvSet(`${CACHE_PREFIX}${id}:p${page}`, { _at: new Date().toISOString(), items: list });
       items.push(...list.map((i) => ({ ...i, source: src.id, sourceName: src.name })));
       fromCache.push(false);
     } catch (e) {
@@ -117,8 +118,8 @@ export const EASTMONEY_SOURCE: NewsSourceDef = {
   id: "eastmoney",
   name: "东方财富 7x24 快讯",
   desc: "东财快讯聚合（A 股/宏观/行业实时消息，JSONP 解析，缓存 10 分钟）",
-  fetch: async () => {
-    const res = await fetch("https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html", {
+  fetch: async (page = 1) => {
+    const res = await fetch(`https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_${page}_.html`, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" },
       signal: AbortSignal.timeout(12_000),
     });
@@ -149,12 +150,13 @@ export function register(app: Hono): void {
     return c.json({ ok: true, sources: listSources() });
   });
 
-  // 拉取新闻（?sources=id1,id2 可选；缺省用启用源）
+  // 拉取新闻（?sources=id1,id2 可选；?page=N 分页，默认 1——分页获取更多，memo msq32kgv）
   route.get("/items", async (c: Context) => {
     const q = c.req.query("sources");
     const ids = q ? q.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
-    const r = await fetchNews(ids);
-    return c.json({ ok: r.ok, items: r.items, errors: r.errors, fromCache: r.fromCache });
+    const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+    const r = await fetchNews(ids, page);
+    return c.json({ ok: r.ok, items: r.items, errors: r.errors, fromCache: r.fromCache, page });
   });
 
   app.route(`${API_PREFIX}/tools/news`, route);

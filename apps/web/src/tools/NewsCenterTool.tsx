@@ -58,6 +58,10 @@ export default function NewsCenterTool() {
   const [errors, setErrors] = useState<string[]>([]);
   const [at, setAt] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState(false);
+  // 分页（memo msq32kgv：加载更多获取更多新闻）
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   // 配置区
   const [sources, setSources] = useState<SourceDef[]>([]);
   const [configMsg, setConfigMsg] = useState<string | null>(null);
@@ -75,12 +79,14 @@ export default function NewsCenterTool() {
   const loadItems = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const r = await api.newsItems();
+      const r = await api.newsItems(undefined, 1);
       if (r.ok) {
         setItems(r.items ?? []);
         setErrors(r.errors ?? []);
         setFromCache(r.fromCache?.every((x) => x) ?? false);
         setAt(new Date().toISOString());
+        setPage(1);
+        setHasMore((r.items ?? []).length >= 40); // 单页满 40 认为可能还有更多
       } else {
         setErrors([r.message ?? "新闻加载失败"]);
       }
@@ -90,6 +96,30 @@ export default function NewsCenterTool() {
       if (!silent) setLoading(false);
     }
   }, []);
+
+  /** 加载更多（分页追加，按 url 去重；memo msq32kgv） */
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const r = await api.newsItems(undefined, next);
+      if (r.ok) {
+        setItems((prev) => {
+          const seen = new Set(prev.map((x) => x.url));
+          const fresh = (r.items ?? []).filter((x) => !seen.has(x.url));
+          return [...prev, ...fresh];
+        });
+        setPage(next);
+        setHasMore((r.items ?? []).length >= 40);
+      } else {
+        setErrors([r.message ?? "加载更多失败"]);
+      }
+    } catch (e) {
+      setErrors([errMsg(e)]);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [page]);
 
   useEffect(() => {
     void loadSources();
@@ -163,6 +193,7 @@ export default function NewsCenterTool() {
           )}
 
           {items.length > 0 && (
+            <>
             <div style={{ marginTop: "0.6rem", display: "flex", flexDirection: "column" }}>
               {items.map((n, i) => {
                 const imp = isImportant(n);
@@ -205,6 +236,17 @@ export default function NewsCenterTool() {
                 );
               })}
             </div>
+            {hasMore && (
+              <button
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
+                style={{ marginTop: "0.7rem", alignSelf: "center", padding: "0.4rem 1.2rem", borderRadius: 8, border: "1px solid #bfdbfe", background: loadingMore ? "#eff6ff" : "#fff", color: "#2563eb", fontSize: "0.82rem", cursor: "pointer" }}
+                type="button"
+              >
+                {loadingMore ? "加载中…" : `⬇ 加载更多（第 ${page + 1} 页）`}
+              </button>
+            )}
+            </>
           )}
           {!loading && items.length === 0 && errors.length === 0 && (
             <div style={{ color: "#94a3b8", fontSize: "0.85rem", marginTop: "0.5rem" }}>暂无新闻（点击「刷新」重试，或到配置区检查新闻源）</div>

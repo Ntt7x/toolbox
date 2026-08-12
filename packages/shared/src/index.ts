@@ -1410,6 +1410,8 @@ export interface TodoItem {
   done: boolean;
   /** 父任务 id（树状依赖；顶层任务缺省） */
   parentId?: string;
+  /** 周期：每日/每周/每月（完成后自动重置，memo msq2mrqy） */
+  repeat?: "daily" | "weekly" | "monthly";
   createdAt: string;
   updatedAt: string;
 }
@@ -1430,10 +1432,12 @@ export interface TodoMutateResult {
   items: TodoItem[];
 }
 
-/** 更新：切换完成状态 / 改文本 */
+/** 更新：切换完成状态 / 改文本 / 改周期 */
 export interface TodoUpdateRequest {
   done?: boolean;
   text?: string;
+  /** 周期（"none" 清除） */
+  repeat?: "daily" | "weekly" | "monthly" | "none";
 }
 
 export interface MemoCreateResult {

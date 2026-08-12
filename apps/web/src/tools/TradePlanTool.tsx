@@ -120,7 +120,8 @@ export default function TradePlanTool() {
   const [allCalOpen, setAllCalOpen] = useState(false);
   const [cfgCollapsed, setCfgCollapsed] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("none");
+  // 排序默认按当前市值降序（memo msq2zrzs；none 恢复存储顺序）
+  const [sortMode, setSortMode] = useState<"none" | "desc" | "asc">("desc");
   const [newStock, setNewStock] = useState<{ code: string; name?: string; maxWeightPct?: number }>({ code: "" });
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
   const [addMsg, setAddMsg] = useState<string | null>(null);

@@ -24,6 +24,7 @@ function normalize(item: Partial<TodoItem>): TodoItem | null {
     text: item.text.trim(),
     done: item.done === true,
     ...(typeof item.parentId === "string" ? { parentId: item.parentId } : {}),
+    ...(item.repeat === "daily" || item.repeat === "weekly" || item.repeat === "monthly" ? { repeat: item.repeat } : {}),
     createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
   };
@@ -58,13 +59,15 @@ export function addTodo(text: string, parentId?: string): TodoItem[] {
   return items;
 }
 
-/** 更新：切换完成 / 改文本；返回 null 表示条目不存在 */
-export function updateTodo(id: string, patch: { done?: boolean; text?: string }): TodoItem[] | null {
+/** 更新：切换完成 / 改文本 / 改周期；返回 null 表示条目不存在 */
+export function updateTodo(id: string, patch: { done?: boolean; text?: string; repeat?: "daily" | "weekly" | "monthly" | "none" }): TodoItem[] | null {
   const items = load();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
   if (typeof patch.done === "boolean") it.done = patch.done;
   if (typeof patch.text === "string" && patch.text.trim()) it.text = patch.text.trim();
+  if (patch.repeat === "none") delete it.repeat;
+  else if (patch.repeat === "daily" || patch.repeat === "weekly" || patch.repeat === "monthly") it.repeat = patch.repeat;
   it.updatedAt = new Date().toISOString();
   save(items);
   return items;
