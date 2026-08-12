@@ -55,6 +55,7 @@
   type WatchlistDetailResult,
   type WatchlistFundamentalResult,
   type WatchlistListResult,
+  type WatchlistStock,
   type WatchlistTopic,
   type WatchlistUpdateRequest,
   type MemoCreateResult,
@@ -172,6 +173,28 @@ export const api = {
   /** Chat 补充：分享链接 → 追加个股到指定专题（后台任务） */
   watchlistAppend: (id: string, url: string) =>
     request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
+  /** Chat 补充预览：解析对话 → 候选个股（不落库，用户确认后导入） */
+  watchlistAppendPreview: (id: string, url: string) =>
+    request<AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }>>(
+      `/tools/watchlist/${encodeURIComponent(id)}/import/preview`,
+      jsonInit("POST", { url }),
+    ),
+  watchlistAppendPreviewStatus: (id: string, taskId: string) =>
+    request<AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }> & { preview?: WatchlistStock[] | null }>(
+      `/tools/watchlist/${encodeURIComponent(id)}/import/preview/task/${encodeURIComponent(taskId)}`,
+    ),
+  /** Chat 补充确认：勾选的候选个股批量加入专题 */
+  watchlistAppendConfirm: (id: string, taskId: string, codes: string[]) =>
+    request<{ ok: boolean; topic?: WatchlistTopic; imported?: number; message?: string }>(
+      `/tools/watchlist/${encodeURIComponent(id)}/import/confirm`,
+      jsonInit("POST", { taskId, codes }),
+    ),
+  /** 移动/复制个股到其他专题（copy=true 保留源专题个股） */
+  watchlistMoveStock: (fromTopicId: string, code: string, toTopicId: string, copy: boolean) =>
+    request<{ ok: boolean; fromTopic?: WatchlistTopic; toTopic?: WatchlistTopic; moved?: boolean; message?: string }>(
+      "/tools/watchlist/move-stock",
+      jsonInit("POST", { fromTopicId, code, toTopicId, copy }),
+    ),
   /** 股票名称搜索（名称 → 代码候选，添加股票输入补全用） */
   watchlistSearchStock: (name: string, limit = 8) =>
     request<{ ok: boolean; items: { code: string; name: string; market: string; type: string }[]; message?: string }>(
@@ -235,7 +258,8 @@ export const api = {
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   // 待办清单（用户日常 todo）
   todoList: () => request<TodoListResult>("/tools/todo"),
-  todoAdd: (text: string) => request<TodoMutateResult>("/tools/todo", jsonInit("POST", { text })),
+  todoAdd: (text: string, parentId?: string) =>
+    request<TodoMutateResult>("/tools/todo", jsonInit("POST", parentId ? { text, parentId } : { text })),
   todoUpdate: (id: string, patch: TodoUpdateRequest) =>
     request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   todoDelete: (id: string) => request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),

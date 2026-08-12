@@ -30,10 +30,11 @@ export function registerTodoFeature(app: Hono) {
 
   // 新增
   app.post(`${API_PREFIX}/tools/todo`, async (c: Context) => {
-    const body = (await c.req.json().catch(() => null)) as { text?: unknown } | null;
+    const body = (await c.req.json().catch(() => null)) as { text?: unknown; parentId?: unknown } | null;
     const text = typeof body?.text === "string" ? body.text.trim() : "";
     if (!text) return c.json({ ok: false, message: "请输入待办内容" }, 400);
-    return c.json({ ok: true, items: addTodo(text) });
+    const parentId = typeof body?.parentId === "string" ? body.parentId : undefined;
+    return c.json({ ok: true, items: addTodo(text, parentId) });
   });
 
   // 更新（切换完成 / 改文本）

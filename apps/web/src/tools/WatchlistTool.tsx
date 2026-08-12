@@ -115,6 +115,11 @@ export default function WatchlistTool() {
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // 移动/复制个股弹窗（目标专题 + 模式）
+  const [moveStock, setMoveStock] = useState<{ code: string; name?: string } | null>(null);
+  const [moveTo, setMoveTo] = useState("");
+  const [moveCopy, setMoveCopy] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   // 新建专题
   const [newName, setNewName] = useState("");
@@ -133,6 +138,10 @@ export default function WatchlistTool() {
   const [appendUrl, setAppendUrl] = useState("");
   const [appending, setAppending] = useState(false);
   const [showAppend, setShowAppend] = useState(false);
+  // Chat 补充预览-确认（memo msozzpcl：先展示候选，用户确认后才导入）
+  const [appendPreview, setAppendPreview] = useState<{ taskId: string; stocks: WatchlistStock[] } | null>(null);
+  const [previewSelected, setPreviewSelected] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
   // 列表项描述悬浮卡片
   const [hoverInfo, setHoverInfo] = useState<string | null>(null);
   // 详情页描述：展开 / 编辑
@@ -488,6 +497,29 @@ export default function WatchlistTool() {
     }
   };
 
+  /** 移动/复制个股到其他专题（memo msozy0on） */
+  const doMoveStock = async () => {
+    if (!topic || !moveStock || !moveTo) return;
+    setMoving(true);
+    setErr(null);
+    try {
+      const r = await api.watchlistMoveStock(topic.id, moveStock.code, moveTo, moveCopy);
+      if (!r.ok || !r.toTopic) throw new Error(r.message || "移动/复制失败");
+      setMoveStock(null);
+      setMoveTo("");
+      setMoveCopy(false);
+      // 若移动后源专题为空或目标专题即当前 → 刷新当前
+      await refreshList();
+      if (moveCopy) setTopic(r.toTopic);
+      else setTopic(r.fromTopic ?? r.toTopic);
+      setInfo(moveCopy ? `已复制 ${moveStock.name || moveStock.code} 到目标专题` : `已移动 ${moveStock.name || moveStock.code} 到目标专题`);
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setMoving(false);
+    }
+  };
+
   /** 拖拽重排：stocks 顺序 = 优先级（乐观更新 + 失败回滚） */
   const reorderStock = async (from: number, to: number) => {
     if (!topic || from === to) return;
@@ -529,34 +561,71 @@ export default function WatchlistTool() {
     setAppending(true);
     setErr(null);
     try {
-      const t = await api.watchlistAppend(topic.id, url);
+      // 预览阶段：解析对话 → 候选个股（不导入，等用户确认）
+      const t = await api.watchlistAppendPreview(topic.id, url);
       if (!t.ok) {
-        setErr(t.message || "补充失败");
+        setErr(t.message || "解析失败");
         return;
       }
       if (t.taskId) {
+        let fail = 0;
         for (let i = 0; i < 120; i++) {
           await new Promise((r) => setTimeout(r, 3000));
-          const st = await api.watchlistImportTaskStatus(t.taskId).catch(() => null);
-          if (st?.ok && st.status === "done" && st.result) {
-            setAppendUrl("");
-            setShowAppend(false);
-            setTopic(st.result);
-            setSelectedId(st.result.id);
-            await refreshList();
+          const st = await api.watchlistAppendPreviewStatus(topic.id, t.taskId).catch((e) => ({ err: errMsg(e) }));
+          if (st && "err" in st) {
+            // 连续 5 次失败才放弃（临时网络抖动容忍），避免卡死
+            if (++fail >= 5) { setErr(st.err); return; }
+            continue;
+          }
+          fail = 0;
+          if (st?.ok && st.status === "done") {
+            if (!st.preview || st.preview.length === 0) {
+              setErr("Chat 对话中未识别到可补充的个股");
+              return;
+            }
+            setAppendPreview({ taskId: t.taskId, stocks: st.preview });
+            setPreviewSelected(new Set(st.preview.map((s) => s.code)));
             return;
           }
           if (st?.ok && (st.status === "error" || st.status === "cancelled")) {
-            setErr(st.message || "补充失败");
+            setErr(st.message || "解析失败");
             return;
           }
         }
-        setErr("补充超时，请稍后重试");
+        setErr("解析超时，请稍后重试");
       }
     } catch (e) {
       setErr(errMsg(e));
     } finally {
       setAppending(false);
+    }
+  };
+
+  /** 确认导入勾选的候选个股（memo msozzpcl） */
+  const confirmAppend = async () => {
+    if (!topic || !appendPreview) return;
+    const codes = [...previewSelected];
+    if (codes.length === 0) {
+      setErr("请至少勾选一个个股");
+      return;
+    }
+    setConfirming(true);
+    setErr(null);
+    try {
+      const r = await api.watchlistAppendConfirm(topic.id, appendPreview.taskId, codes);
+      if (!r.ok || !r.topic) throw new Error(r.message || "导入失败");
+      setAppendUrl("");
+      setShowAppend(false);
+      setAppendPreview(null);
+      setPreviewSelected(new Set());
+      setTopic(r.topic);
+      setSelectedId(r.topic.id);
+      setInfo(`已导入 ${r.imported ?? codes.length} 只个股`);
+      await refreshList();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setConfirming(false);
     }
   };
 
@@ -905,8 +974,43 @@ export default function WatchlistTool() {
                     📋
                   </button>
                   <button style={{ ...btn, background: "#7c3aed", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => void appendChat()} disabled={appending} type="button">
-                    {appending ? "🔄 补充中…" : "补充"}
+                    {appending ? "🔄 解析中…" : "解析候选"}
                   </button>
+                </div>
+              )}
+
+              {/* Chat 补充候选预览：确认后才导入（memo msozzpcl） */}
+              {appendPreview && (
+                <div style={{ marginBottom: "0.8rem", padding: "0.6rem 0.8rem", background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
+                  <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#166534", marginBottom: "0.4rem" }}>
+                    📋 解析到 {appendPreview.stocks.length} 只候选个股，勾选后确认导入：
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.6rem" }}>
+                    {appendPreview.stocks.map((s) => (
+                      <label key={s.code} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.25rem 0.6rem", background: "#fff", border: "1px solid #bbf7d0", borderRadius: 6, fontSize: "0.82rem", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={previewSelected.has(s.code)}
+                          onChange={() => {
+                            const n = new Set(previewSelected);
+                            if (n.has(s.code)) n.delete(s.code);
+                            else n.add(s.code);
+                            setPreviewSelected(n);
+                          }}
+                        />
+                        <span style={{ color: "#1e293b" }}>{s.name || s.code}</span>
+                        <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{s.code}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button style={{ ...btn, background: "#16a34a", padding: "0.35rem 1rem", fontSize: "0.82rem" }} onClick={() => void confirmAppend()} disabled={confirming || previewSelected.size === 0} type="button">
+                      {confirming ? "导入中…" : `确认导入（${previewSelected.size}）`}
+                    </button>
+                    <button style={{ ...btn, background: "#e2e8f0", color: "#475569", padding: "0.35rem 0.9rem", fontSize: "0.82rem" }} onClick={() => { setAppendPreview(null); setPreviewSelected(new Set()); }} type="button">
+                      取消
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1295,6 +1399,14 @@ export default function WatchlistTool() {
                       </td>
                       <td style={thTd}>
                         <button style={btnGhost} onClick={() => void removeStock(s.code)} type="button">移除</button>
+                        <button
+                          style={{ ...btnGhost, color: "#2563eb", borderColor: "#bfdbfe", marginLeft: 4 }}
+                          onClick={() => { setMoveStock({ code: s.code, name: s.name }); setMoveTo(""); setMoveCopy(false); }}
+                          type="button"
+                          title="移动/复制到其他专题"
+                        >
+                          ⇄
+                        </button>
                       </td>
                     </tr>
                     );
@@ -1317,6 +1429,52 @@ export default function WatchlistTool() {
           )}
         </div>
       </div>
+
+      {/* 移动/复制个股弹窗 */}
+      {moveStock && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={() => setMoveStock(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: "1.2rem 1.4rem", width: 360, boxShadow: "0 10px 40px rgba(0,0,0,0.2)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 700, marginBottom: "0.6rem", fontSize: "0.95rem" }}>
+              {moveCopy ? "复制" : "移动"} <span style={{ color: "#2563eb" }}>{moveStock.name || moveStock.code}</span>
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.7rem", fontSize: "0.82rem" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
+                <input type="radio" checked={!moveCopy} onChange={() => setMoveCopy(false)} /> 移动到
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
+                <input type="radio" checked={moveCopy} onChange={() => setMoveCopy(true)} /> 复制到
+              </label>
+            </div>
+            <select
+              value={moveTo}
+              onChange={(e) => setMoveTo(e.target.value)}
+              style={{ width: "100%", padding: "0.5rem 0.6rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.88rem", marginBottom: "0.9rem" }}
+            >
+              <option value="">选择目标专题…</option>
+              {(topics ?? []).filter((t) => t.id !== topic?.id).map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+              <button style={{ ...btn, background: "#e2e8f0", color: "#475569" }} onClick={() => setMoveStock(null)} type="button">取消</button>
+              <button
+                style={{ ...btn, opacity: !moveTo || moving ? 0.6 : 1 }}
+                disabled={!moveTo || moving}
+                onClick={() => void doMoveStock()}
+                type="button"
+              >
+                {moving ? "处理中…" : "确认"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

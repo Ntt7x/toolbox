@@ -23,6 +23,7 @@ function normalize(item: Partial<TodoItem>): TodoItem | null {
     id: item.id,
     text: item.text.trim(),
     done: item.done === true,
+    ...(typeof item.parentId === "string" ? { parentId: item.parentId } : {}),
     createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
   };
@@ -44,12 +45,14 @@ export function listTodos(): TodoItem[] {
   return items.sort((a, b) => Number(b.done) - Number(a.done) || b.createdAt.localeCompare(a.createdAt));
 }
 
-export function addTodo(text: string): TodoItem[] {
+export function addTodo(text: string, parentId?: string): TodoItem[] {
   const trimmed = text.trim();
   if (!trimmed) return load();
   const items = load();
+  // 父任务必须存在（树状依赖；防悬空引用）
+  if (parentId && !items.some((x) => x.id === parentId)) parentId = undefined;
   const now = new Date().toISOString();
-  items.push({ id: genId(), text: trimmed, done: false, createdAt: now, updatedAt: now });
+  items.push({ id: genId(), text: trimmed, done: false, ...(parentId ? { parentId } : {}), createdAt: now, updatedAt: now });
   if (items.length > MAX_ITEMS) items.splice(0, items.length - MAX_ITEMS);
   save(items);
   return items;
@@ -67,14 +70,21 @@ export function updateTodo(id: string, patch: { done?: boolean; text?: string })
   return items;
 }
 
-/** 删除；返回 null 表示条目不存在 */
+/** 删除（树状依赖：删除父任务时级联删除其全部子孙任务）；返回 null 表示条目不存在 */
 export function deleteTodo(id: string): TodoItem[] | null {
   const items = load();
   const idx = items.findIndex((x) => x.id === id);
   if (idx < 0) return null;
-  items.splice(idx, 1);
-  save(items);
-  return items;
+  // 级联：收集 id 的全部子孙（BFS）
+  const rm = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const it of items) if (!rm.has(it.id) && it.parentId && rm.has(it.parentId)) { rm.add(it.id); grew = true; }
+  }
+  const kept = items.filter((x) => !rm.has(x.id));
+  save(kept);
+  return kept;
 }
 
 /** 清空已完成 */

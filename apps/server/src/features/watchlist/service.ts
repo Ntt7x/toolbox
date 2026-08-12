@@ -151,7 +151,8 @@ function normalizeImportedStock(s: unknown): WatchlistStock | null {
  * topicId 提供时：**追加**到现有专题（Chat 补充个股，已有代码去重更新），否则新建。
  * 返回专题；失败抛错。
  */
-export async function importFromChat(shareUrl: string, signal?: AbortSignal, topicId?: string): Promise<WatchlistTopic> {
+/** 解析 Chat 分享链接 → 候选专题信息（不落库；供预览-确认流程，memo msozzpcl） */
+export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal): Promise<{ name: string; description?: string; stocks: WatchlistStock[] }> {
   const extracted = await extractShare(shareUrl);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
     throw new Error(!extracted.ok && "message" in extracted ? extracted.message : "对话提取为空，请检查链接");
@@ -176,6 +177,11 @@ export async function importFromChat(shareUrl: string, signal?: AbortSignal, top
   const stocks = (Array.isArray(p.stocks) ? p.stocks : [])
     .map(normalizeImportedStock)
     .filter((s): s is WatchlistStock => !!s);
+  return { name, description, stocks };
+}
+
+export async function importFromChat(shareUrl: string, signal?: AbortSignal, topicId?: string): Promise<WatchlistTopic> {
+  const { name, description, stocks } = await parseImportFromChat(shareUrl, signal);
 
   // 追加模式：合并进现有专题（addStocks 按 code 去重更新），专题名/介绍不变
   if (topicId) {

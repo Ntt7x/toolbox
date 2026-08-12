@@ -18,10 +18,10 @@ import {
   type WatchlistUpdateRequest,
 } from "@toolbox/shared";
 import { createTask, getTask } from "../../core/tasks.js";
-import { kvGet, kvSet } from "../../core/kvStore.js";
+import { kvDelete, kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
-import { fundamentalAnalysis, importFromChat, optimizeReason, resolveStockName, extendPrompt } from "./service.js";
+import { fundamentalAnalysis, importFromChat, optimizeReason, parseImportFromChat, resolveStockName, extendPrompt } from "./service.js";
 import { getQuoteSnapshots } from "../../core/quote.js";
 import { getFundSnapshots } from "../../core/fund.js";
 import type { WatchlistSummary } from "@toolbox/shared";
@@ -221,6 +221,28 @@ export function register(app: Hono): void {
     return c.json(getTask<WatchlistTopic>(taskId), 202);
   });
 
+  // 移动/复制个股到其他专题（静态路由须在 /:id 之前注册）
+  app.post(`${API_PREFIX}/tools/watchlist/move-stock`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { fromTopicId?: unknown; code?: unknown; toTopicId?: unknown; copy?: unknown } | null;
+    const fromId = typeof raw?.fromTopicId === "string" ? raw.fromTopicId : "";
+    const toId = typeof raw?.toTopicId === "string" ? raw.toTopicId : "";
+    const code = typeof raw?.code === "string" ? raw.code.trim() : "";
+    const copy = raw?.copy === true;
+    if (!fromId || !toId || !code) return c.json({ ok: false, message: "缺少参数（fromTopicId/code/toTopicId）" }, 400);
+    const from = getTopic(fromId);
+    const to = getTopic(toId);
+    if (!from || !to) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const stock = from.stocks.find((s) => s.code === code);
+    if (!stock) return c.json({ ok: false, message: "个股不在源专题中" }, 404);
+    if (fromId === toId) return c.json({ ok: false, message: "目标专题与源专题相同" }, 400);
+    // 目标专题添加（同 code 覆盖更新）
+    const updatedTo = updateTopic(toId, { addStocks: [stock] });
+    if (!updatedTo) return c.json({ ok: false, message: "添加失败" }, 500);
+    // 移动：源专题移除；复制：保留
+    if (!copy) updateTopic(fromId, { removeCodes: [code] });
+    return c.json({ ok: true, fromTopic: getTopic(fromId), toTopic: updatedTo, moved: !copy });
+  });
+
   // 生成延续思路/扩展思考提示词（专题信息 → LLM；返回可粘贴 DeepSeek Chat 的提示词）
   // 按专题缓存（TTL 2 年）；force=1 刷新（绕过缓存重新生成）
   app.post(`${API_PREFIX}/tools/watchlist/:id/extend-prompt`, async (c) => {
@@ -279,6 +301,58 @@ export function register(app: Hono): void {
     const task: AsyncTaskResult<WatchlistTopic> | null = getTask<WatchlistTopic>(c.req.param("taskId"));
     if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
     return c.json(task, 200);
+  });
+
+  // Chat 补充预览：解析对话 → 候选个股（不落库；用户确认后才导入，memo msozzpcl）
+  app.post(`${API_PREFIX}/tools/watchlist/:id/import/preview`, async (c) => {
+    const id = c.req.param("id");
+    if (!getTopic(id)) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const raw = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+    const url = typeof raw?.url === "string" ? raw.url.trim() : "";
+    if (!url) return c.json({ ok: false, message: "缺少 Chat 分享链接" }, 400);
+    if (!/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url)) {
+      return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
+    }
+    // 后台任务：解析（LLM 耗时）→ 结果存 KV 供确认接口读取
+    const { taskId } = createTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(
+      async (signal) => {
+        const parsed = await parseImportFromChat(url, signal);
+        if (parsed.stocks.length === 0) throw new Error("Chat 对话中未识别到可补充的个股");
+        kvSet(`watchlist:importPreview:${taskId}`, { ...parsed, _at: Date.now() });
+        return parsed;
+      },
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+    return c.json(getTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(taskId), 202);
+  });
+
+  // Chat 补充预览任务状态
+  app.get(`${API_PREFIX}/tools/watchlist/:id/import/preview/task/:taskId`, (c) => {
+    const task = getTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(c.req.param("taskId"));
+    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
+    // 附加候选（预览结果）
+    const preview = kvGet<{ name: string; description?: string; stocks?: WatchlistStock[] }>(`watchlist:importPreview:${c.req.param("taskId")}`);
+    return c.json({ ...task, preview: preview?.stocks ?? null }, 200);
+  });
+
+  // Chat 补充确认：读取预览候选 → 批量加入专题（memo msozzpcl）
+  app.post(`${API_PREFIX}/tools/watchlist/:id/import/confirm`, async (c) => {
+    const id = c.req.param("id");
+    if (!getTopic(id)) return c.json({ ok: false, message: "专题不存在" }, 404);
+    const raw = (await c.req.json().catch(() => null)) as { taskId?: unknown; codes?: unknown } | null;
+    const taskId = typeof raw?.taskId === "string" ? raw.taskId : "";
+    const codes = Array.isArray(raw?.codes) ? raw.codes.filter((x): x is string => typeof x === "string") : null;
+    if (!taskId) return c.json({ ok: false, message: "缺少预览任务 id" }, 400);
+    const preview = kvGet<{ name?: string; description?: string; stocks?: WatchlistStock[] }>(`watchlist:importPreview:${taskId}`);
+    if (!preview?.stocks?.length) return c.json({ ok: false, message: "预览结果不存在或已过期，请重新解析" }, 404);
+    // codes 指定 → 只导入勾选的；null → 全部
+    const selected = codes ? preview.stocks.filter((s) => codes.includes(s.code)) : preview.stocks;
+    if (selected.length === 0) return c.json({ ok: false, message: "未选择任何个股" }, 400);
+    const updated = updateTopic(id, { addStocks: selected });
+    if (!updated) return c.json({ ok: false, message: "补充失败" }, 500);
+    // 用后即焚
+    kvDelete(`watchlist:importPreview:${taskId}`);
+    return c.json({ ok: true, topic: updated, imported: selected.length });
   });
 
   // 专题详情

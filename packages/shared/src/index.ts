@@ -1408,6 +1408,8 @@ export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
+  /** 父任务 id（树状依赖；顶层任务缺省） */
+  parentId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1419,6 +1421,8 @@ export interface TodoListResult {
 
 export interface TodoCreateRequest {
   text: string;
+  /** 父任务 id（树状依赖：在此 todo 下添加子任务） */
+  parentId?: string;
 }
 
 export interface TodoMutateResult {
