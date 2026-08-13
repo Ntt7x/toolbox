@@ -1403,41 +1403,57 @@ export interface MemoCreateRequest {
   kind?: MemoKind;
 }
 
-/** 待办清单条目（用户日常个人 todo；区别于开发者驱动的改进备忘录 memo） */
-export interface TodoItem {
+/** 待办清单条目（用户日常 todo；区别于开发者驱动的改进备忘录 memo） */
+export interface TodoItemV3 {
   id: string;
   text: string;
   done: boolean;
-  /** 父任务 id（树状依赖；顶层任务缺省） */
+  /** 父任务 id（分解树：单父天然无环；父完成 = 全部子完成；删父级联删子孙） */
   parentId?: string;
-  /** 周期：每日/每周/每月（完成记录 lastDoneAt，跨期自动视为待做，memo msq2mrqy） */
+  /** 前置依赖任务 id 列表（无环 DAG；全部完成 → 本任务才可执行；可跨树依赖） */
+  dependencies: string[];
+  /** 周期：每日/每周/每月（完成记录 lastDoneAt，跨期自动视为待做） */
   repeat?: "daily" | "weekly" | "monthly";
-  /** 上次完成时间（周期项；过期后 listTodos 视为 done=false） */
+  /** 上次完成时间（周期项；跨期后视为 done=false） */
   lastDoneAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface TodoListResult {
-  ok: true;
-  items: TodoItem[];
+/** 列表视图：附反应式计算字段（resolver 服务实时计算） */
+export interface TodoItemV3View extends TodoItemV3 {
+  /** 依赖未全部完成 → 阻塞（不可勾选完成；服务端权威校验 400 拒绝） */
+  blocked: boolean;
+  /** 未完成的前置依赖 id 列表 */
+  blockedBy: string[];
+  /** 直接子任务 id（分解树渲染用） */
+  children: string[];
+  /** 子孙完成率（有子任务时；父任务进度展示） */
+  progress?: { done: number; total: number };
 }
 
-export interface TodoCreateRequest {
+export interface TodoV3ListResult {
+  ok: true;
+  items: TodoItemV3View[];
+}
+
+export interface TodoV3CreateRequest {
   text: string;
-  /** 父任务 id（树状依赖：在此 todo 下添加子任务） */
-  parentId?: string;
+  dependencies?: string[];
+  repeat?: "daily" | "weekly" | "monthly";
 }
 
-export interface TodoMutateResult {
+export interface TodoV3MutateResult {
   ok: true;
-  items: TodoItem[];
+  items: TodoItemV3View[];
 }
 
-/** 更新：切换完成状态 / 改文本 / 改周期 */
-export interface TodoUpdateRequest {
+/** 更新：切换完成 / 改文本 / 改依赖 / 改周期 / 改父任务 */
+export interface TodoV3UpdateRequest {
   done?: boolean;
   text?: string;
+  dependencies?: string[];
+  parentId?: string | "none";
   /** 周期（"none" 清除） */
   repeat?: "daily" | "weekly" | "monthly" | "none";
 }

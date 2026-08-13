@@ -64,9 +64,9 @@
   type MemoDetailResult,
   type MemoListResult,
   type MemoUpdateRequest,
-  type TodoListResult,
-  type TodoMutateResult,
-  type TodoUpdateRequest,
+  type TodoV3ListResult,
+  type TodoV3MutateResult,
+  type TodoV3UpdateRequest,
   type BookConfig,
   type BookFavoritesResult,
   type BookHistoryResult,
@@ -256,14 +256,14 @@ export const api = {
   memoUpdate: (id: string, patch: MemoUpdateRequest) =>
     request<MemoDetailResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   memoDelete: (id: string) => request<MemoDeleteResult>(`/tools/memo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
-  // 待办清单（用户日常 todo）
-  todoList: () => request<TodoListResult>("/tools/todo"),
-  todoAdd: (text: string, parentId?: string) =>
-    request<TodoMutateResult>("/tools/todo", jsonInit("POST", parentId ? { text, parentId } : { text })),
-  todoUpdate: (id: string, patch: TodoUpdateRequest) =>
-    request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
-  todoDelete: (id: string) => request<TodoMutateResult>(`/tools/todo/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
-  todoClearDone: () => request<TodoMutateResult>("/tools/todo/clear-done", jsonInit("POST", {})),
+  // 待办清单 v3（Cordis 框架：Service 服务化 + DAG 依赖 + 周期调度）
+  todoV3List: () => request<TodoV3ListResult>("/tools/todo-v3"),
+  todoV3Add: (text: string, dependencies?: string[], repeat?: "daily" | "weekly" | "monthly", parentId?: string) =>
+    request<TodoV3MutateResult>("/tools/todo-v3", jsonInit("POST", repeat || parentId ? { text, dependencies, repeat, parentId } : { text, dependencies })),
+  todoV3Update: (id: string, patch: TodoV3UpdateRequest) =>
+    request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  todoV3Delete: (id: string) => request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  todoV3ClearDone: () => request<TodoV3MutateResult>("/tools/todo-v3/clear-done", jsonInit("POST", {})),
   // 书籍下载（zlib）
   booksSearch: (q: string, page = 1, limit = 20) =>
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),

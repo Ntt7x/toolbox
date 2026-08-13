@@ -533,6 +533,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **专业领域文档**：外部数据源（知乎爬虫 / 知识库中心 / A-H 行情多源 / DeepSeek 分享提取 / 东财快讯）经验**见 `docs/for_agent/domains/data-sources.md`**——涉足外部数据源时按需加载。
 - 测试资源：分享 id `u5myqtvktzo5gal4qi`；测试行情 `600519` / `hk00700`。
 
+### 7.6 Cordis 框架（@deepseek-ai/cordis）
+
+- **专业领域文档**：Cordis 框架实践（Service 类 / declare module / 异步 plugin 集成 Hono / 踩坑 / 数据安全）**见 `docs/for_agent/domains/cordis.md`**——涉足 Cordis 或新框架集成时按需加载。
+- **todo 演进**：v1（树状 parentId）→ v2（自研 Cordis 风格 DAG）→ v3（真 Cordis 框架 + 分解树 × 依赖正交合并）——最终统一为 v3（`features/todoV3/`，数据 `todoV3:items`）；v1/v2 已清理。
+- **数据安全铁律（2026-08-14 事故）**：单测操作真实 KV **禁止 finally 清空**（曾清掉用户全部待办）——必须 beforeEach 备份 / afterEach 恢复（见 domains/cordis.md §5）。
+
 ## 8. 历史进度记录（必须遵守）
 
 `docs/for_agent/history/` 目录记录**每个时间点 + Agent 对话的修改总结**，供后续 Agent 获取历史进度。
