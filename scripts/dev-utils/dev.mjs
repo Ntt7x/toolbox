@@ -23,12 +23,29 @@ const STOP_FLAG = path.join(root, ".file", "dev.stop");
 const PORTS = [8787, 5173];
 const serverCwd = path.join(root, "apps", "server");
 const webCwd = path.join(root, "apps", "web");
-const tsxCli = path.join(root, "node_modules", ".pnpm", "tsx@4.23.5", "node_modules", "tsx", "dist", "cli.mjs");
+// tsx CLI 路径动态查找（pnpm 升级 tsx 版本后写死路径会失效；取最新 tsx@ 目录）
+const tsxCli = (() => {
+  const pnpmDir = path.join(root, "node_modules", ".pnpm");
+  try {
+    const dirs = fs.readdirSync(pnpmDir).filter((d) => d.startsWith("tsx@"));
+    if (dirs.length) {
+      dirs.sort().reverse(); // 版本号字符串排序近似最新
+      const p = path.join(pnpmDir, dirs[0], "node_modules", "tsx", "dist", "cli.mjs");
+      if (fs.existsSync(p)) return p;
+    }
+  } catch { /* ignore */ }
+  return path.join(pnpmDir, "tsx@4.23.5", "node_modules", "tsx", "dist", "cli.mjs");
+})();
 const viteCli = path.join(webCwd, "node_modules", "vite", "bin", "vite.js");
 const LOG_DIR = path.join(root, ".file", "dev-logs");
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
-function log(...a) { console.log("[dev]", ...a); }
+function log(...a) {
+  const msg = `[dev] ${a.join(" ")}`;
+  console.log(msg);
+  // supervisor 后台运行时 stdout 被丢弃，同步追加到 supervisor.log 便于排查重启原因
+  try { fs.appendFileSync(path.join(LOG_DIR, "supervisor.log"), msg + "\n"); } catch { /* ignore */ }
+}
 
 function pidOnPort(port) {
   const r = spawnSync("netstat", ["-ano"], { encoding: "utf8" });
@@ -63,15 +80,49 @@ function cleanupPorts() { for (const p of PORTS) killPort(p); }
 
 // ---------- 服务进程管理（supervisor 状态） ----------
 const svc = {
-  server: { child: null, spawnAt: 0, restarts: 0 },
-  web: { child: null, spawnAt: 0, restarts: 0 },
+  server: { child: null, spawnAt: 0, restarts: 0, idleCount: 0, logFd: null },
+  web: { child: null, spawnAt: 0, restarts: 0, idleCount: 0, logFd: null },
 };
+
+/** 端口空闲连续 N 次（≈N×5s）才判定服务异常——tsx watch 改文件重编译时端口短暂空闲是正常现象，
+ *  单次空闲直接重启是历史「进程反复重启」的根因（2026-08-14 修复） */
+const IDLE_THRESHOLD = 3;
+
+/** 以独立进程启动 supervisor（脱离调用者进程树）。
+ *  2026-08-14 二次根治：Windows 下 spawn(detached) 仍被 taskkill /T 按父进程链级联杀
+ *  （bash 工具超时杀 start 进程树时 supervisor 陪葬 → 服务反复"重启"）。
+ *  改用 Start-Process：powershell 立即退出，supervisor 父链断开，工具杀不到它。 */
+function spawnSupervisor() {
+  const supScript = fileURLToPath(import.meta.url);
+  // 注意：不能加 -RedirectStandardOutput/Error——Start-Process 重定向会让 powershell
+  // 挂起等待子进程句柄关闭（工具超时杀父链，supervisor 陪葬）。无重定向则 powershell 立即退出。
+  const ps = [
+    "-NoProfile", "-Command",
+    // -ArgumentList 必须用逗号分隔的独立参数（PowerShell 拆成数组）；传 JSON 字符串会被
+    // node 当单个参数导致 supervise 分支不匹配、supervisor 立即退出（2026-08-14 修复）
+    `Start-Process -FilePath ${JSON.stringify(NODE)} -ArgumentList '${supScript}','supervise' -WindowStyle Hidden`,
+  ];
+  spawnSync("powershell", ps, { stdio: "ignore", encoding: "utf8" });
+  log("supervisor 独立进程启动（Start-Process，脱离父进程树），服务日志 .file/dev-logs/{server,web}.log");
+  // 就绪等待：start/restart 前台命令等两个端口起来（最多 20s），避免用户 start 后
+  // 服务还在编译就以为脚本坏了；未就绪时 supervisor 仍会持续拉起
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (pidOnPort(8787) && pidOnPort(5173)) {
+      log("✅ server(8787) + web(5173) 已就绪");
+      return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+  }
+  log("⚠️ 20s 内未完全就绪——supervisor 会持续拉起，用 `node scripts/dev-utils/proc.mjs status` 查看");
+}
 
 function startServer() {
   const s = svc.server;
   s.spawnAt = Date.now();
-  const logFd = fs.openSync(path.join(LOG_DIR, "server.log"), "a");
-  const child = spawn(NODE, [tsxCli, "watch", "src/index.ts"], { cwd: serverCwd, stdio: ["ignore", logFd, logFd] });
+  if (s.logFd) { try { fs.closeSync(s.logFd); } catch { /* ignore */ } } // 防 fd 泄漏（重启多次累积）
+  s.logFd = fs.openSync(path.join(LOG_DIR, "server.log"), "a");
+  const child = spawn(NODE, [tsxCli, "watch", "src/index.ts"], { cwd: serverCwd, stdio: ["ignore", s.logFd, s.logFd] });
   s.child = child;
   child.on("exit", (code) => { s.child = null; log(`server 进程退出 (code=${code})`); });
   log(`server 启动 (PID ${child.pid})`);
@@ -80,8 +131,9 @@ function startServer() {
 function startWeb() {
   const s = svc.web;
   s.spawnAt = Date.now();
-  const logFd = fs.openSync(path.join(LOG_DIR, "web.log"), "a");
-  const child = spawn(NODE, [viteCli], { cwd: webCwd, stdio: ["ignore", logFd, logFd] });
+  if (s.logFd) { try { fs.closeSync(s.logFd); } catch { /* ignore */ } } // 防 fd 泄漏
+  s.logFd = fs.openSync(path.join(LOG_DIR, "web.log"), "a");
+  const child = spawn(NODE, [viteCli], { cwd: webCwd, stdio: ["ignore", s.logFd, s.logFd] });
   s.child = child;
   child.on("exit", (code) => { s.child = null; log(`web 进程退出 (code=${code})`); });
   log(`web 启动 (PID ${child.pid})`);
@@ -89,7 +141,22 @@ function startWeb() {
 
 function stopped() { return fs.existsSync(STOP_FLAG); }
 
-/** 健康检查：进程死了（且端口空闲）→ 自动拉起；带 spawn 宽限期防竞态 */
+/** 重启单个服务（进程退出立即；端口连续空闲 IDLE_THRESHOLD 次判卡死；带重启次数上限） */
+function restartService(name, port, s, reason) {
+  if (s.restarts >= 12) {
+    log(`${name} 重启次数超限（12 次），停止自动拉起——请检查日志 .file/dev-logs/${name}.log`);
+    return;
+  }
+  s.restarts += 1;
+  log(`检测到 ${name} 异常（${reason}），自动重启（第 ${s.restarts} 次）`);
+  if (s.child && !s.child.killed) { killPidTree(s.child.pid); s.child = null; }
+  // 只清当前服务端口——不能 cleanupPorts()（重启 web 会误杀 server 的 tsx 子进程，
+  // server 退出后反过来又杀 web → 互相踩踏无限重启，2026-08-14 修复）
+  killPort(port);
+  name === "server" ? startServer() : startWeb();
+}
+
+/** 健康检查：进程退出 → 立即重启；进程活着但端口连续空闲 → 判卡死重启；带 spawn 宽限期防竞态 */
 function healthCheck() {
   if (stopped()) {
     // 显式停止：supervisor 退出（无子进程后 event loop 空，进程自然结束）
@@ -99,17 +166,19 @@ function healthCheck() {
   const now = Date.now();
   for (const [name, port] of [["server", 8787], ["web", 5173]]) {
     const s = svc[name];
-    const portFree = !pidOnPort(port);
-    if (now - s.spawnAt < 15_000) continue; // 宽限期：刚拉起还没就绪
+    if (now - s.spawnAt < 15_000) { s.idleCount = 0; continue; } // 宽限期：刚拉起还没就绪，空闲计数归零
     const processDead = !s.child || s.child.killed;
-    // ① 进程死了 → 重启；② 进程活着但端口空闲（服务子进程挂/卡死）→ 杀旧进程重启
-    if (processDead || (s.child && portFree)) {
-      if (s.restarts < 8) {
-        s.restarts += 1;
-        if (!processDead) { log(`检测到 ${name} 端口 ${port} 空闲（进程存活但服务异常），重启`); killPidTree(s.child.pid); s.child = null; }
-        else log(`检测到 ${name} 进程已退出，自动重启（第 ${s.restarts} 次）`);
-        name === "server" ? startServer() : startWeb();
+    if (processDead) {
+      restartService(name, port, s, "进程已退出");
+    } else if (!pidOnPort(port)) {
+      // 端口空闲：先累计，连续多次才判服务异常（tsx watch 重编译窗口会短暂空闲）
+      s.idleCount += 1;
+      if (s.idleCount >= IDLE_THRESHOLD) {
+        s.idleCount = 0;
+        restartService(name, port, s, `端口 ${port} 连续空闲 ${IDLE_THRESHOLD} 次（服务卡死/编译挂起）`);
       }
+    } else {
+      s.idleCount = 0; // 端口正常 → 重置空闲计数
     }
   }
 }
@@ -157,14 +226,30 @@ function killOldSupervisor() {
   }
 }
 
+/** 清残留 supervisor 记录（旧 supervisor 已退出但 STATE_FILE 未清理时，2026-08-14） */
+function cleanupSupervisorRecord() {
+  const old = readSupervisorPid();
+  if (old && old !== process.pid && !isAlivePid(old)) {
+    try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
+    log(`清理残留 supervisor 记录 (PID ${old})`);
+  }
+}
+
 const cmd = process.argv[2] ?? "start";
 const argPort = process.argv[3];
 
 switch (cmd) {
   case "start":
+    // 2026-08-14 根治：supervisor 以 detached 后台进程运行（脱离调用者进程组/生命周期），
+    // 调用方（终端/工具进程）退出或被超时杀死都不再连带杀掉 tsx/vite 服务
     try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
     killOldSupervisor();
+    cleanupSupervisorRecord();
     cleanupPorts();
+    spawnSupervisor();
+    break;
+  case "supervise":
+    // 内部命令：detached supervisor 本体（start 时 spawn 此命令）
     startServer();
     startWeb();
     writeSupervisorPid();
@@ -179,13 +264,10 @@ switch (cmd) {
   case "restart":
     killOldSupervisor(); // 先杀旧 supervisor（STATE_FILE 此时仍记录旧 PID）
     stopAll();
+    cleanupSupervisorRecord();
     try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
     cleanupPorts();
-    startServer();
-    startWeb();
-    writeSupervisorPid();
-    setInterval(healthCheck, 5000);
-    log("supervisor 运行中（每 5s 健康检查）");
+    spawnSupervisor();
     break;
   case "status":
     status();
