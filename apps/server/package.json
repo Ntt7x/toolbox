@@ -11,6 +11,7 @@
     "test:integration": "tsx --test --test-concurrency=1 \"test-integration/*.integration.test.ts\""
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
     "@hono/node-server": "^1",
     "@toolbox/shared": "workspace:*",
     "hono": "^4",

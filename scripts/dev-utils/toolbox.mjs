@@ -26,7 +26,7 @@ const TOOLS = [
   { cmd: "check", script: "check-change.mjs", group: "验证", desc: "改动健康检查（文件数/行数/触及分层 → 建议验证级别）", example: "toolbox check [--base main]" },
   { cmd: "probe", script: "browser-probe.mjs", group: "验证", desc: "浏览器探针（launch 系统 Chrome + 选择器状态检查）", example: "toolbox probe <url> --check 'textarea:主输入框'" },
   // ---- 数据 ----
-  { cmd: "kv", script: "kv.mjs", group: "数据", desc: "KV/DB 只读检查（前缀过滤/统计/取值；查测试数据残留）", example: "toolbox kv count|list|get <key>" },
+  { cmd: "kv", script: "kv.mjs", group: "数据", desc: "KV/DB 检查与备份（list/count/get/backup/restore）", example: "toolbox kv count|list|get <key>" },
   { cmd: "memo", script: "memo.mjs", group: "数据", desc: "改进备忘录 CLI（每轮「处理备忘录」必用）", example: "toolbox memo list|stats|bypage <关键词>|done <id>...|add <text>" },
   // ---- 提交 ----
   { cmd: "commit", script: "commit.mjs", group: "提交", desc: "git 提交包装（消息引号安全，自动 add+commit+push）", example: "toolbox commit 'feat(x): 说明'" },

@@ -34,7 +34,7 @@ import * as knowledgeHubFeature from "./features/knowledgeHub/index.js";
 import * as newsCenterFeature from "./features/newsCenter/index.js";
 import * as tradePlanFeature from "./features/tradePlan/index.js";
 import * as browserChatFeature from "./features/browserChat/index.js";
-import * as todoFeature from "./features/todo/index.js";
+import * as todoV3Feature from "./features/todoV3/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -64,7 +64,7 @@ const tools: ToolMeta[] = [
   knowledgeHubFeature.meta,
   newsCenterFeature.meta,
   tradePlanFeature.meta,
-  todoFeature.meta,
+  todoV3Feature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -96,8 +96,8 @@ zhihuCrawlerFeature.register(app);
 browserChatFeature.register(app);
 tradePlanFeature.register(app);
 knowledgeHubFeature.register(app);
-// 待办清单（用户日常 todo）
-todoFeature.registerTodoFeature(app);
+// 待办清单 v3（Cordis 框架：Service 服务化 + DAG 依赖 + 周期调度）
+todoV3Feature.registerTodoV3Feature(app);
 // 新闻中心：注册东财源 + 路由
 newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);
 newsCenterFeature.register(app);
