@@ -44,7 +44,7 @@ const PAGES = [
   { path: "/settings/llm", expect: "用量" },
   { path: "/settings/local-data", expect: "数据源" },
   { path: "/settings/memo", expect: "改进备忘录" },
-  { path: "/settings/arch-graph", expect: "架构图" },
+  { path: "/settings/arch-graph", expect: "项目架构依赖图" },
   { path: "/settings/agent-sessions", expect: "会话" },
 ];
 const NOT_FOUND_TEXT = "页面不存在";

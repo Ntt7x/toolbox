@@ -59,13 +59,20 @@ const MENU_GROUPS: MenuGroup[] = [
     staticItems: [
       { name: "LLM 用量", path: "/settings/llm", icon: "🤖" },
       { name: "LLM 会话", path: "/settings/agent-sessions", icon: "💬" },
-      { name: "本地数据", path: "/settings/local-data", icon: "🗄️" },
-      { name: "架构图", path: "/settings/arch-graph", icon: "🗺️" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-plan"] },
-  { label: "工具", toolIds: ["todo", "news-center", "deepseek-share", "zhihu-crawler", "books", "knowledge-hub"] },
+  { label: "工具", toolIds: ["todo", "news-center", "deepseek-share", "zhihu-crawler"] },
+  {
+    // 默认收起的不常用分组（memo msqb197d）：架构图/本地数据/知识库中心/书籍下载
+    label: "不常用",
+    staticItems: [
+      { name: "架构图", path: "/settings/arch-graph", icon: "🗺️" },
+      { name: "本地数据", path: "/settings/local-data", icon: "🗄️" },
+    ],
+    toolIds: ["knowledge-hub", "books"],
+  },
 ];
 
 /** 菜单顺序服务端设置 key（本地设置数据：settings:menu.order） */
@@ -141,12 +148,13 @@ export default function App() {
   const [editing, setEditing] = useState(false);
   const [draftOrder, setDraftOrder] = useState<Record<string, string[]> | null>(null);
   const [dragState, setDragState] = useState<{ group: string; from: number } | null>(null);
-  // 分组折叠（UI 偏好，localStorage）
+  // 分组折叠（UI 偏好，localStorage）；「不常用」分组默认收起（用户展开后记忆）
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try {
-      return JSON.parse(localStorage.getItem(COLLAPSE_STORAGE_KEY) ?? "{}") as Record<string, boolean>;
+      const parsed = JSON.parse(localStorage.getItem(COLLAPSE_STORAGE_KEY) ?? "{}") as Record<string, boolean>;
+      return { ...parsed, "不常用": parsed["不常用"] ?? true };
     } catch {
-      return {};
+      return { "不常用": true };
     }
   });
 
