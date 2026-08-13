@@ -66,15 +66,12 @@ export default function TodoTool() {
 
   const toggle = async (it: TodoItem) => {
     try {
-      if (it.repeat) {
-        // 周期任务：完成本次 → 自动重置（保持未完成，刷新 updatedAt 记录）
-        const r = await api.todoUpdate(it.id, { done: false });
-        setItems(r.items);
-        setMsg({ kind: "ok", text: `✅ 已记录 ${REPEAT_LABEL[it.repeat]} 任务的本次完成（自动重置）` });
-        return;
-      }
+      // 周期项：勾选 = 完成本期（done=true + 记录 lastDoneAt；跨期后服务端自动视为待做）
       const r = await api.todoUpdate(it.id, { done: !it.done });
       setItems(r.items);
+      if (it.repeat && !it.done) {
+        setMsg({ kind: "ok", text: `✅ 已完成本期（${REPEAT_LABEL[it.repeat]}）` });
+      }
     } catch (e) {
       setMsg({ kind: "err", text: errMsg(e) });
     }
@@ -210,6 +207,11 @@ export default function TodoTool() {
                       </span>
                     )}
                     <span style={{ fontSize: "0.7rem", color: "#94a3b8", flexShrink: 0 }}>{it.updatedAt.slice(0, 10)}</span>
+                    {it.repeat && it.done && it.lastDoneAt && (
+                      <span style={{ flexShrink: 0, fontSize: "0.68rem", color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 999, padding: "0.08rem 0.5rem" }}>
+                        ✓ 本期已完成（{it.lastDoneAt.slice(5, 10)}）
+                      </span>
+                    )}
                     <select
                       value={it.repeat ?? "none"}
                       onChange={(e) => void setRepeat(it, e.target.value as "daily" | "weekly" | "monthly" | "none")}

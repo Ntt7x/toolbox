@@ -1410,8 +1410,10 @@ export interface TodoItem {
   done: boolean;
   /** 父任务 id（树状依赖；顶层任务缺省） */
   parentId?: string;
-  /** 周期：每日/每周/每月（完成后自动重置，memo msq2mrqy） */
+  /** 周期：每日/每周/每月（完成记录 lastDoneAt，跨期自动视为待做，memo msq2mrqy） */
   repeat?: "daily" | "weekly" | "monthly";
+  /** 上次完成时间（周期项；过期后 listTodos 视为 done=false） */
+  lastDoneAt?: string;
   createdAt: string;
   updatedAt: string;
 }
