@@ -1,28 +1,34 @@
 # Toolbox 开发指南（Agent 经验沉淀）
 
 > 本文件由实际开发会话沉淀而来，是后续所有 agent 对话的**强制开发规范**。
-> 由项目根 `AGENTS.md` 自动加载（常驻指令）。新会话请先通读全文再动手。
+> 由项目根 `AGENTS.md` 自动加载（常驻指令）。
+>
+> **📖 导读**：先读 `docs/for_agent/README.md`（文档地图）再动手；本文件按需加载——
+> - **必读**：§0 开工清单、§1 架构、§3 环境、§4 git、§5 验证清单、§6 核心原则
+> - **按需**：§7 领域索引（涉足对应领域时）、§8 历史/备忘录（新会话查进度时）
+> - **命令速查**：`docs/for_agent/commands.md`（toolbox 统一入口）
 
 ## 0. 开工清单（每个新会话必走）
 
-1. **加载规范**：本文件已由 AGENTS.md 强制加载；涉足专业领域（Reasonix / 行情 / 知乎 / 知识库 / trade-plan / 浏览器自动化）时按 §7 索引**按需加载**对应 domains 文档。
+1. **加载规范**：读 `docs/for_agent/README.md`（文档地图）定位本次任务涉及的文档；本文件（dev.md）§0-§6 为常驻核心规范；涉足专业领域（Reasonix / 行情 / 知乎 / 知识库 / trade-plan / 浏览器自动化）时按 §7 索引**按需加载**对应 domains 文档。
 2. **查状态**：`git status` / `git branch -a`——当前分支 + 是否有待验收分支（§4）。
-3. **读历史**：读最近一份 `docs/for_agent/history/` 归档，了解已完成/遗留（§8）。
-4. **读备忘录**：`node scripts/dev-utils/memo.mjs list`——处理 open 改进备忘录（§8.0）。
+3. **读历史**：先看 `docs/for_agent/history/INDEX.md`（主题索引）或最近一份归档，了解已完成/遗留（§8）。
+4. **读备忘录**：`toolbox memo stats` + `list`——处理 open 改进备忘录（§8.0）。
 5. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
-6. **验证→报告→等确认后提交**：L0 typecheck → 按 §5.1 分级验证 → **报告给用户（不自动提交）** → 用户确认分支处理正确后 → `commit.mjs "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
+6. **验证→报告→等确认后提交**：L0 typecheck → 按 §5.1 分级验证 → **报告给用户（不自动提交）** → 用户确认分支处理正确后 → `toolbox commit "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
 
-**常用命令（高频，脚本细节见 §6.8 / scripts/README.md）**：
+**常用命令（统一入口 `node scripts/dev-utils/toolbox.mjs <cmd>`，底层脚本可直调；完整速查见 `docs/for_agent/commands.md` + scripts/README.md）**：
 | 用途 | 命令 |
 |---|---|
-| 类型检查 | `pnpm typecheck` |
-| 模块/全量单测 | `node scripts/dev-utils/test.mjs <模块>` / 空=全量 |
-| 重启 dev 环境 | `node scripts/dev-utils/dev.mjs restart` |
-| 提交+推送 | `node scripts/dev-utils/commit.mjs "feat(x): ..."` |
-| 备忘录 | `node scripts/dev-utils/memo.mjs list / done <id>` |
-| 页面定向/全量冒烟 | `node scripts/dev-utils/smoke-pages.mjs --page /tools/x` / 无参全量 |
-| API 断言 | `node scripts/dev-utils/api-cli.mjs GET /health` |
-| 查数据残留 | `node scripts/dev-utils/kv.mjs list/count <前缀>` |
+| 类型检查（L0） | `toolbox typecheck`（全仓）/ `toolbox typecheck --app server|web` |
+| 模块/全量单测 | `toolbox test <模块>` / 空=全量 |
+| 重启 dev 环境 | `toolbox dev restart` |
+| 提交+推送 | `toolbox commit "feat(x): ..."` |
+| 备忘录 | `toolbox memo list / stats / done <id>` |
+| 页面定向/全量冒烟 | `toolbox smoke --page /tools/x` / 无参全量 |
+| API 断言 | `toolbox api GET /health` |
+| 查数据残留 | `toolbox kv list/count <前缀>` |
+| 改动健康检查 | `toolbox check`（提交前） |
 
 ---
 
@@ -95,6 +101,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - 子进程日志在 `.file/dev-logs/{server,web}.log`（排查服务崩溃看这里）；
 - 排查步骤：`node scripts/dev-utils/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
 - 后台运行 start（bash 工具内按 cmd 语法，终端手动可换 PowerShell）：`set "PATH=D:\Softwares\nodejs;%PATH%" && cd /d D:\Agent\toolbox && node scripts/dev-utils/dev.mjs start`
+- **detached 常驻（2026-08-14 起）**：`dev start` 立即返回，supervisor 以独立进程组后台常驻（脱离调用者生命周期——调用方退出/被超时杀死不再连带杀掉 tsx/vite）；状态用 `dev status`，停止用 `dev stop`（杀 supervisor 树 + 清端口）
+- **tsx watch 端口竞态（2026-08-14 根治）**：源码变更时 tsx 重启子进程，旧子进程端口未释放会 EADDRINUSE 崩溃——server 入口已加监听自动重试（1.5s×10 次自愈）；supervisor 重启前也会强清端口；若仍异常查看 `.file/dev-logs/server.log`
 
 
 ## 4. git 规范
@@ -329,6 +337,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **LLM JSON 容错解析在 core/jsonParse.ts**（robustJsonParse/fixJsonQuotes/extractOuterJson），
   所有 LLM 结构化输出业务（cbRate / treasuryFx）共用——新业务直接 import，不要复制
 - **DeepSeek 联网搜索（Responses API + web_search）耗时 8~10 分钟是常态**（多步搜索），
+- **搜索任务超时对齐（2026-08-14 教训）**：联网搜索类后台任务超时须 ≥10 分钟（cbRate/treasuryFx/reverseRepo 已统一）；core/llm 内部硬超时（chatSearch 600s）不得短于任务超时，否则任务被 llm 层提前 abort
   后台任务超时需留足（≥10 分钟）；前端「停止分析」可随时中断；长超时在此环境
   （Node 24 + tsx watch）偶发不触发（任务最终 done/TTL 清理兜底），属已知现象
 - **提示词统一存储于「本地设置数据」**（`settings:prompt.*`，经 `core/prompts.ts` 注册表）：
@@ -408,6 +417,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   llm.test）归属；`GET /api/llm/usage` 聚合（总数+按模块+按天）、`GET /api/llm/balance`
   查询 DeepSeek 平台余额（/user/balance，API key 即授权）；LLM 设置页展示；
   platform.deepseek.com/usage 网页明细需登录无法程序化抓取，用本地记录为主
+- **缓存 key 设计（2026-08-14 教训）**：①「截至今天」类进行时数据（本月以来/今年以来）必须把查询日纳入 key（跨天自动失效），不能只按月/年（treasuryFx 按日 v2 先例 → cbRate v4 跟进）；②内容会变化的缓存（如按专题生成的提示词）把内容版本（updatedAt/哈希）纳入 key，否则增删后仍命中旧缓存；③LLM 输出数组根要用 robustJsonParse 的数组提取（对象/数组按首次括号类型分流），否则被降级为第一个元素对象静默 0 条
 - **数据删除红线（2026-08-06 教训）**：**删除/清空任何用户可见数据必须先征得用户同意**——
   即便为"整理/迁移"目的也不得擅自 DELETE KV（历史违规：重构用量切面时直接清空
   `llmUsage:log`，页面"用量管理"变空；旧数据本可兼容展示（mode/scene 有推断兜底））。
@@ -435,12 +445,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **SSE error 事件必须区分传输错误与服务端 error 帧**：传输层错误 `ev.data` 为空串，
   应交给 onerror 降级轮询；只有带 JSON data 的 error 帧才算"任务不存在"。两者混在一起会
   导致网络抖动时误清状态、降级轮询永不生效
+- **任务身份校验（2026-08-14 教训）**：轮询/SSE 的迟到响应必须校验 `tid === taskIdRef.current`（ref 同步赋值，勿依赖 useEffect 延迟），否则旧任务 A 的迟到结果会覆盖新任务 B 的状态、杀掉 B 的监听；含轮询 in-flight 请求（stop 只清定时器不取消 fetch）
 - **终态防重复**：settledRef 标记——error 帧/迟到轮询结果不得重复处理（防止 onerror 与
   error 帧双路径互相覆盖）
 
 ### 6.7 前后端分工与校验原则（2026-08-08，策略仓位管理教训）
 
 **核心原则：所有业务规则校验一律在服务端做「权威校验」，前端只做「体验性校验」。** 前端校验可被绕过（直接调 API），绝不能当作安全/正确性边界。
+
+**破坏性操作语义（2026-08-14 教训）**：删除/清空类接口必须严格区分「无参数 = 全部」与「非法参数」（books DELETE /favorites 曾因 `Number('abc')` 为 NaN 触发清空全部收藏 → 改为仅不传 id 才清空、非法 id 400）；跨源读删须校验 key 归属（localData 单条 GET/DELETE 曾漏校验）。
+
+**会话/长任务并发（2026-08-14 教训）**：读-await-写 的共享状态操作（chatSession/reasonixAsk 追加历史）必须按 key 加内存串行队列（同 knowledgeSession enqueue 模式），否则并发 ask 静默丢一轮数据。
 
 **分工清单（新功能照此对照）**：
 - **业务规则校验（服务端权威，400 拒绝 + 中文 message）**：
@@ -456,7 +471,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 ### 6.8 开发辅助脚本规范（scripts/dev-utils/，2026-08-08）
 
-**单源化**：脚本的**目录树 / 13 个工具用法 / 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**（导航/查表见 README §2 用途列）。README 缺失/过期时优先补 README（§8.1 同步义务）。
+**单源化**：脚本的**目录树 / 全部工具用法（统一入口 `toolbox.mjs`）/ 历史归档 / 进化流程唯一见 `scripts/README.md`**；dev.md 这里只放**强制规则**（导航/查表见 README §2 用途列）。README 缺失/过期时优先补 README（§8.1 同步义务）。新增脚本必须三同步（toolbox.mjs TOOLS 表 + scripts/README §2 + commands.md）。
 
 **强制规则（行为约束，与 README §3 互补）**：
 1. 所有辅助脚本一律放 scripts/dev-utils/，**禁止仓库根目录散放 tmp_*.mjs**（反复踩坑：残留混入 commit、cmd 引号截断、CRLF 不匹配）
@@ -564,6 +579,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 1. **维护性文件清单**：
    - `docs/for_agent/dev.md`——常驻开发规范（架构/流程/强制规则/决策），后续 Agent 的主依据；
+   - `docs/for_agent/README.md`——文档地图（分层索引 + 新会话开工清单，新文档先在此登记）；
+   - `docs/for_agent/commands.md`——命令速查（与 toolbox list / scripts/README §2 三处同步）；
+   - `docs/for_agent/history/INDEX.md`——历史归档索引（新增 history 后同步「最新进展/主题索引」）；
    - `docs/for_agent/domains/*.md`——专业领域经验（reasonix / features / data-sources），**按需加载**：涉足对应领域时阅读并更新；
    - `docs/for_agent/history/*.md`——时间线记录（会话总结，只增不改）；
    - 根目录 `AGENTS.md`——强制加载入口（若 dev.md 目录结构/引用路径变化需同步）。

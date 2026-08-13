@@ -55,7 +55,8 @@ export function listSources(): { id: string; name: string; desc: string; enabled
 
 function enabledIds(): string[] {
   const raw = getSetting<string[]>(CONFIG_KEY);
-  if (!Array.isArray(raw)) return sources.map((s) => s.id);
+  if (!Array.isArray(raw)) return sources.map((s) => s.id); // 未配置 = 全部源
+  if (raw.length === 0) return []; // 2026-08-14：显式空列表 = 关闭全部源（此前被静默当「全部」）
   const valid = raw.filter((id) => sources.some((s) => s.id === id));
   return valid.length > 0 ? valid : sources.map((s) => s.id);
 }

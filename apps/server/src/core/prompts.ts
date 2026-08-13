@@ -646,7 +646,8 @@ const byId = new Map(PROMPTS.map((p) => [p.id, p]));
 export function getPromptTemplate(id: string): string {
   const def = byId.get(id);
   if (!def) throw new Error(`未知提示词 id: ${id}`);
-  const saved = getSetting<string>(def.key);
+  const raw = getSetting<unknown>(def.key);
+  const saved = typeof raw === "string" ? raw : null; // 2026-08：非字符串设置值（本地数据页误编辑）防 TypeError
   if (saved !== null && saved.trim() !== "") return saved;
   setSetting(def.key, def.defaultTemplate);
   return def.defaultTemplate;

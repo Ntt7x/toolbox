@@ -63,6 +63,14 @@ export function registerLlmRoutes(app: Hono): void {
     if (!raw || !Array.isArray(raw.messages) || raw.messages.length === 0) {
       return c.json({ ok: false, message: "messages 不能为空" }, 400);
     }
+    // 2026-08-14：消息结构权威校验（§6.7）——role 枚举 + content 字符串 + temperature 有限数值
+    const badMsg = raw.messages.find(
+      (m) => !m || typeof m !== "object" || !["system", "user", "assistant"].includes(String((m as LlmChatMessage).role)) || typeof (m as LlmChatMessage).content !== "string",
+    );
+    if (badMsg) return c.json({ ok: false, message: "每条消息必须含 role(system/user/assistant) 与字符串 content" }, 400);
+    if (raw.temperature !== undefined && (typeof raw.temperature !== "number" || !Number.isFinite(raw.temperature))) {
+      return c.json({ ok: false, message: "temperature 必须为有限数值" }, 400);
+    }
     const result = await chat(raw.messages as LlmChatMessage[], {
       model: raw.model,
       temperature: raw.temperature,

@@ -108,7 +108,22 @@ export { app };
 const port = Number(process.env.PORT ?? 8787);
 // 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
 if (process.env.TOOLBOX_TEST !== "1") {
-  serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`toolbox server: http://localhost:${info.port}${API_PREFIX}/health`);
-  });
+  // 端口监听韧性（2026-08-14）：tsx watch 在源码变更重启时，旧子进程端口未释放会导致新进程 EADDRINUSE 崩溃——
+  // 监听失败自动等待重试自愈（dev.mjs supervisor 无法感知 tsx 内部子进程竞态，由 server 自身兜底）
+  const MAX_LISTEN_RETRY = 10;
+  const listenWithRetry = (attempt: number): void => {
+    const srv = serve({ fetch: app.fetch, port }, (info) => {
+      console.log(`toolbox server: http://localhost:${info.port}${API_PREFIX}/health`);
+    });
+    srv.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "EADDRINUSE" && attempt < MAX_LISTEN_RETRY) {
+        console.warn(`[listen] 端口 ${port} 被占用，1.5s 后重试（${attempt + 1}/${MAX_LISTEN_RETRY}）`);
+        setTimeout(() => listenWithRetry(attempt + 1), 1500);
+      } else {
+        console.error(`[listen] 监听 ${port} 失败：`, e.message);
+        process.exit(1);
+      }
+    });
+  };
+  listenWithRetry(0);
 }

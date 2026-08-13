@@ -504,6 +504,7 @@ export function generateGridPlan(
   const ratio = (U - M) / (M - L);
   const asymmetric = ratio < 0.7 || ratio > 1.3;
   const sigmaD = sigmaM / SQRT21;
+  // 2026-08-14 注：SQRT21≈4.58，sigmaD = sigmaM/4.58 恒小于 sigmaM，此分支为防御性死代码
   if (sigmaD >= sigmaM) {
     return { ok: false, error: "volatility", message: "波动率计算异常" };
   }

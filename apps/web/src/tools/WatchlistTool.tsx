@@ -525,7 +525,7 @@ export default function WatchlistTool() {
     if (!topic || from === to) return;
     const stocks = topic.stocks.slice();
     const [moved] = stocks.splice(from, 1);
-    stocks.splice(to, 0, moved);
+    stocks.splice(from < to ? to - 1 : to, 0, moved); // 2026-08-14：向下拖时移除后索引左移，目标位修正
     const prev = topic;
     setTopic({ ...topic, stocks });
     try {

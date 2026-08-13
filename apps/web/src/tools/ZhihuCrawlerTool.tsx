@@ -204,7 +204,14 @@ export default function ZhihuCrawlerTool() {
       }
     }
     const req: ZhihuCrawlRequest = { target: target.trim(), types, limit, ...(from ? { dateFrom: from } : {}), ...(to ? { dateTo: to } : {}) };
-    const t = await api.zhihuCrawl(req);
+    // 2026-08-14：请求失败（未配置 cookie 等 400）给出可见错误，不再静默无反应
+    let t: Awaited<ReturnType<typeof api.zhihuCrawl>>;
+    try {
+      t = await api.zhihuCrawl(req);
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : String(e));
+      return;
+    }
     task.watch(t.taskId, t as never);
     setSelected(new Set());
     setImportMsg("");
@@ -230,10 +237,7 @@ export default function ZhihuCrawlerTool() {
       setImportMsg("请选择目标知识库");
       return;
     }
-    if (selected.size === 0) {
-      setImportMsg("请勾选要导入的条目（不勾选则导入全部）");
-      return;
-    }
+    // 2026-08-14：与契约一致——不勾选 = 导入全部（此前文案误导且拦截空选择）
     try {
       const r = await api.zhihuImport({ resultId, instance, indexes: [...selected].sort((a, b) => a - b) });
       if (r.ok) {

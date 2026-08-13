@@ -132,9 +132,13 @@ test("cbRateCacheKey: 参数归一化（banks 排序、search 区分）", () => 
   const c = cbRateCacheKey({ period: "month", banks: ["boj", "fed"], search: false });
   assert.notEqual(a, c, "search 开关必须区分缓存");
   const d = cbRateCacheKey({ period: "month" });
-  // v3：无显式月份时按当前月纳入 key（本月以来跨月自动失效）
-  assert.match(d, /^cbRate:v3:month:\d{4}-\d{2}::nocal:search/);
-  // schema 版本隔离：v2 旧缓存 key 不再命中
-  const old = cbRateCacheKey({ period: "month" }).replace(":v3:", ":v2:");
+  // v4：无显式月份时按查询日纳入 key（本月以来=截至今天的进行时数据，按日自动失效；2026-08 修复）
+  assert.match(d, /^cbRate:v4:month:\d{4}-\d{2}-\d{2}::nocal:search/);
+  // period=year + month：不同月份不得碰撞同一 key（2026-08 修复）
+  const y1 = cbRateCacheKey({ period: "year", month: "2026-03", banks: ["fed"] });
+  const y2 = cbRateCacheKey({ period: "year", month: "2026-06", banks: ["fed"] });
+  assert.notEqual(y1, y2, "year 期携带 month 时 month 必须参与 key");
+  // schema 版本隔离：v3 旧缓存 key 不再命中
+  const old = cbRateCacheKey({ period: "month" }).replace(":v4:", ":v3:");
   assert.notEqual(old, d, "版本号必须参与缓存 key");
 });

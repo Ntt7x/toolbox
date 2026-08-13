@@ -47,6 +47,7 @@ export function listDataSources(): LocalDataSource[] {
   const registeredKvPrefixes = [...kvPrefixes];
   let unmarkedCount = 0;
   if (registeredKvPrefixes.length > 0) {
+    // 2026-08-14 注：20 万 key 扫描上限对个人工具足够；超限时未标记计数偏低（可后续改 SQL 聚合）
     for (const r of kvListRaw("", 200000)) {
       if (!registeredKvPrefixes.some((p) => r.key.startsWith(p))) unmarkedCount++;
     }

@@ -242,7 +242,7 @@ export default function App() {
       const arr = [...(prev[groupLabel] ?? [])];
       if (from === to || from < 0 || from >= arr.length || to < 0 || to > arr.length) return prev;
       const [moved] = arr.splice(from, 1);
-      arr.splice(to, 0, moved);
+      arr.splice(from < to ? to - 1 : to, 0, moved); // 2026-08-14：向下拖时移除后索引左移，目标位修正
       return { ...prev, [groupLabel]: arr };
     });
     setDragState(null);

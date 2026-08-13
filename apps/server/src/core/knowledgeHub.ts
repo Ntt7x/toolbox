@@ -9,7 +9,7 @@
 // ============================================================
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
-import { kbAsk, kbImportFromChat, matchDomain, clearInstance, kbList, kbGet, kbSet } from "./knowledge.js";
+import { kbAsk, kbImportFromChat, matchDomain, clearInstance, kbList, kbGet, kbSet, kbDelete } from "./knowledge.js";
 import { chat } from "./llm.js";
 import { robustJsonParse } from "./jsonParse.js";
 import { MEDICAL_KB_ASK, MEDICAL_KB_EXTRACT } from "./prompts.js";
@@ -276,9 +276,9 @@ export function migrateInstance(source: string, target: string): { ok: boolean; 
       continue;
     }
     kbSet(newKey, e.value, e.source);
+    kbDelete(e.key); // 迁移成功才删源条目（2026-08 修复：全 skip 时不得清空源，避免数据丢失）
     migrated++;
   }
-  if (migrated > 0 || skipped > 0) clearInstance(source);
   return { ok: true, migrated, skipped };
 }
 

@@ -1,23 +1,33 @@
-# Toolbox — Agent 常驻指令
+# Toolbox — Agent 常驻指令（启动仪表盘）
 
-本文件是 Reasonix 自动加载的常驻指令（`AGENTS.md`），对所有新 agent 会话生效。
-**任何任务开始前必须完整加载并遵守下面导入的开发指南。**
+> 本文件自动加载，对所有新 agent 会话生效。**第 1 步先读文档地图**，再按任务类型按需加载（规范层必读、领域层按需、历史层检索）。
 
-## 强制规则
+## 第 1 步：读文档地图
 
-0. 开发前先完整加载本项目开发规范与经验沉淀：
-@docs/for_agent/dev.md
-1. 遵循分层架构：`features → core` 单向依赖，公共能力进 `core/`，业务编排进 `features/`
-2. 契约驱动：先改 `packages/shared` 类型，再实现 server 与 web
-3. 验证底线：改动后必须跑 `pnpm typecheck` + 相关 API curl 回归
-4. git 提交规范见 dev.md §4；环境注意（node 路径 / shell 分号陷阱）见 dev.md §3
+@docs/for_agent/README.md   ← 文档分层 + 新会话 5 步开工清单 + 按任务类型该读什么
 
-## 项目速览
+## 新会话 5 步开工清单
 
-- pnpm workspace：`apps/web`（Vite+React）、`apps/server`（Hono）、`packages/shared`（契约层）
-- 服务端分层：`core/`（llm 能力 / 行情 / 分享提取）、`features/`（gridPlan / cbRate / deepseekShareTool）
-- 前端：侧边栏分组菜单（设置 / 交易 / 小工具），工具页注册于 `toolPages` + `MENU_GROUPS`
-- 详细架构、数据源、验证清单 → `docs/for_agent/dev.md`
+1. 读本仪表盘 + 文档地图（上面）
+2. `git status` / `git branch -a` —— 当前分支 + 待验收分支
+3. `docs/for_agent/history/INDEX.md` 或最近一篇 history —— 了解已完成/遗留
+4. `node scripts/dev-utils/toolbox.mjs memo stats` + `list` —— 处理 open 改进项
+5. 需要改动一律 `git switch -c <type>/<简述>` 建分支（禁止 main 直改）
+
+## 铁律速查（详细规范以 dev.md 为准）
+
+- **分层**：`features → core` 单向依赖；公共能力进 `core/`，业务编排进 `features/`
+- **契约驱动**：先改 `packages/shared` 类型，再实现 server 与 web
+- **验证底线**（按影响面分级）：L0 `toolbox typecheck` → L1 `toolbox test` → L2 `toolbox api` + `toolbox smoke --page` → L3 全量 `toolbox smoke`
+- **git**：改前建分支；分支内不自动提交，用户确认后才提交+推送（dev.md §4）
+- **成本**：LLM 调用只由用户操作触发；system 固定、动态内容进 user（dev.md §6）
+- **数据**：运行时数据一律进本地数据管理（KV/表）并注册数据源，禁止代码硬编码（dev.md §6.5）
+
+## 工具入口
+
+- 统一脚本入口：`node scripts/dev-utils/toolbox.mjs list`（枚举）/ `help <cmd>` / `<cmd> ...`（执行）
+- 命令速查：`docs/for_agent/commands.md`；脚本全表与规范：`scripts/README.md`
+- 环境注意：node 在 `D:\Softwares\nodejs`（不在 PATH）；bash 工具按 cmd 语法（无 `;`、无 PowerShell 语法），见 dev.md §3
 
 ## 沙盒约定
 

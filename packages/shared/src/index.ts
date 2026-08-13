@@ -371,7 +371,7 @@ export interface GridPlanHistoryEntry {
     /** 网格档数（styles 行数） */
     rows: number;
     maxAmount?: number;
-    /** 均衡档单档买入金额（styles[first].amount.buyAmount） */
+    /** 均衡档（bal）单档买入金额（styles.bal.amount.buyAmount） */
     perBuy?: number;
     code?: string;
     name?: string;
@@ -931,7 +931,7 @@ export interface TreasuryFxRequest {
   days?: number;
   /** 启用联网搜索获取实时汇率/国债数据（默认 true；false 回退模型知识） */
   search?: boolean;
-  /** 启用缓存（默认 true；命中直接返回，TTL 24h） */
+  /** 启用缓存（默认 true；命中直接返回，TTL 2 年，见 cbRate 同款语义） */
   useCache?: boolean;
 }
 

@@ -13,7 +13,7 @@ const STATIC_PATHS: Record<string, string> = {
   "/settings/local-data": "本地数据管理",
   "/settings/memo": "改进备忘录",
   "/settings/agent-sessions": "Agent 会话",
-  "/admin/deps": "架构图",
+  "/settings/arch-graph": "架构图", // 2026-08 修复：原 /admin/deps 为失效路由
 };
 
 export default function GlobalFloating() {

@@ -66,7 +66,7 @@ export function addFavorite(item: BookItem): { added: boolean; count: number } {
   const next = items.filter((e) => e.id !== item.id);
   next.unshift({ ...item, ts: new Date().toISOString() });
   writeFavorites(next.slice(0, FAV_MAX));
-  return { added: !existed, count: next.length };
+  return { added: !existed, count: Math.min(next.length, FAV_MAX) }; // 2026-08-14：count 与实际存储一致
 }
 
 /** 取消收藏（按 book id）；返回是否移除 */

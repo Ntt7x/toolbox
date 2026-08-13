@@ -42,7 +42,9 @@ export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 /** 缓存 key：参数归一化（banks 排序）后的查询组合。v2 = 防幻觉/数据模式/缺失提示等 schema 升级（旧缓存自动失效） */
 /** 用户可读任务名称：{查询月份} · 央行利率分析（选中央行数） */
 function cbRateTaskName(req: CbRateRequest): string {
-  const month = req.month ?? new Date().toISOString().slice(0, 7);
+  // 2026-08-14：本地时区月份（toISOString 是 UTC，跨月边界任务名与缓存 key 不一致）
+  const now = new Date();
+  const month = req.month ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const bankCount = req.banks?.length ? req.banks.length : 9;
   const scope = req.banks?.length ? `${bankCount} 家央行` : "九大央行";
   return `${month} · 央行利率分析（${scope}）`;
@@ -51,14 +53,15 @@ function cbRateTaskName(req: CbRateRequest): string {
 export function cbRateCacheKey(req: CbRateRequest): string {
   const banks = (req.banks ?? []).slice().sort().join(",");
   const n = new Date();
-  // 无显式月份时按「当前月/年」纳入 key：本月以来/今年以来 跨月跨年自动失效（v3）
-  const scope =
-    req.period === "month"
-      ? (req.month || `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`)
-      : `${n.getFullYear()}`;
+  const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  // 无显式月份时按「查询日」纳入 key：本月以来/今年以来 是进行时数据（截至今天），按日自动失效（v4，2026-08 修复）；
+  // period=year 且携带 month 时把 month 纳入（防不同月份碰撞同一 key）
+  const scope = req.period === "month"
+    ? (req.month || today)
+    : (req.month || `${n.getFullYear()}`);
   return [
     "cbRate",
-    "v3",
+    "v4",
     req.period,
     scope,
     banks,
@@ -118,7 +121,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000, module: "cb-rate", name: taskName },
+      { timeoutMs: 10 * 60 * 1000, module: "cb-rate", name: taskName } // 搜索模式常态 8~10 分钟（dev.md §6.3），超时须 ≥10 分钟（2026-08 修复）,
     );
     return c.json(getTask<CbRateResponse>(taskId), 202);
   });

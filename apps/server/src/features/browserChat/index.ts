@@ -25,6 +25,8 @@ const LOGIN_WAIT_MS = 3 * 60 * 1000; // 未登录时等待用户登录的时限
 
 // 单实例：同一时间只允许一个 browserChat 窗口（防同 profile 独占锁）
 let activeCtx: BrowserContext | null = null;
+/** 2026-08-14：互斥锁——并发 /open 同时 launch 同 profile 会因 Chrome 独占锁失败 */
+let chatBrowserBusy = false;
 
 export interface ChatBrowserOpenOptions {
   /** 填入后自动发送（Enter 启动对话） */
@@ -77,6 +79,9 @@ async function fillPrompt(page: Page, prompt: string): Promise<boolean> {
     if (actual !== prompt) {
       await el.click();
       await page.keyboard.type(prompt, { delay: 3 });
+      // 2026-08-14：补齐后仍不一致 → 返回失败（此前不回读校验，残缺提示词被当成功发送）
+      const actual2 = await el.inputValue().catch(() => "");
+      if (actual2 !== prompt) return false;
     }
     return true;
   };
@@ -125,6 +130,9 @@ async function setToggle(page: Page, label: "深度思考" | "智能搜索", wan
  * 未登录时保持窗口并轮询等待用户登录，登录完成后继续。
  */
 export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOptions = {}): Promise<ChatBrowserOpenResult> {
+  // 互斥锁（2026-08-14）：同一时刻只允许一个 browserChat 窗口
+  if (chatBrowserBusy) return { ok: false, loggedIn: false, message: "已有浏览器会话进行中，请稍候再试" };
+  chatBrowserBusy = true;
   // 关闭上一个残留窗口（避免同 profile 并发锁）
   if (activeCtx) {
     await activeCtx.close().catch(() => {});
@@ -183,6 +191,8 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
     if (ctx) await ctx.close().catch(() => {});
     activeCtx = null;
     return { ok: false, loggedIn: false, message: e instanceof Error ? e.message : String(e) };
+  } finally {
+    chatBrowserBusy = false;
   }
 }
 

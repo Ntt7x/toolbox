@@ -48,8 +48,8 @@ export function setInstanceLimit(v: number): void {
   INSTANCE_LIMIT = v;
 }
 
-/** 全量扫描上限（知识条目数远超此值需调整；kvListRaw 单次 LIMIT） */
-const KB_SCAN_LIMIT = 5000;
+/** 全量扫描上限（2026-08-14：5000→20000，多实例总条目超 5000 时配额/检索/统计失真） */
+const KB_SCAN_LIMIT = 20000;
 
 /** 知识库真实目录：项目根 /.file/k（git 隔离；Agent 的 /k/{key} 映射到此） */
 /** key 规范：分层点分隔（project.module.attribute）；仅字母数字._-；禁连续点/边界点（防 ../ 语义与脏 key） */
@@ -297,7 +297,7 @@ export async function kbAsk(
       { role: "system", content: system },
       { role: "user", content: userMsg },
     ],
-    { temperature: 0.3, module: opts.module ?? "knowledge.ask" },
+    { temperature: 0.3, module: opts.module ?? "knowledge.ask", ...(opts.signal ? { signal: opts.signal } : {}) }, // 2026-08：透传 signal 使任务取消可中断 LLM
   );
   if (!result.ok) return { ok: false, message: result.message };
   return { ok: true, answer: result.content.trim(), used };
@@ -345,12 +345,21 @@ export async function kbImportFromChat(
       { role: "system", content: template },
       { role: "user", content: text },
     ],
-    { temperature: 0.2, json: true, module: opts.module ?? "knowledge.import" },
+    { temperature: 0.2, json: true, module: opts.module ?? "knowledge.import", ...(opts.signal ? { signal: opts.signal } : {}) }, // 2026-08：透传 signal
   );
   if (!result.ok) throw new Error(result.message);
 
   const parsed = robustJsonParse(result.content.trim());
-  const facts = (Array.isArray(parsed) ? parsed : [])
+  // 数组根 / 对象包装兼容（2026-08 修复）：LLM 输出可能是 [..] 或 {\"facts\": [..]}；两者都不是 → 报错而非静默 0 条
+  const factsSource = Array.isArray(parsed)
+    ? parsed
+    : parsed && Array.isArray((parsed as Record<string, unknown>).facts)
+      ? ((parsed as Record<string, unknown>).facts as unknown[])
+      : null;
+  if (!factsSource) {
+    throw new Error(`LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${result.content.trim().slice(0, 200)}`);
+  }
+  const facts = factsSource
     .filter((f): f is { key?: unknown; value?: unknown } => !!f && typeof f === "object")
     .map((f) => ({
       key: typeof f.key === "string" ? f.key.trim() : "",
@@ -364,7 +373,9 @@ export async function kbImportFromChat(
   // matchDomains（虚拟库导入）→ 逐条静态匹配领域前缀，无匹配归 other
   const prefix = opts.instance ? `${opts.instance}.` : "";
   const instFacts = facts.map((f) => {
-    let k = prefix + f.key;
+    // 去重：LLM 提取模板示例 key 可能已带实例前缀（如 medical.病症.方剂），剥离后再拼，防 medical.medical.x 双前缀（2026-08 修复）
+    const rawKey = prefix && f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key;
+    let k = prefix + rawKey;
     if (!opts.instance && opts.matchDomains?.length) {
       const m = matchDomain(`${f.value} ${f.key}`, opts.matchDomains);
       k = `${m?.domain ?? opts.fallbackDomain ?? "other"}.${f.key}`;

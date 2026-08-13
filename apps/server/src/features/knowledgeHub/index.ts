@@ -77,8 +77,8 @@ export function register(app: Hono): void {
   // 领域库数据区：分页列出该实例知识条目（prefix 过滤；total 为全量）
   route.get("/domain/:name/entries", (c: Context) => {
     const name = c.req.param("name") ?? "";
-    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
-    const offset = Math.max(Number(c.req.query("offset") ?? 0), 0);
+    const limit = Math.min(Math.max(Number(c.req.query("limit")) || 50, 1), 200); // 2026-08-14：NaN 输入兜底默认值
+    const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
     const all = kbList({ prefix: `${name}.`, limit: 5000 });
     const page = all.slice(offset, offset + limit);
     return c.json({ ok: true, total: all.length, entries: page, offset, limit });
@@ -98,8 +98,8 @@ export function register(app: Hono): void {
   route.get("/virt/:name/entries", (c: Context) => {
     const virt = getVirtKb(c.req.param("name") ?? "");
     if (!virt) return c.json({ ok: false, message: "虚拟知识库不存在" }, 404);
-    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
-    const offset = Math.max(Number(c.req.query("offset") ?? 0), 0);
+    const limit = Math.min(Math.max(Number(c.req.query("limit")) || 50, 1), 200);
+    const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
     const all = virt.domains.flatMap((d) => kbList({ prefix: `${d}.`, limit: KB_ENTRIES_SCAN }));
     const page = all.slice(offset, offset + limit);
     return c.json({ ok: true, total: all.length, entries: page, offset, limit });
@@ -140,7 +140,12 @@ export function register(app: Hono): void {
   route.post("/domain/:name/import", async (c: Context) => {
     const body = await c.req.json().catch(() => ({}));
     const url = String(body.url ?? "").trim();
-    const conflict = String(body.conflict ?? "skip") as "skip" | "overwrite" | "merge";
+    const rawConflict = String(body.conflict ?? "skip");
+    // 服务端权威校验（2026-08 修复：非法值直接 400，避免静默按 overwrite 覆盖已有知识）
+    if (!["skip", "overwrite", "merge"].includes(rawConflict)) {
+      return c.json({ ok: false, message: "conflict 必须为 skip/overwrite/merge" }, 400);
+    }
+    const conflict = rawConflict as "skip" | "overwrite" | "merge";
     if (!url) return c.json({ ok: false, message: "请输入 Chat 分享链接" }, 400);
     try {
       const r = await kbImportFromChat(url, { instance: c.req.param("name") ?? "", conflict, module: "knowledge-hub.import" });

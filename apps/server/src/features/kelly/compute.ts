@@ -83,7 +83,7 @@ export function computeKelly(req: KellyRequest): KellyResult {
     return { ...base, b, edge, fRaw, ok: true, allZero: true, schemes };
   }
 
-  // 截断提示
+  // 截断提示（2026-08-14 注：fRaw = p − (1−p)/b ≤ p ≤ 1，数学上恒 ≤1，此分支为防御性死代码，保留以对齐契约字段）
   const cutMessage = fRaw > 1 ? "⚠️ 原始凯利仓位超出仓位可用最大金额，已按100%截断。" : undefined;
 
   return { ...base, b, edge, fRaw, ok: true, schemes, ...(cutMessage ? { cutMessage } : {}) };

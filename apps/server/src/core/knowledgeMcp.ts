@@ -108,20 +108,25 @@ export function callTool(name: string, args: Record<string, unknown>): { content
         const question = String(args.question ?? "").trim();
         const instance = String(args.instance ?? "").trim();
         if (!question) return err("缺少 question");
-        // 拆词 + 2-gram 检索（限定实例前缀）
+        // 拆词 + 2-gram 检索（限定实例前缀）；2026-08-14 与 kbAsk 语义对齐：lowercase + 2-gram 仅中文（英文单 token 不再切成无意义 2 字）
+        const qLower = question.toLowerCase();
         const tokens = new Set<string>();
         for (const t of question.split(/[\s,，。.;；:：、/\\()（）\-—_]+/)) {
           const clean = t.trim();
-          if (clean.length >= 2) tokens.add(clean);
+          if (clean.length >= 2) tokens.add(clean.toLowerCase());
         }
         if (tokens.size < 2) {
-          for (let i = 0; i < question.length - 1; i++) tokens.add(question.slice(i, i + 2));
+          if (/[\u4e00-\u9fff]/.test(qLower)) {
+            for (let i = 0; i < question.length - 1; i++) tokens.add(question.slice(i, i + 2).toLowerCase());
+          } else {
+            tokens.add(qLower); // 英文/数字单 token：整体匹配，不切 2-gram
+          }
         }
         const prefix = instance ? `${instance}.` : "";
         const all = kbList({ prefix, limit: 2000 });
         const scored = all
           .map((e) => {
-            const hay = `${e.key} ${e.value}`;
+            const hay = `${e.key} ${e.value}`.toLowerCase();
             let score = 0;
             for (const t of tokens) if (hay.includes(t)) score += t.length;
             return { e, score };

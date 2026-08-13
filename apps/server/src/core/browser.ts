@@ -43,11 +43,12 @@ export interface LaunchPersistentOptions {
  */
 function killChromeUsingProfile(profileDir: string): void {
   try {
-    const r = spawnSync("wmic", ["process", "where", "name='chrome.exe'", "get", "ProcessId,CommandLine", "/format:csv"], { encoding: "utf8", timeout: 10000 });
+    // 2026-08-14：wmic 自 Win11 24H2 移除 → 改用 tasklist CSV（列序固定：映像名,PID,...）
+    const r = spawnSync("tasklist", ["/FO", "CSV", "/NH", "/V"], { encoding: "utf8", timeout: 10000 });
     if (r.status !== 0) return;
     for (const line of r.stdout.split(/\r?\n/)) {
       if (!line.includes(profileDir)) continue; // --user-data-dir=...<profileDir>
-      const m = line.match(/,(\d+)\s*$/);
+      const m = line.match(/^"[^"]*?","(\d+)"/);
       if (m) spawnSync("taskkill", ["/PID", m[1], "/T", "/F"], { encoding: "utf8", timeout: 8000 });
     }
   } catch {
@@ -84,5 +85,6 @@ export async function launchPersistentContext(profileDir: string, opts: LaunchPe
       killChromeUsingProfile(profileDir);
     }
   }
+  // 2026-08-14：循环内最后迭代必 throw（TS 可达性需要此兜底），此处为防御性统一错误信息
   throw new Error("浏览器启动失败（重试后仍失败，可能是残留 Chrome 进程占用 profile）");
 }

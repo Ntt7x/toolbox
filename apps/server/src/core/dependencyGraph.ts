@@ -102,8 +102,9 @@ const LLM_MODE_EDGES: DepEdge[] = [
   { from: "knowledge", to: "llm", kind: "llm-mode", label: "模式1" },
 ];
 
-/** 解析相对 import 的 core 依赖 */
-function scanCoreDeps(filePath: string, from: string, into: string[]): void {
+/** 解析相对 import 的 core 依赖；isCoreFile=true 时额外扫描同目录依赖（./x.js）——
+ * 2026-08-14 修复：core 内部边此前恒为空（正则要求路径含 core/ 段，core 之间都是 ./x.js） */
+function scanCoreDeps(filePath: string, from: string, into: string[], isCoreFile = false): void {
   if (!existsSync(filePath)) return;
   const src = readFileSync(filePath, "utf8");
   const re = /from\s+"\.\.?\/[^"]*\/?(core|shared)\/([a-zA-Z0-9_]+)\.js"/g;
@@ -111,6 +112,13 @@ function scanCoreDeps(filePath: string, from: string, into: string[]): void {
   while ((m = re.exec(src))) {
     const target = m[2];
     if (!into.includes(target)) into.push(target);
+  }
+  if (isCoreFile) {
+    const reLocal = /from\s+"\.\/([a-zA-Z0-9_]+)\.js"/g;
+    while ((m = reLocal.exec(src))) {
+      const target = m[1];
+      if (target !== from && !into.includes(target)) into.push(target);
+    }
   }
 }
 
@@ -160,7 +168,7 @@ export function generateDependencyGraph(): DependencyGraph {
     const id = cf.replace(/\.ts$/, "");
     addNode(id, "core");
     const deps: string[] = [];
-    scanCoreDeps(join(CORE_DIR, cf), id, deps);
+    scanCoreDeps(join(CORE_DIR, cf), id, deps, true); // isCoreFile：扫描 core 内部 ./x.js 依赖
     for (const d of deps) {
       if (d === id) continue; // 自引用
       addNode(d, "core");

@@ -31,6 +31,7 @@ export function register(app: Hono): void {
         createdAt: s.createdAt,
         lastAt: s.lastAt,
         turns: s.turns,
+        ...(s.systemPreview ? { systemPreview: s.systemPreview } : {}), // 2026-08-14：契约字段补全
       })),
       reasonix: listReasonixSessions().map((s) => ({
         id: s.id,
@@ -182,8 +183,9 @@ export function register(app: Hono): void {
     const text = typeof raw?.text === "string" ? raw.text.trim() : "";
     if (!text) return c.json({ ok: false, message: "缺少 text" }, 400);
     const id = c.req.param("id");
-    const { taskId } = createTask<AgentSessionAskResult>(async () => {
-      const r = await reasonixAsk(id, text);
+    // 注：ACP 请求无法中途取消（rpc 无 abort），取消仅置任务态，reasonix 侧继续执行（2026-08-14 说明）
+    const { taskId } = createTask<AgentSessionAskResult>(async (signal) => {
+      const r = await reasonixAsk(id, text, { signal });
       if (!r.ok) return { ok: false, message: r.message };
       return { ok: true, content: r.content, usage: r.usage as AgentSessionAskResult["usage"] };
     }, { timeoutMs: 8 * 60 * 1000, module: "agent-session.reasonix", name: `Reasonix 续问 · ${text.slice(0, 24)}` });

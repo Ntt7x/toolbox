@@ -132,12 +132,16 @@ export async function analyzeCentralBankRates(
   if (req.month && !month) {
     return { ok: false, message: "month 格式应为 YYYY-MM 且在过去 24 个月内" };
   }
+  // 2026-08-14：未知央行 id 直接 400（此前静默过滤，缓存 key 与结果不对齐）
+  if (req.banks && req.banks.length > 0) {
+    const unknown = req.banks.filter((id) => !BANKS.some((b) => b.id === id));
+    if (unknown.length > 0) {
+      return { ok: false, message: `未知央行 id：${unknown.join("、")}（支持：${BANKS.map((b) => b.id).join("/")}）` };
+    }
+  }
   const allowedIds = req.banks && req.banks.length > 0
     ? BANKS.map((b) => b.id).filter((id) => req.banks!.includes(id))
     : BANKS.map((b) => b.id);
-  if (allowedIds.length === 0) {
-    return { ok: false, message: "指定的央行不在九大央行清单中" };
-  }
 
   const useSearch = req.search !== false; // 默认开启联网搜索
   const dataMode = useSearch ? "search" : "knowledge";

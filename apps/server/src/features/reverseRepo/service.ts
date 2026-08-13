@@ -224,6 +224,7 @@ export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, t
     kvSet(UPDATE_STATE_KEY, state);
     return state;
   } catch (err) {
+    // 2026-08 修复：失败时抛错（任务层置 error 态并归档），不再返回 state 让任务恒 done
     const state: UpdateState = {
       state: "failed",
       months,
@@ -232,7 +233,7 @@ export async function runMonthlyUpdate(months: string[], signal?: AbortSignal, t
       message: err instanceof Error ? err.message : String(err),
     };
     kvSet(UPDATE_STATE_KEY, state);
-    return state;
+    throw err;
   }
 }
 
@@ -271,13 +272,17 @@ function mergeMonthlyUpdate(p: Record<string, unknown>, expected: string[]): Non
   const opRows = Array.isArray(p.operations) ? p.operations.filter((x): x is Record<string, unknown> => !!x && typeof x === "object") : [];
   for (const o of opRows) {
     const date = typeof o.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.date) ? o.date : "";
+    // 2026-08-14：操作日期必须属于本次补全的缺失月份（防 LLM 写入任意/已有月份操作造成重复）
+    if (date && !expected.includes(date.slice(0, 7))) continue;
     const term = typeof o.term === "string" ? o.term : "";
     const amount = typeof o.amount === "number" && Number.isFinite(o.amount) && o.amount > 0 ? o.amount : 0;
     if (!date || !term || amount <= 0) continue;
+    // 2026-08 修复：未知期限（非 3M/6M）丢弃该条而非静默改写为 6M（到期推算会错位）
+    if (term !== "3M" && term !== "6M") continue;
     const idx = operations.findIndex((x) => x.date === date && x.term === term);
     const op: ReverseRepoOperation = {
       date,
-      term: term === "3M" || term === "6M" ? term : "6M",
+      term,
       amount,
       source: typeof o.source === "string" ? o.source : "触发式月度更新",
     };

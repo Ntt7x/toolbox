@@ -15,9 +15,15 @@ function getAgent(proxyUrl?: string): Dispatcher | undefined {
   const key = proxyUrl.trim();
   const cached = agentCache.get(key);
   if (cached) return cached;
-  const agent = new ProxyAgent(key);
-  agentCache.set(key, agent);
-  return agent;
+  try {
+    const agent = new ProxyAgent(key);
+    agentCache.set(key, agent);
+    return agent;
+  } catch {
+    // 2026-08-14：非法代理地址（缺协议等）返回 undefined → 直连，不再让整个调用 500
+    console.warn(`[httpProxy] 代理地址无效，本次直连：${key}`);
+    return undefined;
+  }
 }
 
 /** 经代理发起请求（proxyUrl 为空 → 直连）。返回 undici Response */

@@ -46,7 +46,8 @@ export function register(app: Hono): void {
     const page = Number(c.req.query("page")) || 1;
     const limit = Number(c.req.query("limit")) || 20;
     const r: BookSearchResult = await searchBooks(q, { page, limit });
-    return c.json(r, r.ok ? 200 : 429);
+    // 2026-08-14：仅限流返回 429；其它失败（网络/结构）按 502（此前一律 429 误导「被限流」）
+    return c.json(r, r.code === "rate_limited" ? 429 : r.ok ? 200 : 502);
   });
 
   // 历史搜索记录
@@ -84,10 +85,14 @@ export function register(app: Hono): void {
   // 取消收藏（?id=bookId）或清空（无 id）
   app.delete(`${API_PREFIX}/tools/books/favorites`, (c) => {
     const idRaw = c.req.query("id");
-    const id = idRaw ? Number(idRaw) : NaN;
-    if (!Number.isFinite(id)) {
+    // 仅「不传 id」才是清空收藏；非法 id 返回 400（避免误清空，2026-08 修复）
+    if (idRaw === undefined || idRaw.trim() === "") {
       clearFavorites();
       return c.json({ ok: true, cleared: true });
+    }
+    const id = Number(idRaw);
+    if (!Number.isFinite(id)) {
+      return c.json({ ok: false, message: "id 必须为数字（不传 id 才是清空收藏）" }, 400);
     }
     const removed = removeFavorite(id);
     return c.json({ ok: true, removed });

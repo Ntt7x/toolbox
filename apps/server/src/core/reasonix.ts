@@ -207,7 +207,8 @@ function startAcp(): AcpClient {
       entry.resolve({ error: { message: "reasonix acp 进程已退出" } });
     }
     client.pending.clear();
-    acp = null; // 下次调用自动重建
+    // 2026-08-14 竞态修复：仅当仍是当前 client 才置空（崩溃恢复窗口内可能已新建新 client，置空会把新 client 变孤儿）
+    if (acp === client) acp = null; // 下次调用自动重建
   });
   acp = client;
   return client;
@@ -316,6 +317,21 @@ function rpc(method: string, params: Record<string, unknown>, timeoutMs = 90000)
   });
 }
 
+/** 会话级串行队列：同会话并发 prompt 排队执行，
+ * 防 promptListeners 互相覆盖/误删 + reasonix 侧 "already has an active prompt"（2026-08 修复） */
+const askQueues = new Map<string, Promise<unknown>>();
+function enqueueAsk<T>(regId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = askQueues.get(regId) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  askQueues.set(regId, next.catch(() => {}));
+  void next.finally(() => {
+    if (askQueues.get(regId) === next) {
+      setTimeout(() => { if (askQueues.get(regId) === next) askQueues.delete(regId); }, 1000);
+    }
+  });
+  return next;
+}
+
 // ---------- 会话注册表（KV 持久化，服务端状态） ----------
 
 const REG_PREFIX = "reasonixSession:";
@@ -414,12 +430,16 @@ export async function createReasonixSession(
 export async function reasonixAsk(
   regId: string,
   text: string,
-  opts: { timeoutMs?: number; module?: string } = {},
+  opts: { timeoutMs?: number; module?: string; signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> {
+  // 会话级串行：同会话并发 prompt 排队执行（监听器覆盖/误删 + reasonix 并发限制，2026-08 修复）
+  return enqueueAsk(regId, async () => {
   const reg = loadReg(regId);
   if (!reg) return { ok: false, message: "会话不存在或已过期（归档期 360 天）" };
 
   const doAsk = async (sid: string): Promise<{ ok: boolean; content?: string; stopReason?: string; usage?: ReasonixUsageShape; message?: string; sessionGone?: boolean }> => {
+    // 2026-08-14：外部取消时不再发起新 prompt（ACP 请求本身无法中途中断，取消语义 = 不发+不追加历史）
+    if (opts.signal?.aborted) return { ok: false, message: "已取消（未发起新查询）" };
     let client: AcpClient;
     try {
       client = getAcp();
@@ -475,6 +495,7 @@ export async function reasonixAsk(
     if (r.content) appendReasonixHistory(regId, text, r.content, r.usage); // 服务端托管对话数据（与 chatSession 一致）
   }
   return r;
+  });
 }
 
 // ---------- 会话对话数据（服务端托管，可查看/随会话删除） ----------

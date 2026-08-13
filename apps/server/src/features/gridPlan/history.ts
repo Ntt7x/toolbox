@@ -33,7 +33,8 @@ function writeAll(entries: GridPlanHistoryEntry[]): void {
 function summarize(req: GridPlanRequest, result: GridPlanResult): GridPlanHistoryEntry["summary"] | null {
   if (!result.ok) return null;
   const styles = result.styles ?? {};
-  const firstKey = (Object.keys(styles)[0] ?? "3") as keyof typeof styles;
+  // 均衡档（bal）单档买入金额；旧实现取 styles 首键（rad）与契约「均衡档」不符（2026-08 修复）
+  const balKey = "bal" as keyof typeof styles;
   return {
     typeName: result.typeName,
     U: result.U,
@@ -41,7 +42,7 @@ function summarize(req: GridPlanRequest, result: GridPlanResult): GridPlanHistor
     L: result.L,
     rows: Object.keys(styles).length,
     ...(result.maxAmount !== undefined ? { maxAmount: result.maxAmount } : {}),
-    perBuy: styles[firstKey]?.amount?.buyAmount,
+    perBuy: styles[balKey]?.amount?.buyAmount,
     ...(req.code ? { code: req.code } : {}),
     ...(req.name ? { name: req.name } : {}),
   };

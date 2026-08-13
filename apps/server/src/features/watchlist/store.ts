@@ -33,7 +33,7 @@ function normalizeStock(s: WatchlistStock): WatchlistStock {
 
 /** 全部专题摘要（轻量列表） */
 export function listTopics(): WatchlistSummary[] {
-  const rows = kvListRaw(PREFIX, 500);
+  const rows = kvListRaw(PREFIX, 5000); // 2026-08 修复：上限不足时缓存键（extend/fundamental）按字典序占满前 500，专题被静默挤出列表
   const out: WatchlistSummary[] = [];
   for (const r of rows) {
     if (!KEY_RE.test(r.key)) continue;

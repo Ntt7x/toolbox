@@ -224,6 +224,7 @@ export function register(app: Hono): void {
       return c.json(body, 400);
     }
     let imported = 0;
+    const failReasons: string[] = [];
     for (const item of targets) {
       const md = buildImportMarkdown(item);
       // 虚拟库分发：每条内容按子领域关键词匹配写入对应子领域前缀；无匹配归兜底领域
@@ -236,11 +237,12 @@ export function register(app: Hono): void {
       try {
         kbSet(key, md, item.url);
         imported += 1;
-      } catch {
-        /* 单条失败跳过 */
+      } catch (e) {
+        // 2026-08-14：收集失败原因（如实例配额已满），不再静默 ok:true imported:0
+        failReasons.push(`${item.kind}「${item.title.slice(0, 20)}」：${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    const body: ZhihuImportResult = { ok: true, imported, instance };
+    const body: ZhihuImportResult = { ok: true, imported, instance, ...(failReasons.length > 0 ? { message: `${failReasons.length} 条导入失败：${failReasons.slice(0, 3).join("; ")}` } : {}) };
     return c.json(body);
   });
 
@@ -312,7 +314,8 @@ function readHistory(): HistoryEntry[] {
 
 function recordHistory(target: string, name: string, total: number, resultId?: string): void {
   const items = readHistory();
-  items.unshift({ id: `zh-${Date.now()}`, target, name, ts: new Date().toISOString(), total, ...(resultId ? { resultId } : {}) });
+  // 2026-08-14：id 复用 resultId（此前两次独立 Date.now() 产生不同 id，删除历史时删不到结果 KV 造成残留）
+  items.unshift({ id: resultId ?? `zh-${Date.now()}`, target, name, ts: new Date().toISOString(), total, ...(resultId ? { resultId } : {}) });
   kvSet(HISTORY_KEY, { items: items.slice(0, HISTORY_MAX) });
 }
 

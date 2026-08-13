@@ -227,6 +227,11 @@ export default function LocalData() {
 
   const saveEdit = async () => {
     if (!active || !detail) return;
+    // 2026-08-14：服务端 PUT /entry 仅支持 KV；表数据编辑未实现 → 明确提示
+    if (active.kind === "table") {
+      setMsg({ kind: "err", text: "表数据暂不支持在线编辑（仅 KV 数据可编辑），请在服务端数据中调整" });
+      return;
+    }
     let value: unknown;
     try {
       value = JSON.parse(editText);

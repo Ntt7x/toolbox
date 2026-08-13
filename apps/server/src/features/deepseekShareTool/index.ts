@@ -77,7 +77,9 @@ export function register(app: Hono): void {
     }
     const result = await extractShare(url);
     if (result.ok) {
-      const shareId = url.trim().split("/").filter(Boolean).pop() ?? url.trim();
+      // 2026-08-14：分享 URL 可能带 query（?x=1），历史记录剥离 query 保持与规范化 shareId 一致
+      const lastSeg = url.trim().split("/").filter(Boolean).pop() ?? "";
+      const shareId = lastSeg.split(/[?#]/)[0] || url.trim();
       recordHistory(url.trim(), shareId, Array.isArray(result.messages) ? result.messages.length : 0);
     }
     return c.json(result, result.ok ? 200 : 400);

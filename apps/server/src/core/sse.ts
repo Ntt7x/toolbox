@@ -103,6 +103,8 @@ export function registerTaskRoutes(app: Hono): void {
 
       stream.onAbort?.(cleanup);
       heartbeat = setInterval(() => {
+        // 2026-08-14：客户端异常断开（无 FIN）时 onAbort 不触发，写后检查 closed 自清理，防心跳/订阅泄漏
+        if (stream.closed) { cleanup(); return; }
         void stream.writeSSE({ event: "ping", data: "" });
       }, 15_000);
     });

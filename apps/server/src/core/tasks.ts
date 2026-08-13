@@ -206,6 +206,6 @@ export function onTaskUpdate(
 setInterval(() => {
   const now = Date.now();
   for (const [id, t] of tasks) {
-    if (now - t.createdAt > TTL_MS) tasks.delete(id);
+    if (t.status !== "running" && now - t.createdAt > TTL_MS) tasks.delete(id); // 2026-08：运行中任务不因 TTL 被移出内存（否则终态不归档 + SSE 卡死）
   }
 }, 10 * 60 * 1000).unref?.();

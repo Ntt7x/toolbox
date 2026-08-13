@@ -72,7 +72,7 @@ test("updateVirtKb：动态调整引用领域", () => {
   }
 });
 
-test("migrateInstance：源实例条目迁移到目标（冲突跳过）+ 清空源", () => {
+test("migrateInstance：源实例条目迁移到目标（冲突跳过）+ 只删迁移成功的源条目", () => {
   const src = `src_${Date.now()}`;
   const tgt = `tgt_${Date.now()}`;
   try {
@@ -84,7 +84,8 @@ test("migrateInstance：源实例条目迁移到目标（冲突跳过）+ 清空
     assert.equal(r.migrated, 1); // 只有 b 迁移
     assert.equal(r.skipped, 1); // a 冲突跳过
     assert.equal(kbGet(`${tgt}.b`)?.value, "内容B");
-    assert.equal(kbGet(`${src}.a`), null); // 源已清空
+    // 2026-08 修复：只删迁移成功的源条目；冲突跳过（a）保留在源，防数据丢失
+    assert.equal(kbGet(`${src}.a`)?.value, "内容A");
     assert.equal(kbGet(`${src}.b`), null);
     // 源/目标相同拒绝
     const r2 = migrateInstance(src, src);

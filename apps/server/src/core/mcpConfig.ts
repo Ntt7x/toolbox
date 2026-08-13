@@ -47,8 +47,8 @@ export function getMcpServers(): McpServerConfig[] {
   const raw = getSetting<McpServerConfig[]>(SETTING_KEY);
   if (raw === undefined || raw === null) return defaultMcpServers(); // 从未配置 → seed
   if (!Array.isArray(raw)) return defaultMcpServers(); // 数据损坏 → 回退 seed
-  // 兼容旧结构（缺 enabled 视为启用）；空数组保持（用户已清空 MCP）
-  return raw.map((s) => ({ ...s, enabled: s.enabled !== false }));
+  // 兼容旧结构（缺 enabled 视为启用）；空数组保持（用户已清空 MCP）；null/非对象元素过滤（2026-08-14 防 TypeError）
+  return raw.filter((s) => s && typeof s === "object").map((s) => ({ ...s, enabled: s.enabled !== false }));
 }
 
 /** 保存 MCP 配置（整表覆盖；本地数据管理可见 settings:mcp.servers） */

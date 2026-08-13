@@ -52,13 +52,17 @@ export function kvDelete(key: string): void {
   getDb().prepare("DELETE FROM kv_store WHERE key = ?").run(key);
 }
 
-/** 按前缀列举（可选 limit）；返回 key 与解析后的 value */
+/** LIKE 前缀转义：%/_/\ 在 LIKE 中是通配符，前缀含这些字符时须转义（2026-08 修复：用户可控 source 参数防误匹配） */
+function likePrefix(prefix: string): string {
+  return prefix.replace(/[\\%_]/g, (c) => `\\${c}`) + "%";
+}
+
 /** 按前缀统计条目数（无前缀则统计全部） */
 export function kvCount(prefix = ""): number {
   initSchema();
   const r = getDb()
     .prepare("SELECT COUNT(*) AS n FROM kv_store WHERE key LIKE ?")
-    .get(`${prefix}%`) as { n: number | bigint };
+    .get(likePrefix(prefix)) as { n: number | bigint };
   return Number(r.n);
 }
 
@@ -67,5 +71,5 @@ export function kvListRaw(prefix = "", limit = 200): { key: string; value: strin
   initSchema();
   return getDb()
     .prepare("SELECT key, value, updated_at FROM kv_store WHERE key LIKE ? ORDER BY key LIMIT ?")
-    .all(`${prefix}%`, limit) as { key: string; value: string; updated_at: string }[];
+    .all(likePrefix(prefix), limit) as { key: string; value: string; updated_at: string }[];
 }

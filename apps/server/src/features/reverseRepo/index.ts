@@ -17,7 +17,7 @@ import {
 import { createTask, getTask } from "../../core/tasks.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
-import { getMonthlyData, getUpdateState, missingMonths, probeDaily, runMonthlyUpdate } from "./service.js";
+import { getMonthlyData, getUpdateState, missingMonths, probeDaily, runMonthlyUpdate, UPDATE_STATE_KEY } from "./service.js";
 
 // 注册数据源：买断式逆回购（本地数据管理页展示 tag 用）
 registerDataSource({
@@ -72,8 +72,14 @@ export function register(app: Hono): void {
       return c.json({ ok: true, state: "running", months: stale, message: "已有更新任务进行中" });
     }
     let taskId = "";
-    const created = createTask(async (signal) => runMonthlyUpdate(stale, signal, taskId), { timeoutMs: 15 * 60 * 1000 });
+    const created = createTask(
+      async (signal) => runMonthlyUpdate(stale, signal, taskId),
+      { timeoutMs: 15 * 60 * 1000, module: "reverse-repo.monthly-update" }, // 2026-08：补 module 使任务历史归档
+    );
     taskId = created.taskId;
+    // 2026-08 修复：createTask 同步执行 fn 时 taskId 尚为空串，state 缺 taskId 致前端无法跟踪 → 创建后补写
+    const st = kvGet<{ state: string }>(UPDATE_STATE_KEY);
+    if (st && st.state === "running") kvSet(UPDATE_STATE_KEY, { ...st, taskId });
     return c.json({ ok: true, state: "running", months: stale, taskId });
   });
 
@@ -111,7 +117,7 @@ export function register(app: Hono): void {
         kvSet(dailyCacheKey(), { ...r, _at: new Date().toISOString() });
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000, module: "reverse-repo.daily" },
+      { timeoutMs: 10 * 60 * 1000, module: "reverse-repo.daily" }, // 同 cbRate：搜索超时须 ≥10 分钟（2026-08 修复）
     );
     return c.json(getTask<ReverseRepoDailyResult>(taskId), 202);
   });

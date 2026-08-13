@@ -118,6 +118,8 @@ export function register(app: Hono): void {
     const key = c.req.query("key") ?? "";
     if (!key) return err(c, "缺少 key 参数");
     if (source !== undefined) {
+      // 归属校验（2026-08 修复：与 PUT 分支一致，防跨源读）
+      if (!key.startsWith(source)) return err(c, `key「${key}」不属于数据源「${source}」`);
       const value = kvGet(key);
       if (value === null && !kvHas(key)) return err(c, "条目不存在", 404);
       return c.json({ ok: true, source: { kind: "kv", name: source }, key, value });
@@ -141,6 +143,8 @@ export function register(app: Hono): void {
     const key = c.req.query("key") ?? "";
     if (!key) return err(c, "缺少 key 参数");
     if (source !== undefined) {
+      // 归属校验（2026-08 修复：与 PUT 分支一致，防跨源删）
+      if (!key.startsWith(source)) return err(c, `key「${key}」不属于数据源「${source}」`);
       kvDelete(key);
       return c.json({ ok: true, deleted: 1 });
     }

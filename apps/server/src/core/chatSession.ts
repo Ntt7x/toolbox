@@ -11,6 +11,21 @@
 //   await chatSessionAsk(sid, "分析标的 B…")   // 第 2 轮起前缀命中缓存
 // ============================================================
 
+/** 会话级串行队列：同会话并发 ask 排队执行，防读-改-写竞态丢历史（2026-08 修复） */
+const sessionQueues = new Map<string, Promise<unknown>>();
+function enqueue<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionQueues.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // 前一个失败不阻塞后续
+  sessionQueues.set(sessionId, next.catch(() => {})); // 队列保持可继续
+  void next.finally(() => {
+    // 防泄漏：队列仍是当前 next 且短暂无后续时清理
+    if (sessionQueues.get(sessionId) === next) {
+      setTimeout(() => { if (sessionQueues.get(sessionId) === next) sessionQueues.delete(sessionId); }, 1000);
+    }
+  });
+  return next;
+}
+
 import { kvGet, kvSet, kvDelete, kvListRaw } from "./kvStore.js";
 import { chat, type ChatOptions } from "./llm.js";
 import type { LlmChatMessage, LlmChatResult } from "@toolbox/shared";
@@ -169,6 +184,7 @@ function archiveSessionInternal(s: ChatSession): void {
   const summary = [earlyLen > 0 ? `${COMPACTED_MARKER} 早期 ${earlyLen} 轮` : "", ...recent.map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content.slice(0, 200)}`)].join("\n");
   s.summary = summary.trim();
   s.history = [];
+  s.droppedTurns += earlyLen; // 2026-08-14：归档轮数计入 droppedTurns，turns 不再归零（契约「已交换轮数」）
   s.archived = true;
   kvSet(keyOf(s.id), s);
 }
@@ -206,6 +222,7 @@ export function compactSession(id: string, loaded?: ChatSession): ChatSession | 
     if (budget >= TAIL_BUDGET_TOKENS && keep >= MIN_RECENT_TURNS * 2) break;
     if (keep >= s.history.length) break;
   }
+  if (keep % 2 !== 0) keep = Math.max(2, keep - 1); // 2026-08-14：切轮对齐 user/assistant 成对边界（防连续 user 消息）
   const kept = s.history.slice(s.history.length - keep);
   const dropped = s.history.length - kept.length;
   if (dropped > 0) {
@@ -229,6 +246,8 @@ export async function chatSessionAsk(
   userMessage: string,
   askOpts: { signal?: AbortSignal; module?: string } = {},
 ): Promise<LlmChatResult> {
+  // 会话级串行：同会话并发 ask 排队执行（读-await-写 竞态会静默丢一轮历史，2026-08 修复）
+  return enqueue(sessionId, async () => {
   // 归档会话自动恢复（摘要注入上下文后继续，重新进入活跃期）；restore 内部已 loadSession
   const s = restoreArchivedSession(sessionId);
   if (!s) {
@@ -258,12 +277,13 @@ export async function chatSessionAsk(
     compactSession(s.id, s);
   }
   return result;
+  });
 }
 
 /** 会话列表（含状态：active/archived；过期清理） */
-export function listChatSessions(): { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; createdAt: number; lastAt: number }[] {
+export function listChatSessions(): { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; systemPreview?: string; createdAt: number; lastAt: number }[] {
   const rows = kvListAll(SESSION_PREFIX);
-  const out: { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; createdAt: number; lastAt: number }[] = [];
+  const out: { id: string; module: string; turns: number; droppedTurns: number; status: "active" | "archived"; systemPreview?: string; createdAt: number; lastAt: number }[] = [];
   for (const r of rows) {
     const s = r.value as ChatSession;
     if (!s || typeof s.system !== "string") continue;
@@ -278,9 +298,10 @@ export function listChatSessions(): { id: string; module: string; turns: number;
     out.push({
       id: s.id,
       module: s.module,
-      turns: Math.round(s.history.length / 2),
+      turns: Math.round(s.history.length / 2) + s.droppedTurns, // 2026-08-14：含归档/压缩折叠轮数
       droppedTurns: s.droppedTurns,
       status: s.archived ? "archived" : "active",
+      systemPreview: (typeof s.system === "string" ? s.system : "").slice(0, 60), // 2026-08-14：契约字段补全
       createdAt: s.createdAt,
       lastAt: s.lastAt,
     });
@@ -299,7 +320,7 @@ export function deleteChatSession(id: string): boolean {
 export function getChatSessionDetail(id: string): (ChatSession & { turns: number }) | null {
   const s = loadSession(id);
   if (!s) return null;
-  return { ...s, turns: Math.round(s.history.length / 2) };
+  return { ...s, turns: Math.round(s.history.length / 2) + (s.droppedTurns ?? 0) }; // 2026-08-14：含折叠轮数
 }
 
 // 复用 kvListRaw（前缀列举）

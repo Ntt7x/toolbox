@@ -532,7 +532,7 @@ async function crawlQuestionAnswers(
 ): Promise<ZhihuCrawlItem[]> {
   const items: ZhihuCrawlItem[] = [];
   const seen = new Set<string>();
-  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+  const limit = opts.limit === undefined ? 20 : Math.min(Math.max(opts.limit, 0), 100); // 0=不限制（受滚动上限约束）
   return withBrowserLock(async () => {
     let context: BrowserContext | null = null;
     try {
@@ -566,7 +566,7 @@ async function crawlQuestionAnswers(
       let stuck = 0;
       for (let i = 0; i < 60; i++) {
         if (opts.signal?.aborted) break;
-        if (items.length >= limit) break;
+        if (limit > 0 && items.length >= limit) break;
         const before = items.length;
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
         await sleep(2500 + Math.floor(Math.random() * 2000));
@@ -615,6 +615,15 @@ async function crawlSingleContent(
         }, info.kind)
         .catch(() => "");
       const title = (await page.title().catch(() => "")).replace(/\s*-\s*知乎$/, "").slice(0, 120);
+      // 2026-08-14：尝试从页面解析发布时间（article:published_time / 时间元素），失败回退抓取时刻
+      const published = await page
+        .evaluate(() => {
+          const m = document.querySelector('meta[property="article:published_time"]')?.getAttribute("content");
+          if (m) return m;
+          const t = document.querySelector('[data-tool="publishedAt"]')?.getAttribute("data-tool") ?? document.querySelector(".ContentItem-time")?.textContent ?? "";
+          return t ? new Date(t).toISOString() : "";
+        })
+        .catch(() => "");
       if (!content) {
         opts.onProgress?.(`未能从页面提取到正文（可能被风控拦截或页面结构变化）`);
         return null;
@@ -623,7 +632,7 @@ async function crawlSingleContent(
         kind: info.kind === "article" ? "article" : info.kind === "pin" ? "pin" : "answer",
         title: title || info.label,
         content: htmlToMarkdown(content),
-        createdAt: new Date().toISOString(),
+        createdAt: published || new Date().toISOString(),
         url: info.url ?? `${BASE}/question/${info.ref}`,
       };
     } finally {
@@ -766,8 +775,8 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   if (!info.ok) return { ok: false, message: info.message };
 
   const types = opts.types?.length ? opts.types : (["answer", "article", "pin"] as ZhihuCrawlKind[]);
-  // 每类目标（默认 20，上限 100）；单次任务总数硬上限（默认 100）
-  const perKindLimit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+  // 每类目标（默认 20，上限 100；0=不限制）；单次任务总数硬上限（默认 100）
+  const perKindLimit = opts.limit === undefined ? 20 : Math.min(Math.max(opts.limit, 0), 100); // 0=不限制
   const maxTotal = Math.min(Math.max(opts.maxTotal ?? 100, 1), 500);
   const progressId = opts.progressId ?? `zhp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const deadline = Date.now() + (opts.deadlineMs ?? 20 * 60 * 1000);
@@ -778,7 +787,7 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   const items: ZhihuCrawlItem[] = [...seed];
   const kindCount = new Map<ZhihuCrawlKind, number>();
   for (const s of seed) kindCount.set(s.kind, (kindCount.get(s.kind) ?? 0) + 1);
-  const commentsDone = opts.commentsDone === true;
+  let commentsDone = opts.commentsDone === true; // 2026-08-14：评论阶段正常完成后置 true（let：续爬不再重跑评论）
   const startPhase = Math.min(Math.max(opts.phaseIndex ?? 0, 0), Math.max(types.length - 1, 0));
   // 诊断信息（各类型失败/0 结果/风控原因）
   const warnings: string[] = [];
@@ -811,15 +820,15 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
       break;
     }
     const gotCount = kindCount.get(kind) ?? 0;
-    if (gotCount >= perKindLimit) continue; // 该类已满 → 下一类
-    emitProgress(kind, `开始抓取 ${kindLabel(kind)}（已有 ${gotCount}/${perKindLimit}，目标 ${perKindLimit}）…`);
+    if (perKindLimit > 0 && gotCount >= perKindLimit) continue; // 该类已满 → 下一类（0=不限制）
+    emitProgress(kind, `开始抓取 ${kindLabel(kind)}（已有 ${gotCount}${perKindLimit > 0 ? `/${perKindLimit}` : ""}${perKindLimit > 0 ? `，目标 ${perKindLimit}` : "（不限制）"}）…`);
     const beforeKind = gotCount;
     try {
-      const remaining = perKindLimit - gotCount;
+      const remaining = perKindLimit > 0 ? perKindLimit - gotCount : 0; // 0=不限制（fetchPinsApi/crawlKindWithBrowser 已支持 limit<=0 语义）
       if (kind === "pin") {
         const pins = await fetchPinsApi(token, remaining, opts.signal);
         for (const p of pins) {
-          if ((kindCount.get(kind) ?? 0) >= perKindLimit) break;
+          if (perKindLimit > 0 && (kindCount.get(kind) ?? 0) >= perKindLimit) break;
           if (seen.has(p.url)) continue;
           seen.add(p.url);
           if (dateInRange(p.created, opts.dateFrom, opts.dateTo)) {
@@ -831,7 +840,7 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
       } else {
         const got = await crawlKindWithBrowser(token, kind, remaining, opts.signal, (msg) => emitProgress(kind, msg));
         for (const g of got) {
-          if ((kindCount.get(kind) ?? 0) >= perKindLimit) break; // 知乎 API 单次返回一页，避免超该类目标
+          if (perKindLimit > 0 && (kindCount.get(kind) ?? 0) >= perKindLimit) break; // 知乎 API 单次返回一页，避免超该类目标（0=不限制）
           if (seen.has(g.url)) continue;
           seen.add(g.url);
           if (dateInRange(g.created, opts.dateFrom, opts.dateTo)) {
@@ -869,6 +878,7 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
     });
     for (const w of commentWarnings) if (!warnings.includes(w)) warnings.push(w);
     if (Date.now() > deadline || items.length >= maxTotal) paused = true; // 评论阶段触碰限制 → 暂停（已抓保留）
+    else commentsDone = true; // 2026-08-14：评论阶段正常完成 → 续爬不再重跑（此前恒 false 致续爬整段重抓）
   }
 
   // 结果（时间降序）

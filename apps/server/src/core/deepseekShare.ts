@@ -84,10 +84,10 @@ export async function extractShare(input: string): Promise<ShareExtractResult> {
     }
 
     const messages: ShareMessage[] = msgs
-      .map((m) => {
+      .map((m, i) => {
         const role: ShareMessage["role"] = (m.role ?? "").toLowerCase() === "user" ? "user" : "assistant";
         return {
-          id: m.message_id ?? 0,
+          id: m.message_id ?? i + 1, // 2026-08：message_id 缺失时用下标兜底，防前端 React key 全 0 冲突
           role,
           content: (m.content ?? "").replace(/\r\n/g, "\n"),
           ...(m.thinking ? { thinking: m.thinking.replace(/\r\n/g, "\n") } : {}),

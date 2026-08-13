@@ -28,7 +28,8 @@ const LLM_KEY_SETTING = "llm.apiKey";
  * 仍有 DEEPSEEK_API_KEY，则一次性迁入设置库并清理 .env。
  */
 export function loadApiKey(): string | null {
-  const fromSettings = getSetting<string>(LLM_KEY_SETTING)?.trim();
+  const rawKey = getSetting<unknown>(LLM_KEY_SETTING);
+  const fromSettings = typeof rawKey === "string" ? rawKey.trim() : ""; // 2026-08：设置值被编辑成非字符串时防 TypeError
   if (fromSettings) return fromSettings;
 
   // 旧 .env 一次性迁移
@@ -214,7 +215,7 @@ async function chatSearch(messages: LlmChatMessage[], opts: ChatOptions): Promis
         ...(opts.json ? { text: { format: { type: "json_object" as const } } } : {}),
         stream: false,
       }),
-      signal: buildSignal(opts, 180_000),
+      signal: buildSignal(opts, 600_000), // 搜索模式耗时常态 8~10 分钟（dev.md §6.3）；2026-08 放宽 180s→600s 防提前 abort
     });
     const data = (await res.json().catch(() => null)) as {
       error?: { message?: string };

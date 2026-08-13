@@ -98,6 +98,7 @@ export function useAsyncTask<T>(
       setStatus(t.ok ? t.status : "error");
       setRunning(false);
       setTaskId(null);
+      taskIdRef.current = null;
       sessionStorage.removeItem(storageKey); // 任务 id 清除，但 :result 保留
       stop();
     },
@@ -107,6 +108,8 @@ export function useAsyncTask<T>(
   /** 处理单次状态响应 */
   const handle = useCallback(
     (tid: string, t: AsyncTaskResult<T>) => {
+      // 任务身份校验（2026-08 修复）：旧任务的迟到响应/轮询结果不得覆盖新任务状态
+      if (tid !== taskIdRef.current) return;
       if (settledRef.current) return; // 已落地终态，忽略迟到帧
       if (!t.ok) {
         settle(tid, t);
@@ -129,7 +132,7 @@ export function useAsyncTask<T>(
         void fetcher(tid)
           .then((t) => handle(tid, t))
           .catch((e) => {
-            if (settledRef.current) return;
+            if (settledRef.current || tid !== taskIdRef.current) return; // 2026-08：跨任务竞态防护
             setError(String(e));
             setRunning(false);
             setTaskId(null);
@@ -223,6 +226,7 @@ export function useAsyncTask<T>(
         return;
       }
       // 正常后台任务：清旧结果、记录 taskId、SSE 监听
+      taskIdRef.current = tid; // 同步 ref（useEffect 有渲染延迟，身份校验依赖它）
       setResult(null);
       setError(null);
       setTaskId(tid);
@@ -239,6 +243,7 @@ export function useAsyncTask<T>(
     stop();
     settledRef.current = true;
     setTaskId(null);
+    taskIdRef.current = null;
     setStatus(null);
     setResult(null);
     setError(null);
@@ -259,6 +264,7 @@ export function useAsyncTask<T>(
     stop();
     settledRef.current = true;
     setTaskId(null);
+    taskIdRef.current = null;
     setStatus("cancelled");
     setRunning(false);
     setError(null);
@@ -270,6 +276,7 @@ export function useAsyncTask<T>(
     const tid = sessionStorage.getItem(storageKey);
     if (tid) {
       // 必须同步 taskId，否则恢复后的任务无法被 cancel()（取 taskIdRef 为 null）通知服务端
+      taskIdRef.current = tid;
       setTaskId(tid);
       setStatus("running");
       setRunning(true);

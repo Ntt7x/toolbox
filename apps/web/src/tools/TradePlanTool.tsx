@@ -89,6 +89,14 @@ function StepInput({ value, onChange, step = 1, min = 0, max, width = "w-20", pl
   );
 }
 
+// 本地时区日期/月（toISOString 是 UTC，凌晨会跨天错位；2026-08 修复）
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localMonthStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export default function TradePlanTool() {
   const [strategies, setStrategies] = useState<TradePlanStrategySummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -103,12 +111,12 @@ export default function TradePlanTool() {
   const [listMsg, setListMsg] = useState<string | null>(null);
 
   const [date, setDate] = useState(() => {
-    // 默认下一个交易日：周六/周日 → 下周一
+    // 默认下一个交易日：周六/周日 → 下周一；本地日期格式化（toISOString 是 UTC，本地凌晨会回退一天，2026-08 修复）
     const n = new Date();
     const d = n.getDay();
     if (d === 0) n.setDate(n.getDate() + 1);
     else if (d === 6) n.setDate(n.getDate() + 2);
-    return n.toISOString().slice(0, 10);
+    return localDateStr(n);
   });
   const [items, setItems] = useState<TradePlanItem[]>([]);
   const [checking, setChecking] = useState(false);
@@ -126,6 +134,7 @@ export default function TradePlanTool() {
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
   const [addMsg, setAddMsg] = useState<string | null>(null);
   const savedCfgRef = useRef<string>("");
+  const pendingCfgRef = useRef<string>(""); // 2026-08-14：最近一次调度保存的快照（防抖竞态防护）
 
   const loadStrategies = useCallback(async () => {
     setListLoading(true);
@@ -184,7 +193,8 @@ export default function TradePlanTool() {
     setCfgMsg(null);
     try {
       const r = await api.tradePlanSaveStrategy(s.id, s);
-      if (r.ok && r.strategy) setStrategy(r.strategy);
+      // 2026-08-14：防抖竞态——本次保存仍是最新编辑时才用服务端回显覆盖（旧响应晚到不得覆盖新编辑）
+      if (r.ok && r.strategy && JSON.stringify(s) === pendingCfgRef.current) setStrategy(r.strategy);
       savedCfgRef.current = JSON.stringify(r.strategy ?? s);
       if (!opts?.silent) {
         setCfgMsg("✅ 已自动保存");
@@ -200,7 +210,12 @@ export default function TradePlanTool() {
   const cfgSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleCfgSave = (strat: TradePlanStrategy) => {
     if (cfgSaveTimer.current) clearTimeout(cfgSaveTimer.current);
-    cfgSaveTimer.current = setTimeout(() => { void saveCfg(strat, { silent: true }); }, 400);
+    // 2026-08-14：记录本次调度快照；定时器触发时若已有更新编辑则跳过（防旧快照保存覆盖新状态）
+    pendingCfgRef.current = JSON.stringify(strat);
+    cfgSaveTimer.current = setTimeout(() => {
+      if (pendingCfgRef.current !== JSON.stringify(strat)) return; // 已有更新编辑，本次作废
+      void saveCfg(strat, { silent: true });
+    }, 400);
   };
   const patchStrategy = (patch: (prev: TradePlanStrategy) => TradePlanStrategy) => {
     if (!strategy) return;
@@ -585,7 +600,7 @@ export default function TradePlanTool() {
                             <div className={`${card} border-slate-100 bg-slate-50`}>
                               <div className="text-[0.72rem] text-slate-500">剩余可用</div>
                               <div className={`text-[0.95rem] font-bold ${strategy.totalCapital > 0 && totalMv > strategy.totalCapital ? "text-red-600" : "text-slate-800"}`}>
-                                {cny(Math.max(0, strategy.totalCapital - totalMv))}
+                                {cny(Math.round((strategy.totalCapital - totalMv) * 100) / 100)} {/* 2026-08-14：超仓时显示真实负值（此前钳 0 但标红矛盾） */}
                               </div>
                             </div>
                             <div className="col-span-2 text-[0.78rem] text-slate-500 lg:col-span-4">持仓 {held} / {strategy.stocks.length} 标的</div>
@@ -866,7 +881,7 @@ export default function TradePlanTool() {
 
 /** 交易日历视图：当月网格 + 有计划的日期标记（绿=通过/红=告警），点击日期查看当日操作汇总 */
 function MonthCalendar({ days, selected, onSelect }: { days: TradePlanDay[]; selected: string; onSelect: (d: string) => void }) {
-  const [month, setMonth] = useState(selected.slice(0, 7) || new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(selected.slice(0, 7) || localMonthStr(new Date()));
   const byDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days]);
 
   const [y, m] = month.split("-").map(Number);
@@ -940,7 +955,7 @@ function MonthCalendar({ days, selected, onSelect }: { days: TradePlanDay[]; sel
 
 /** 全部策略总计划日历：跨策略聚合，某天显示所有策略的操作 */
 function AllCalendar() {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(localMonthStr(new Date()));
   const [data, setData] = useState<{ date: string; strategies: { id: string; name: string; items: TradePlanItem[]; result: TradePlanCheckResult }[] }[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
@@ -1094,7 +1109,7 @@ function ResultView({ result }: { result: TradePlanCheckResult }) {
           { label: "当日减仓回款", value: cny(result.totals.reduceTotal), tone: "bg-cyan-50 border-cyan-100 text-cyan-700" },
           { label: "执行后总市值", value: cny(result.totals.totalMarketValue), tone: "bg-indigo-50 border-indigo-100 text-indigo-700" },
           { label: "总仓位占比", value: `${result.totals.positionPct.toFixed(1)}%`, tone: result.totals.positionPct > 80 ? "bg-red-50 border-red-200 text-red-700" : result.totals.positionPct > 50 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-emerald-50 border-emerald-100 text-emerald-700" },
-          { label: "剩余可用", value: cny(Math.max(0, result.totals.remaining)), tone: result.totals.remaining < 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-slate-50 border-slate-100 text-slate-800" },
+          { label: "剩余可用", value: cny(Math.round(result.totals.remaining * 100) / 100), tone: result.totals.remaining < 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-slate-50 border-slate-100 text-slate-800" }, // 2026-08-14：显示真实负值
         ].map((s) => (
           <div key={s.label} className={`rounded-lg border px-3 py-1.5 ${s.tone}`}>
             <div className="text-[0.72rem] opacity-70">{s.label}</div>

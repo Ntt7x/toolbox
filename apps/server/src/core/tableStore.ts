@@ -28,6 +28,8 @@ export function queryRows(table: string, where: Record<string, unknown> = {}): R
 
 /** 删除满足条件的行；返回受影响行数 */
 export function deleteRows(table: string, where: Record<string, unknown> = {}): number {
+  // 2026-08-14：空 where 拒绝执行（DELETE 全表是危险操作，须显式条件）
+  if (Object.keys(where).length === 0) throw new Error("deleteRows 必须带 where 条件（防误清空整表）");
   const { sql, values } = buildWhere(where);
   const stmt = getDb().prepare(`DELETE FROM ${quote(table)}${sql}`);
   return Number(stmt.run(...values).changes);

@@ -87,7 +87,7 @@ export function register(app: Hono): void {
         }
         return r;
       },
-      { timeoutMs: 5 * 60 * 1000, module: "treasury-fx", name: taskName },
+      { timeoutMs: 10 * 60 * 1000, module: "treasury-fx", name: taskName } // 同 cbRate：搜索超时须 ≥10 分钟（2026-08 修复）,
     );
     return c.json(getTask<TreasuryFxResponse>(taskId), 202);
   });

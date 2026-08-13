@@ -251,7 +251,8 @@ export function register(app: Hono): void {
     if (!t) return c.json({ ok: false, message: "专题不存在" }, 404);
     const raw = (await c.req.json().catch(() => null)) as { force?: unknown } | null;
     const force = raw?.force === true;
-    const cacheKey = `watchlist:extend:${id}`;
+    // 缓存 key 含专题 updatedAt：专题内容变化（增删股/改名）即自动失效，不再命中旧提示词（2026-08 修复）
+    const cacheKey = `watchlist:extend:${id}:${t.updatedAt ?? ""}`;
     if (!force) {
       const cached = kvGet<{ prompt?: string; _at?: string }>(cacheKey);
       if (cached?.prompt) return c.json({ ok: true, prompt: cached.prompt, fromCache: true });
@@ -271,6 +272,8 @@ export function register(app: Hono): void {
     const code = typeof raw?.code === "string" ? raw.code.trim() : "";
     if (!code) return c.json({ ok: false, message: "缺少股票代码" }, 400);
     const stock = t.stocks.find((s) => s.code === code);
+    // 2026-08 修复：code 不在专题中 → 400（防经 addStocks 注入任意字符串 code 污染专题）
+    if (!stock) return c.json({ ok: false, message: `标的 ${code} 不在专题中` }, 400);
     const reason = typeof raw?.reason === "string" ? raw.reason : stock?.reason;
     const r = await optimizeReason(code, { reason, name: stock?.name });
     if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
@@ -351,7 +354,10 @@ export function register(app: Hono): void {
     // 补名：无 name 的候选用行情工具解析（A股/港股/ETF 名称，缓存优先）
     for (const s of selected) {
       if (!s.name) {
-        try { s.name = await resolveStockName(s.code); } catch { /* 保留 code 展示 */ }
+        try {
+          s.name = await resolveStockName(s.code);
+          if (!s.name && /^\d{6}$/.test(s.code)) s.name = await resolveStockName(s.code, "fund"); // 2026-08-14：6 位纯数字可能是场外基金，股票行情查不到时走基金接口
+        } catch { /* 保留 code 展示 */ }
       }
     }
     const updated = updateTopic(id, { addStocks: selected });
