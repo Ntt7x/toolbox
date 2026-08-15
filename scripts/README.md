@@ -16,7 +16,7 @@ scripts/
     ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
     ├── proc.mjs              进程诊断/清理 CLI（status/list/kill/kill-port）
     ├── typecheck.mjs         TypeScript 类型检查（全仓 / --app server|web）
-    ├── smoke-pages.mjs       页面冒烟（18 页；--page <路径> 定向单页）
+    ├── smoke-pages.mjs       页面冒烟（19 页；--page <路径> 定向单页）
     ├── test.mjs              模块单测快捷（自动定位测试文件 / 全量串行）
     ├── commit.mjs            git 提交包装（消息引号安全，自动 add+commit+push）
     ├── api-cli.mjs           API CLI（GET/POST/PUT/DELETE + JSON body）
@@ -30,8 +30,7 @@ scripts/
     ├── browser-run.mjs       浏览器冒烟运行器（playwright 模板固化）
     ├── ts-resolve-hook.mjs   TS resolve hook（免 spawn 跑 TS 单测）
     ├── _lib.mjs              共享库（ROOT/tsxCli/viteCli 动态路径）
-    ├── self-test.mjs         工具自测
-    └── browser-run.mjs 占位
+    └── self-test.mjs         工具自测
 ```
 
 ## 2. 命令速查表（toolbox 入口）
@@ -41,8 +40,8 @@ scripts/
 | `dev` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，单实例防重 | `toolbox dev start|stop|restart|status|kill-port <port>` |
 | `proc` | **进程诊断/清理**：端口占用 + supervisor 状态 + node 进程命令行（查残留） | `toolbox proc status|list|kill <pid>|kill-port <port>` |
 | `typecheck` | **TypeScript 类型检查（L0 必跑）**：全仓或单 app | `toolbox typecheck [--app server|web]` |
-| `test` | **模块单测快捷**（自动定位测试文件/全量；`--no-spawn` 受限环境用 resolve hook 免 tsx） | `toolbox test tradePlan` / `toolbox test tradeV2 --no-spawn` |
-| `smoke` | 页面冒烟（18 页；`--page` 定向单页配合 L2） | `toolbox smoke [--page /tools/x]` |
+| `test` | **模块单测快捷**（自动定位测试文件/全量；自动探测：能 spawn 走 tsx，受限自动回退 resolve hook） | `toolbox test tradePlan` |
+| `smoke` | 页面冒烟（19 页；`--page` 定向单页配合 L2） | `toolbox smoke [--page /tools/x]` |
 | `api` | **API CLI**（curl 替代，Windows 引号安全，自动加 /api 前缀） | `toolbox api GET /health` |
 | `check` | 改动健康检查（文件数/行数/触及分层 → 建议验证级别） | `toolbox check [--base main]` |
 | `probe` | 浏览器探针：launch 系统 Chrome + 选择器状态 | `toolbox probe <url> --check "textarea:主输入框"` |
@@ -76,9 +75,8 @@ scripts/
 | HTTP API 调用/集成验证 | tmp_tp_e2e / tmp_srv_check / tmp_v*.mjs | → `api.mjs` + `e2e.mjs` |
 | 文件文本替换/补丁（最多） | tmp_patch_*.mjs 系列 | → `patch.mjs` |
 | 浏览器自动化调试 | tmp_diag_* / tmp_browser_* / probe_*.cjs | → `browser-probe.mjs` |
-    ├── browser-run.mjs       浏览器冒烟运行器（playwright 模板固化）
-    ├── ts-resolve-hook.mjs   TS resolve hook（免 spawn 跑 TS 单测）
-    ├── _lib.mjs              共享库（ROOT/tsxCli/viteCli 动态路径）
+| 浏览器冒烟脚本（手写 playwright 模板） | tmp_bcheck / tmp_ledger 等 | → `browser-run.mjs` |
+| TS 单测免 spawn（resolve hook） | tmp_rh*.mjs 系列 | → `ts-resolve-hook.mjs` + `test.mjs --no-spawn` |
 | 备忘录批量操作 | 手写 node -e fetch | → `memo.mjs` |
 | KV/DB 残留排查 | 手写 node:sqlite | → `kv.mjs` |
 | 进程管理/诊断 | 手写 netstat+taskkill+wmic | → `dev.mjs`（管理）+ `proc.mjs`（诊断） |
