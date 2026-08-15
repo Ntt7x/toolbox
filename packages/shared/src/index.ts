@@ -2017,3 +2017,80 @@ export interface TradePlanCalendarResult {
   month: string;
   days: TradePlanCalendarDay[];
 }
+
+// ============================================================
+// 文档中心（工具分组）：markdown + pdf 管理与浏览
+// 文件夹树（docs:folders）+ 文档元数据（docs:meta）+ md 内容（docs:content:<id>）
+// + pdf 二进制（.file/docs/<id>.pdf）；tag 分类；知乎爬虫结果导入
+// ============================================================
+export interface DocFolder {
+  id: string;
+  name: string;
+  /** 父文件夹 id（根目录缺省） */
+  parentId?: string;
+  /** 软删除时间（在回收站时设置；null/缺省 = 正常） */
+  deletedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocItem {
+  id: string;
+  /** 文档名（含扩展名） */
+  name: string;
+  /** 类型：markdown / pdf */
+  type: "md" | "pdf";
+  /** 所属文件夹 id（根目录缺省） */
+  folderId?: string;
+  tags: string[];
+  /** 字节大小 */
+  size: number;
+  /** 软删除时间（在回收站时设置；null/缺省 = 正常） */
+  deletedAt?: string;
+  /** 知乎导入来源（kind: url）——可选 */
+  source?: { kind: string; url?: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocsListResult {
+  ok: true;
+  folders: DocFolder[];
+  items: DocItem[];
+  /** 全部 tag 聚合（去重计数） */
+  tags: { name: string; count: number }[];
+}
+
+export interface DocDetailResult {
+  ok: true;
+  item: DocItem;
+  /** md 内容（type=md 时） */
+  content?: string;
+}
+
+export interface DocFolderMutateResult {
+  ok: true;
+  folders: DocFolder[];
+}
+
+export interface DocsMutateResult {
+  ok: true;
+  items: DocItem[];
+  folders: DocFolder[];
+}
+
+/** 知乎爬取历史（供文档中心导入） */
+export interface ZhihuCrawlBrief {
+  resultId: string;
+  user: string;
+  total: number;
+  savedAt: string;
+  items: { title: string; kind: string; url?: string }[];
+}
+export interface DocsTrashResult {
+  ok: true;
+  /** 回收站中的文档 */
+  items: DocItem[];
+  /** 回收站中的文件夹（含被软删的子文件夹） */
+  folders: DocFolder[];
+}

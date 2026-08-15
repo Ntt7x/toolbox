@@ -67,6 +67,12 @@
   type TodoV3ListResult,
   type TodoV3MutateResult,
   type TodoV3UpdateRequest,
+  type DocDetailResult,
+  type DocFolderMutateResult,
+  type DocsListResult,
+  type DocsMutateResult,
+  type DocsTrashResult,
+  type ZhihuCrawlBrief,
   type BookConfig,
   type BookFavoritesResult,
   type BookHistoryResult,
@@ -264,6 +270,45 @@ export const api = {
     request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   todoV3Delete: (id: string) => request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   todoV3ClearDone: () => request<TodoV3MutateResult>("/tools/todo-v3/clear-done", jsonInit("POST", {})),
+  // 文档中心（markdown/pdf 管理与浏览）
+  docsList: () => request<DocsListResult>("/tools/docs"),
+  docsDetail: (id: string) => request<DocDetailResult>(`/tools/docs/${encodeURIComponent(id)}`),
+  docsUpload: (files: File[], folderId?: string, tags: string[] = []) => {
+    const fd = new FormData();
+    if (folderId) fd.append("folderId", folderId);
+    for (const t of tags) fd.append("tags", t);
+    for (const f of files) fd.append("files", f);
+    return request<DocsMutateResult & { created: { name: string; type: string }[]; errors: string[]; tags: { name: string; count: number }[] }>("/tools/docs/upload", {
+      method: "POST",
+      body: fd,
+    });
+  },
+  docsFolderCreate: (name: string, parentId?: string) =>
+    request<DocFolderMutateResult>("/tools/docs/folder", jsonInit("POST", parentId ? { name, parentId } : { name })),
+  docsFolderRename: (id: string, name: string) =>
+    request<DocFolderMutateResult>(`/tools/docs/folder/${encodeURIComponent(id)}`, jsonInit("PUT", { name })),
+  docsFolderMove: (id: string, parentId: string | null) =>
+    request<DocFolderMutateResult>(`/tools/docs/folder/${encodeURIComponent(id)}/move`, jsonInit("PUT", { parentId })),
+  docsFolderDelete: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/folder/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  docsUpdate: (id: string, patch: { name?: string; tags?: string[]; folderId?: string | "none"; content?: string }) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  docsDelete: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  docsRestore: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
+  docsPurge: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/${encodeURIComponent(id)}/purge`, jsonInit("DELETE", {})),
+  docsFolderRestore: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/folder/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
+  docsFolderPurge: (id: string) =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>(`/tools/docs/folder/${encodeURIComponent(id)}/purge`, jsonInit("DELETE", {})),
+  docsTrash: () => request<DocsTrashResult>("/tools/docs/trash"),
+  docsEmptyTrash: () =>
+    request<DocsMutateResult & { tags: { name: string; count: number }[] }>("/tools/docs/trash/empty", jsonInit("POST", {})),
+  docsZhihuResults: () => request<{ ok: true; results: ZhihuCrawlBrief[] }>("/tools/docs/zhihu-results"),
+  docsZhihuImport: (resultIds: string[], folderId?: string, tags: string[] = []) =>
+    request<DocsMutateResult & { imported: number; errors: string[]; tags: { name: string; count: number }[] }>("/tools/docs/zhihu-import", jsonInit("POST", { resultIds, folderId, tags })),
   // 书籍下载（zlib）
   booksSearch: (q: string, page = 1, limit = 20) =>
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),
