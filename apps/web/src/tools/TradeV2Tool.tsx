@@ -2111,18 +2111,18 @@ export default function TradeV2Tool() {
                 ) : (
                   <div style={{ maxHeight: 520, overflow: "auto" }}>
                   <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-white">
+                    <TableHeader>
                       <TableRow>
-                        <TableHead>日期</TableHead>
-                        <TableHead>分组</TableHead>
-                        <TableHead>标的</TableHead>
-                        <TableHead>操作</TableHead>
-                        <TableHead className="text-right">数量</TableHead>
-                        <TableHead className="text-right">价格</TableHead>
-                        <TableHead className="text-right">金额</TableHead>
-                        <TableHead className="text-right">手续费</TableHead>
-                        <TableHead>备注</TableHead>
-                        <TableHead className="text-right">操作</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white">日期</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white">分组</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white">标的</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white">操作</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white text-right">数量</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white text-right">价格</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white text-right">金额</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white text-right">手续费</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white">备注</TableHead>
+                        <TableHead className="sticky top-0 z-10 bg-white text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
