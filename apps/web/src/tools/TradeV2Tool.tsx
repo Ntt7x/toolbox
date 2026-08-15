@@ -1635,7 +1635,8 @@ export default function TradeV2Tool() {
   const isGroupView = selectedId !== "all" && !!detail;
   const analysis = detail?.analysis ?? null;
   // 功能区 tab：全部视图默认组合分析（analysis-global），分组视图默认收益分区（analysis）；其余 tab 共用
-  const activeTab = isGroupView ? (tab === "analysis-global" ? "analysis" : tab) : tab === "analysis" || tab === "analysis-global" ? "analysis-global" : tab;
+  // 功能区 tab 视图感知：仅分组视图需把 analysis-global 映射为 analysis；全部视图 analysis/analysis-global 均有效
+  const activeTab = isGroupView && tab === "analysis-global" ? "analysis" : tab;
   const selectedGroup = detail?.group ?? null;
 
   const cur = useMemo(() => {
@@ -1643,8 +1644,8 @@ export default function TradeV2Tool() {
       return {
         totalMv: analysis.totalMv,
         totalCost: analysis.totalCost,
-        unrealizedPnl: analysis.unrealizedPnl,
-        realizedPnl: analysis.realizedPnl,
+        unrealizedPnl: analysis!.unrealizedPnl,
+        realizedPnl: analysis!.realizedPnl,
         totalPnl: analysis.totalPnl,
         invested: analysis.invested,
         openCount: analysis.openCount,
@@ -1765,8 +1766,8 @@ export default function TradeV2Tool() {
   const donutOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
     const data = [
-      { name: "已实现", value: Math.abs(Math.round(analysis.realizedPnl)), signed: analysis.realizedPnl, color: C.accent },
-      { name: "未实现", value: Math.abs(Math.round(analysis.unrealizedPnl)), signed: analysis.unrealizedPnl, color: "#93c5fd" },
+      { name: "已实现", value: Math.abs(Math.round(analysis!.realizedPnl)), signed: analysis!.realizedPnl, color: C.accent },
+      { name: "未实现", value: Math.abs(Math.round(analysis!.unrealizedPnl)), signed: analysis!.unrealizedPnl, color: "#93c5fd" },
     ].filter((d) => d.value > 0);
     return {
       tooltip: { trigger: "item", formatter: (p: unknown) => {
@@ -1780,7 +1781,7 @@ export default function TradeV2Tool() {
 
   const attrOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
-    const top = analysis.pnlAttribution.slice(0, 10);
+    const top = analysis!.pnlAttribution.slice(0, 10);
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, formatter: (p: unknown) => {
         const arr = (p as { name: string; value: unknown }[]);
@@ -1796,7 +1797,7 @@ export default function TradeV2Tool() {
 
   const scaleOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
-    const daily = analysis.dailySeries;
+    const daily = analysis!.dailySeries;
     let cum = 0;
     const cumRealized = daily.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
     let inv = 0;
@@ -1819,7 +1820,7 @@ export default function TradeV2Tool() {
 
   const monthOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
-    const months = analysis.monthlySeries.map((m) => m.month);
+    const months = analysis!.monthlySeries.map((m) => m.month);
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       legend: { data: ["买入", "卖出回款", "已实现"], top: 0, textStyle: { fontSize: 11 } },
@@ -1827,9 +1828,9 @@ export default function TradeV2Tool() {
       xAxis: { type: "category", data: months, axisLabel: { fontSize: 10 } },
       yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
       series: [
-        { name: "买入", type: "bar", data: analysis.monthlySeries.map((m) => Math.round(m.buyAmount)), itemStyle: { color: "#93c5fd" }, barMaxWidth: 18 },
-        { name: "卖出回款", type: "bar", data: analysis.monthlySeries.map((m) => Math.round(m.sellAmount)), itemStyle: { color: "#c4b5fd" }, barMaxWidth: 18 },
-        { name: "已实现", type: "bar", data: analysis.monthlySeries.map((m) => Math.round(m.realizedPnl)), itemStyle: { color: "#f59e0b" }, barMaxWidth: 18 },
+        { name: "买入", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.buyAmount)), itemStyle: { color: "#93c5fd" }, barMaxWidth: 18 },
+        { name: "卖出回款", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.sellAmount)), itemStyle: { color: "#c4b5fd" }, barMaxWidth: 18 },
+        { name: "已实现", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.realizedPnl)), itemStyle: { color: "#f59e0b" }, barMaxWidth: 18 },
       ],
     };
   }, [analysis]);
@@ -2003,10 +2004,12 @@ export default function TradeV2Tool() {
               </TabsContent>
             )}
 
-            {isGroupView && analysis && (
+            {(isGroupView && analysis) || (!isGroupView && global) ? (
               <TabsContent value="analysis">
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {analysis.dailySeries.length === 0 && (
+                  {isGroupView && analysis && (
+                  <>
+                  {analysis!.dailySeries.length === 0 && (
                     <Card><CardContent style={{ padding: "1.2rem", textAlign: "center" }}>
                       <div style={{ fontSize: "1.6rem", marginBottom: 6 }}>🗒️</div>
                       <div style={{ fontSize: "0.9rem", fontWeight: 600, color: C.text, marginBottom: 4 }}>该分组还没有任何交易</div>
@@ -2017,11 +2020,11 @@ export default function TradeV2Tool() {
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                     <Card><CardContent>
                       <SectionTitle icon="🍩" color={C.accent}>收益构成（已实现 vs 未实现）</SectionTitle>
-                      {Math.abs(analysis.realizedPnl) + Math.abs(analysis.unrealizedPnl) > 0 ? <EChart option={donutOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无收益</div>}
+                      {Math.abs(analysis!.realizedPnl) + Math.abs(analysis!.unrealizedPnl) > 0 ? <EChart option={donutOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无收益</div>}
                     </CardContent></Card>
                     <Card><CardContent>
                       <SectionTitle icon="🏆" color={C.accent}>收益归因（Top 10 标的，红涨绿跌）</SectionTitle>
-                      {analysis.pnlAttribution.length > 0 ? <EChart option={attrOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无交易</div>}
+                      {analysis!.pnlAttribution.length > 0 ? <EChart option={attrOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无交易</div>}
                     </CardContent></Card>
                     <Card style={{ gridColumn: "1 / -1" }}><CardContent>
                       <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 历史价时间性）</SectionTitle>
@@ -2032,16 +2035,26 @@ export default function TradeV2Tool() {
                       <EChart option={monthOption} height={220} />
                     </CardContent></Card>
                   </div>
-                  <DailyTable dailySeries={analysis.dailySeries} />
+                  <DailyTable dailySeries={analysis!.dailySeries} />
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <MonthlyTable monthlySeries={analysis.monthlySeries} />
-                    <AttributionTable attribution={analysis.pnlAttribution} onRowClick={(a) => setStockDlg({ code: a.code, name: a.name })} />
+                    <MonthlyTable monthlySeries={analysis!.monthlySeries} />
+                    <AttributionTable attribution={analysis!.pnlAttribution} onRowClick={(a) => setStockDlg({ code: a.code, name: a.name })} />
                   </div>
-                  <PerformanceCard deals={analysis.deals} />
-                  <DealsTable deals={analysis.deals} />
+                  <PerformanceCard deals={analysis!.deals} />
+                  <DealsTable deals={analysis!.deals} />
+                  </>
+                  )}
                 </div>
+                  {!isGroupView && global && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <Card style={{ gridColumn: "1 / -1" }}><CardContent>
+                        <SectionTitle icon="📅" color={C.accent}>组合每日动态（历史价口径 · 跨组合合并）</SectionTitle>
+                        <DailyTable dailySeries={global.dailySeries} />
+                      </CardContent></Card>
+                    </div>
+                  )}
               </TabsContent>
-            )}
+            ) : null}
 
             <TabsContent value="positions">
               <PositionsTable
