@@ -1547,6 +1547,7 @@ export default function TradeV2Tool() {
   const [groups, setGroups] = useState<TradeV2GroupSummary[]>([]);
   const [entries, setEntries] = useState<TradeV2Entry[]>([]);
   // 分组选择：localStorage 记忆上次选中；无记忆时默认第一分组（有分组），无分组才 all
+  const [pillHover, setPillHover] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string>(() => {
     const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
     return saved ?? "all";
@@ -1604,7 +1605,7 @@ export default function TradeV2Tool() {
     await loadAnalysis(selectedId);
   }, [loadOverview, loadAnalysis, selectedId]);
 
-  // 初始化一次：loadOverview 填充 groups → 恢复记忆/默认选中分组
+  // 初始化一次：loadOverview 填充 groups；恢复 localStorage 记忆的分组（若有），否则全部
   const initRef = useRef(false);
   useEffect(() => {
     if (initRef.current) return;
@@ -1612,9 +1613,8 @@ export default function TradeV2Tool() {
     setLoading(true);
     void (async () => {
       const loaded = (await loadOverview()) ?? []; // 填充 groups 并取回
-      // 默认选中：localStorage 记忆（若仍存在）否则第一个分组（有分组时）；全空才 all
       const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
-      const initialId = saved && loaded.some((g) => g.id === saved) ? saved : loaded.length > 0 ? loaded[0]!.id : "all";
+      const initialId = saved && loaded.some((g) => g.id === saved) ? saved : "all";
       setSelectedId(initialId);
       await loadAnalysis(initialId);
       setLoading(false);
@@ -1870,11 +1870,11 @@ export default function TradeV2Tool() {
   const realizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.realizedPnl / cur.totalCost) * 100 : undefined;
   const unrealizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.unrealizedPnl / cur.totalCost) * 100 : undefined;
 
-  const groupTabStyle = (sel: boolean): React.CSSProperties => ({
+  const groupTabStyle = (sel: boolean, hover = false): React.CSSProperties => ({
     padding: "0.4rem 0.85rem",
     borderRadius: 10,
     border: "1.5px solid " + (sel ? C.accent : C.faint),
-    background: sel ? C.accentBg : "#fff",
+    background: sel ? C.accentBg : hover ? C.panel : "#fff",
     color: sel ? "#1d4ed8" : C.sub,
     fontSize: "0.82rem",
     cursor: "pointer",
@@ -1905,13 +1905,13 @@ export default function TradeV2Tool() {
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: "0.8rem", fontWeight: 700, color: C.sub }}>分组</span>
-            <button onClick={() => { setSelectedId("all"); try { localStorage.setItem("tradeV2:selectedGroup", "all"); } catch {} }} style={groupTabStyle(selectedId === "all")}>
+            <button onClick={() => { setSelectedId("all"); try { localStorage.setItem("tradeV2:selectedGroup", "all"); } catch {} }} onMouseEnter={() => setPillHover("all")} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(selectedId === "all", pillHover === "all")}>
               全部组合（{groups.length}）
             </button>
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
-                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} style={groupTabStyle(sel)}>
+                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id)}>
                   {g.name}
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
@@ -1947,9 +1947,9 @@ export default function TradeV2Tool() {
               ]} />
               {/* 资金逻辑链②：已实现（落袋）+ 未实现（浮动）= 总盈亏，各带率 */}
               <StatGroup title="盈亏" icon="💰" tone="red" items={[
-                { label: "已实现", value: pnlText(cur.realizedPnl), color: pnlColor(cur.realizedPnl), sub: realizedRate !== undefined ? `率 ${pctSigned(realizedRate)}` : undefined },
-                { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
-                { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
+                { label: "已实现", value: pnlText(cur.realizedPnl), color: pnlColor(cur.realizedPnl), sub: cur.realizedPnl !== 0 && realizedRate !== undefined ? `率 ${pctSigned(realizedRate)}` : undefined },
+                { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: cur.unrealizedPnl !== 0 && unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
+                { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
               ]} />
               {isGroupView ? (
                 <StatGroup title="仓位" icon="🏦" tone="emerald" items={[
