@@ -317,6 +317,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 4. **验证脚本陷阱**：菜单本体是遮罩（z-index:90）的**子级**（z-index:95）——`body > div` 选择器只匹配遮罩会**误报"菜单未出现"**；验证必须用匹配真实 DOM 结构的选择器（`querySelectorAll("div")` 找 z95），或直接断言菜单文本存在
 5. **用户反馈与实测矛盾时**（实测贴近但用户说远/说没生效）按序怀疑：① 验证脚本选择器/等待/状态是否错了 ② 用户浏览器是否 HMR 未生效（旧代码仍在跑，需硬刷新 Ctrl+F5）③ 窗口尺寸/DPI/浏览器缩放差异 —— **不要急着否定用户，先自查测试链路**
 
+**手写交互组件优先成熟库（2026-08-16 用户批评"你写的什么玩意一堆bug"后确立，强制）**：
+
+1. **凡是滚动容器、弹层/菜单、折叠、气泡这类有成熟语义的交互组件，一律优先用 shadcn/ui 成熟组件**（ScrollArea / DropdownMenu / Collapsible / Tabs / Dialog / Tooltip），**不要手写轮子**——手写反复踩坑：flex 容器子项压缩导致**文本重叠**（→ ScrollArea 解决）、fixed 定位受容器干扰（→ portal）、Escape 关闭缺失、滚动/高亮联动错位
+2. **安装组件**：`npx shadcn@latest add <组件> -y -c apps/web`（workspace 必须 `-c apps/web`，否则报 monorepo 根错误；Base UI 底层自动匹配）
+3. **滚动容器**：长列表（TOC/日志/结果列表）用 `ScrollArea`（内部 viewport 自动滚动，天然防 flex 压缩重叠）；手写 `overflowY: auto` 在 flex column 父容器里会被子项压缩（flex-shrink:1）导致文本溢出重叠
+4. **TOC/大纲联动高亮**（MarkdownView 实践）：
+   - 高亮判定用**内容区相对坐标**（`标题.top - 内容区.top <= 80`），**不要用视口绝对坐标**（内容区在页面中部时标题永远到不了视口顶部，高亮错位/消失）
+   - 点击跳转用**瞬间 scrollIntoView（block: start）**+ `jumpAt` 时间戳——跳转后 600ms 内 onScroll 不覆盖高亮（否则 smooth 途中 onScroll 把点击项覆盖成中间标题）
+5. **右键菜单**：当前文档中心保留 portal 版（定位/翻转/Escape 已修）；后续新菜单优先 shadcn `DropdownMenu`（Base UI Menu，支持 `openOnContextMenu` 与虚拟 anchor 定位）
+
+
 
 ## 6. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 

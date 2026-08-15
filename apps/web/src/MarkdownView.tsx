@@ -8,8 +8,8 @@
 //   - 渲染失败：rehype-katex 内置兜底（红字显示原文，不崩页面）；errorColor 自定义
 // 阅读增强（memo msuzib4d / msv0h3uv，vscode 风格）：
 //   - showToc：左侧 TOC 目录（标题层级，可收起；点击滚动定位 + 当前阅读高亮）
-//   - showMinimap：右侧 minimap（参考 vscode：canvas 内容缩略图 + 视口指示 + 点击跳转）
 //   - maxWidth：内容区最大宽度（居中阅读）
+// 注：minimap 已按用户要求移除（设计见 docs/design/reading-minimap.md，暂缓规划 2026-08-16）
 // 样式与既有页面配色一致（浅色卡片、蓝链、表格边框斑马纹）
 // ============================================================
 import ReactMarkdown from "react-markdown";
@@ -19,11 +19,11 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type MdProps = ComponentPropsWithoutRef<typeof ReactMarkdown> & {
   fontScale?: number;
   showToc?: boolean;      // 左侧 TOC 目录（vscode outline，可收起）
-  showMinimap?: boolean;  // 右侧 minimap（vscode 风格内容缩略图）
   maxWidth?: number;      // 内容区最大宽度（居中阅读，默认 820）
 };
 
@@ -55,95 +55,47 @@ export function extractToc(src: string): { level: number; text: string }[] {
   return items;
 }
 
-/** minimap 行色：按 md 源码行类型映射色块（参考 vscode minimap 内容缩略） */
-function lineColor(line: string, inCode: boolean): string | null {
-  const t = line.trim();
-  if (t.startsWith("```")) return "#334155";
-  if (inCode) return "#0f172a";
-  if (/^#{1,4}\s/.test(line)) return "#3b82f6";
-  if (t.startsWith(">")) return "#bfdbfe";
-  if (t.startsWith("|")) return "#94a3b8";
-  if (t.startsWith("- ") || t.startsWith("* ") || /^\d+\.\s/.test(t)) return "#cbd5e1";
-  if (!t) return null;
-  return "#e2e8f0";
-}
-
-export function MarkdownView({ fontScale = 1, showToc = false, showMinimap = false, maxWidth, ...props }: MdProps) {
-  const usePanels = showToc || showMinimap;
+export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...props }: MdProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const mmCanvasRef = useRef<HTMLCanvasElement>(null);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [tocOpen, setTocOpen] = useState(true);   // TOC 可收起（memo msv0h3uv-2）
-  const [mmPos, setMmPos] = useState(0);          // minimap 视口位置 0~1
+  const jumpAt = useRef(0);                       // 点击跳转时间戳（onScroll 短暂不覆盖高亮）
 
   const toc = useMemo(() => extractToc(String(props.children ?? "")), [props.children]);
 
   // 渲染后给标题加锚点 id（md-h-{i}），供 TOC 点击定位
   useEffect(() => {
-    if (!usePanels) return;
+    if (!showToc) return;
     const root = scrollRef.current;
     if (!root) return;
     const hs = root.querySelectorAll("h1, h2, h3, h4");
     hs.forEach((h, i) => { h.id = "md-h-" + i; });
-  }, [props.children, usePanels, fontScale]);
+  }, [props.children, showToc, fontScale]);
 
-  // 滚动 → 当前阅读标题（顶部 96px 内的最后一个）+ minimap 视口位置
+  // 滚动 → 当前阅读标题（相对内容区顶部：标题滚到内容区视口顶部 44px 内即当前项）
+  // 修复（memo 目录严重 bug）：此前用视口绝对坐标 top<=96，但内容区在页面中部（y≈350），
+  // 标题永远到不了视口 96px → 高亮滞后/错位/消失。
   const onScroll = () => {
+    // 点击跳转后 600ms 内不覆盖高亮（避免 smooth/滚动途中把点击项覆盖成中间标题）
+    if (Date.now() - jumpAt.current < 600) return;
     const root = scrollRef.current;
     if (!root) return;
     const hs = root.querySelectorAll("h1, h2, h3, h4");
+    const top = root.getBoundingClientRect().top;
     let cur = -1;
     for (let i = 0; i < hs.length; i++) {
-      if (hs[i].getBoundingClientRect().top <= 96) cur = i;
+      if (hs[i].getBoundingClientRect().top - top <= 80) cur = i;
     }
     setActiveIdx(cur);
-    if (root.scrollHeight > root.clientHeight) setMmPos(root.scrollTop / (root.scrollHeight - root.clientHeight));
   };
 
   const scrollTo = (i: number) => {
-    // 直接查标题元素定位（不依赖 id——重渲染后 id 可能丢失）
+    // 瞬间跳转（auto）+ 标记时间戳——点击目标明确，高亮锁定该项（memo 目录严重 bug 修复）
+    jumpAt.current = Date.now();
     const root = scrollRef.current;
     const hs = root?.querySelectorAll("h1, h2, h3, h4");
-    hs?.[i]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    hs?.[i]?.scrollIntoView({ block: "start" });
     setActiveIdx(i);
-  };
-
-  // minimap canvas 绘制（md 源码行色条 → 内容缩略，参考 vscode）
-  useEffect(() => {
-    if (!showMinimap) return;
-    const canvas = mmCanvasRef.current;
-    const root = scrollRef.current;
-    if (!canvas || !root) return;
-    const H = Math.max(100, root.clientHeight);
-    const W = 56;
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, W, H);
-    const lines = String(props.children ?? "").split("\n");
-    if (lines.length === 0) return;
-    let inCode = false;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i].trim();
-      if (l.startsWith("```")) { inCode = !inCode; }
-      const c = lineColor(lines[i], inCode);
-      if (c) {
-        const y = (i / lines.length) * H;
-        const h = Math.max(1.5, (1 / lines.length) * H);
-        ctx.fillStyle = c;
-        ctx.fillRect(0, Math.round(y), W, Math.max(1, Math.round(h)));
-      }
-    }
-  }, [props.children, showMinimap, fontScale]);
-
-  // minimap 点击/拖动 → 按比例滚动内容
-  const mmJump = (e: React.MouseEvent<HTMLDivElement>) => {
-    const root = scrollRef.current;
-    if (!root) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-    root.scrollTop = ratio * (root.scrollHeight - root.clientHeight);
-    setMmPos(ratio);
   };
 
   const md = (
@@ -188,17 +140,17 @@ export function MarkdownView({ fontScale = 1, showToc = false, showMinimap = fal
     />
   );
 
-  // 无阅读面板：保持原有简单渲染（父容器负责滚动）
-  if (!usePanels) {
+  // 无 TOC：保持原有简单渲染（父容器负责滚动）
+  if (!showToc) {
     return <div style={blockStyle(fontScale)} className="md-view">{md}</div>;
   }
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0, ...blockStyle(fontScale) }} className="md-view">
-      {/* 左侧 TOC（vscode outline 风格，可收起） */}
-      {showToc && (tocOpen ? (
-        <div style={{ width: 200, flexShrink: 0, borderRight: "1px solid #eef2f7", background: "#f8fafc", overflowY: "auto", padding: "0.6rem 0.4rem", display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "0.1rem 0.5rem 0.5rem" }}>
+      {/* 左侧 TOC（vscode outline 风格，可收起；滚动容器用 shadcn ScrollArea——memo 文本重叠修复） */}
+      {tocOpen ? (
+        <div style={{ width: 200, flexShrink: 0, borderRight: "1px solid #eef2f7", background: "#f8fafc", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", padding: "0.6rem 0.5rem 0.3rem", flexShrink: 0 }}>
             <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 700, flex: 1 }}>目录</span>
             <span
               onClick={() => setTocOpen(false)}
@@ -206,23 +158,25 @@ export function MarkdownView({ fontScale = 1, showToc = false, showMinimap = fal
               style={{ fontSize: "0.75rem", color: "#94a3b8", cursor: "pointer", padding: "0.1rem 0.3rem", borderRadius: 4 }}
             >»</span>
           </div>
-          {toc.length === 0 && <div style={{ fontSize: "0.75rem", color: "#cbd5e1", padding: "0.3rem 0.5rem" }}>无标题</div>}
-          {toc.map((t, i) => (
-            <div
-              key={i}
-              onClick={() => scrollTo(i)}
-              title={t.text}
-              style={{
-                padding: "0.22rem 0.5rem", paddingLeft: `${0.5 + (t.level - 1) * 0.75}rem`, cursor: "pointer", borderRadius: 5,
-                fontSize: t.level === 1 ? "0.8rem" : "0.75rem", fontWeight: t.level === 1 ? 600 : 400,
-                color: i === activeIdx ? "#2563eb" : "#64748b",
-                background: i === activeIdx ? "#eff6ff" : "transparent",
-                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-              }}
-            >
-              {t.text}
-            </div>
-          ))}
+          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+            {toc.length === 0 && <div style={{ fontSize: "0.75rem", color: "#cbd5e1", padding: "0.3rem 0.5rem" }}>无标题</div>}
+            {toc.map((t, i) => (
+              <div
+                key={i}
+                onClick={() => scrollTo(i)}
+                title={t.text}
+                style={{
+                  padding: "0.22rem 0.5rem", paddingLeft: `${0.5 + (t.level - 1) * 0.75}rem`, cursor: "pointer", borderRadius: 5,
+                  fontSize: t.level === 1 ? "0.8rem" : "0.75rem", fontWeight: t.level === 1 ? 600 : 400,
+                  color: i === activeIdx ? "#2563eb" : "#64748b",
+                  background: i === activeIdx ? "#eff6ff" : "transparent",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}
+              >
+                {t.text}
+              </div>
+            ))}
+          </ScrollArea>
         </div>
       ) : (
         <div
@@ -232,27 +186,13 @@ export function MarkdownView({ fontScale = 1, showToc = false, showMinimap = fal
         >
           <span style={{ writingMode: "vertical-rl", fontSize: "0.72rem", color: "#94a3b8", letterSpacing: "0.15rem" }}>📑 目录</span>
         </div>
-      ))}
+      )}
       {/* 内容区（自身滚动 + 标题锚点） */}
       <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
         <div style={{ maxWidth: maxWidth ?? 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
           {md}
         </div>
       </div>
-      {/* 右侧 minimap（参考 vscode：canvas 内容缩略 + 视口指示 + 点击跳转，memo msv0h3uv-3） */}
-      {showMinimap && (
-        <div
-          onClick={mmJump}
-          title="点击/拖动跳转"
-          style={{ width: 58, flexShrink: 0, borderLeft: "1px solid #eef2f7", background: "#f8fafc", position: "relative", overflow: "hidden", cursor: "pointer" }}
-        >
-          <canvas ref={mmCanvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
-          {/* 视口指示块 */}
-          <div
-            style={{ position: "absolute", left: 0, right: 0, top: `${mmPos * 100}%`, height: `${Math.max(4, 100 * (1 / 3))}%`, background: "rgba(37,99,235,0.14)", borderTop: "1px solid rgba(37,99,235,0.45)", borderBottom: "1px solid rgba(37,99,235,0.45)", pointerEvents: "none" }}
-          />
-        </div>
-      )}
     </div>
   );
 }

@@ -721,7 +721,7 @@ export default function DocsTool() {
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
                 ) : (
                   <div style={{ flex: 1, minHeight: 0 }}>
-                    <MarkdownView showToc showMinimap fontScale={fontScale}>{activeTab.content ?? ""}</MarkdownView>
+                    <MarkdownView showToc fontScale={fontScale}>{activeTab.content ?? ""}</MarkdownView>
                   </div>
                 )
               ) : (
