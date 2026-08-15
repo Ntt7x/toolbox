@@ -15,14 +15,14 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import type { ComponentPropsWithoutRef } from "react";
 
-type MdProps = ComponentPropsWithoutRef<typeof ReactMarkdown>;
+type MdProps = ComponentPropsWithoutRef<typeof ReactMarkdown> & { fontScale?: number };
 
-/** 表格/列表等块级元素共享的浅色容器样式 */
-const blockStyle: React.CSSProperties = {
-  fontSize: "0.82rem",
+/** 表格/列表等块级元素共享的浅色容器样式（fontScale 支持阅读字号调节） */
+const blockStyle = (fontScale: number): React.CSSProperties => ({
+  fontSize: `${0.82 * fontScale}rem`,
   lineHeight: 1.75,
   color: "#334155",
-};
+});
 
 const tableStyle: React.CSSProperties = {
   borderCollapse: "collapse",
@@ -31,16 +31,16 @@ const tableStyle: React.CSSProperties = {
   fontSize: "0.8rem",
 };
 
-export function MarkdownView(props: MdProps) {
+export function MarkdownView({ fontScale = 1, ...props }: MdProps) {
   return (
-    <div style={blockStyle} className="md-view">
+    <div style={blockStyle(fontScale)} className="md-view">
       <ReactMarkdown
         remarkPlugins={[[remarkMath, { singleDollarTextMath: false }], remarkGfm]}
         rehypePlugins={[[rehypeKatex, { errorColor: "#dc2626" }]]}
         components={{
-          h1: (p) => <h1 style={{ fontSize: "1.15rem", margin: "0.8rem 0 0.4rem", color: "#0f172a" }} {...p} />,
-          h2: (p) => <h2 style={{ fontSize: "1.05rem", margin: "0.7rem 0 0.35rem", color: "#0f172a", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.2rem" }} {...p} />,
-          h3: (p) => <h3 style={{ fontSize: "0.95rem", margin: "0.6rem 0 0.3rem", color: "#1e293b" }} {...p} />,
+          h1: (p) => <h1 style={{ fontSize: `${1.15 * fontScale}rem`, margin: "0.8rem 0 0.4rem", color: "#0f172a" }} {...p} />,
+          h2: (p) => <h2 style={{ fontSize: `${1.05 * fontScale}rem`, margin: "0.7rem 0 0.35rem", color: "#0f172a", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.2rem" }} {...p} />,
+          h3: (p) => <h3 style={{ fontSize: `${0.95 * fontScale}rem`, margin: "0.6rem 0 0.3rem", color: "#1e293b" }} {...p} />,
           p: (p) => <p style={{ margin: "0.4rem 0" }} {...p} />,
           ul: (p) => <ul style={{ margin: "0.4rem 0", paddingLeft: "1.3rem" }} {...p} />,
           ol: (p) => <ol style={{ margin: "0.4rem 0", paddingLeft: "1.3rem" }} {...p} />,

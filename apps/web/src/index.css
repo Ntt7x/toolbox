@@ -79,3 +79,8 @@
     border-color: var(--border);
   }
 }
+
+/* ===== 文档中心 Markdown 阅读增强 ===== */
+.md-view table tr:nth-child(even) td { background: #f8fafc; }
+.md-view .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }
+.md-view pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }

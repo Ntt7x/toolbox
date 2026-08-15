@@ -28,7 +28,8 @@ interface MenuItem {
   label: string;
   icon?: string;
   danger?: boolean;
-  onClick: () => void;
+  divider?: boolean;
+  onClick?: () => void;
 }
 
 export default function DocsTool() {
@@ -46,6 +47,9 @@ export default function DocsTool() {
   const [openTabs, setOpenTabs] = useState<{ item: DocItem; content?: string; busy?: boolean }[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const contentCache = useRef<Map<string, string>>(new Map());
+  // 阅读字号 / PDF 缩放（memo 6：类似编辑器字号 + PDF 阅读器缩放）
+  const [fontScale, setFontScale] = useState(1);
+  const [pdfScale, setPdfScale] = useState(1);
   // 上传
   const [uploadTags, setUploadTags] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -96,9 +100,9 @@ export default function DocsTool() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadTrash(); }, [loadTrash]);
-  // Escape 收起预览（vscode 习惯；保留 openTabs 与缓存）
+  // Escape 收起预览 / 关闭右键菜单（vscode 习惯；保留 openTabs 与缓存）
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setActiveTabId(null); };
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") { setActiveTabId(null); setMenu(null); } };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
@@ -375,12 +379,24 @@ export default function DocsTool() {
   const menuItems = (): MenuItem[] => {
     if (!menu) return [];
     if (menu.kind === "folder") {
+      // 根目录特殊：无文件夹实体，仅提供导入/新建
+      if (menu.id === "__root__") {
+        return [
+          { label: "新建文件夹", icon: "📁", onClick: () => { setCurFolder(null); setNewFolderName(""); setTimeout(() => document.getElementById("new-folder-input")?.focus(), 50); } },
+          { label: "导入知乎结果…", icon: "🤖", onClick: () => { setCurFolder(null); void loadZhihu(); setZhihuOpen(true); } },
+          { label: "导入 Chat 对话…", icon: "🔗", onClick: () => { setCurFolder(null); setChatUrl(""); setChatOpen(true); } },
+        ];
+      }
       const f = folders.find((x) => x.id === menu.id);
       if (!f) return [];
       return [
         { label: "设为当前", icon: "📍", onClick: () => { setCurFolder(f.id); setTrashView(false); } },
-        { label: "新建子文件夹", icon: "📁", onClick: () => { setCurFolder(f.id); setNewFolderName(""); setTimeout(() => { document.getElementById("new-folder-input")?.focus(); }, 0); } },
+        { label: "新建子文件夹", icon: "📁", onClick: () => { setCurFolder(f.id); setNewFolderName(""); setTimeout(() => document.getElementById("new-folder-input")?.focus(), 50); } },
         { label: "重命名", icon: "✎", onClick: () => { setEditingFolder(f.id); setEditFolderName(f.name); } },
+        { label: "sep-1", divider: true },
+        { label: "导入知乎结果…", icon: "🤖", onClick: () => { setCurFolder(f.id); void loadZhihu(); setZhihuOpen(true); } },
+        { label: "导入 Chat 对话…", icon: "🔗", onClick: () => { setCurFolder(f.id); setChatUrl(""); setChatOpen(true); } },
+        { label: "sep-2", divider: true },
         { label: "移到回收站", icon: "🗑️", danger: true, onClick: () => void removeFolder(f) },
       ];
     }
@@ -523,12 +539,8 @@ export default function DocsTool() {
             placeholder="上传标签（逗号分隔）"
             style={{ flex: 1, minWidth: 160, padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
           />
-          <button onClick={() => void loadZhihu()} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontSize: "0.88rem", cursor: "pointer" }}>
-            🤖 知乎导入
-          </button>
-          <button onClick={() => { setChatUrl(""); setChatOpen(true); }} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontSize: "0.88rem", cursor: "pointer" }}>
-            🔗 Chat 导入
-          </button>
+          
+          
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
           <button onClick={() => { setCurFolder(null); setTrashView(false); }} style={{ padding: "0.3rem 0.7rem", borderRadius: 999, border: "1px solid " + (!trashView && curFolder === null ? "#3b82f6" : "#e2e8f0"), background: !trashView && curFolder === null ? "#eff6ff" : "#fff", color: !trashView && curFolder === null ? "#2563eb" : "#64748b", fontSize: "0.76rem", cursor: "pointer" }}>
@@ -539,9 +551,7 @@ export default function DocsTool() {
               #{t.name} {t.count}
             </button>
           ))}
-          <button onClick={() => { setTrashView(!trashView); setCurFolder(null); setCurTag(null); }} style={{ marginLeft: "auto", padding: "0.3rem 0.7rem", borderRadius: 999, border: "1px solid " + (trashView ? "#dc2626" : "#e2e8f0"), background: trashView ? "#fef2f2" : "#fff", color: trashView ? "#dc2626" : "#64748b", fontSize: "0.76rem", cursor: "pointer" }}>
-            🗑️ 回收站 {trashCount > 0 ? `(${trashCount})` : ""}
-          </button>
+          
         </div>
       </div>
 
@@ -557,6 +567,7 @@ export default function DocsTool() {
             onDragOver={(e) => { e.preventDefault(); setDragOver("__root__"); }}
             onDragLeave={() => setDragOver((d) => (d === "__root__" ? null : d))}
             onDrop={(e) => void onDropToFolder(e, null)}
+            onContextMenu={(e) => openMenu(e, "folder", "__root__")}
             style={{ cursor: "pointer", padding: "0.3rem 0.45rem", borderRadius: 6, background: dragOver === "__root__" ? "#dbeafe" : curFolder === null && !trashView ? "#eff6ff" : "transparent", fontSize: "0.86rem", color: curFolder === null && !trashView ? "#2563eb" : "#334155", outline: dragOver === "__root__" ? "1px dashed #3b82f6" : "none" }}
             title="拖文档到此处 = 移到根目录"
           >
@@ -572,6 +583,24 @@ export default function DocsTool() {
             placeholder="新文件夹名（回车）"
             style={{ width: "100%", boxSizing: "border-box", marginTop: "0.5rem", padding: "0.35rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
           />
+          {/* 回收站入口（vscode 风格：作为树底部特殊条目，memo 移入文件夹） */}
+          <div
+            onClick={() => { setTrashView(!trashView); setCurFolder(null); setCurTag(null); }}
+            style={{
+              display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer",
+              padding: "0.3rem 0.45rem", borderRadius: 6, marginTop: "0.6rem",
+              background: trashView ? "#fef2f2" : "transparent",
+              fontSize: "0.84rem", color: trashView ? "#dc2626" : "#64748b",
+              borderTop: "1px solid #eef2f7", paddingTop: "0.6rem",
+            }}
+            title={trashView ? "返回文档浏览" : "回收站：删除的文档/文件夹（可恢复）"}
+          >
+            <span>🗑️</span>
+            <span style={{ flex: 1 }}>回收站</span>
+            {trashCount > 0 && (
+              <span style={{ fontSize: "0.7rem", background: "#fee2e2", color: "#dc2626", borderRadius: 999, padding: "0.1rem 0.5rem" }}>{trashCount}</span>
+            )}
+          </div>
         </div>
 
         {/* 右栏：编辑器区（vscode 风格：tab 栏 + 内容，非弹窗；memo msuxq76n） */}
@@ -627,18 +656,32 @@ export default function DocsTool() {
                         <button onClick={toggleEdit} title="编辑/保存" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: editingId === activeTab.item.id ? "#16a34a" : "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>{editingId === activeTab.item.id ? "💾 保存" : "✏️ 编辑"}</button>
                         <button onClick={() => void copyActive()} title="复制内容" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
                         <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 VSCode</button>
+                        <span style={{ display: "flex", alignItems: "center", gap: 2, borderLeft: "1px solid #e2e8f0", marginLeft: "0.3rem", paddingLeft: "0.3rem" }}>
+                          <button onClick={() => setFontScale((s) => Math.max(0.7, Math.round((s - 0.1) * 100) / 100))} title="减小字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.72rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A−</button>
+                          <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 34, textAlign: "center" }}>{Math.round(fontScale * 100)}%</span>
+                          <button onClick={() => setFontScale((s) => Math.min(1.8, Math.round((s + 0.1) * 100) / 100))} title="增大字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A+</button>
+                        </span>
                       </>
                     )}
                     {activeTab?.item.type === "pdf" && (
-                      <a href={"/api/tools/docs/" + activeTab.item.id + "/file"} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "#2563eb", textDecoration: "none", padding: "0.3rem 0.5rem" }}>新窗口打开 ↗</a>
+                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <button onClick={() => setPdfScale((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100))} title="缩小" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>−</button>
+                        <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 42, textAlign: "center" }}>{Math.round(pdfScale * 100)}%</span>
+                        <button onClick={() => setPdfScale((s) => Math.min(2.5, Math.round((s + 0.25) * 100) / 100))} title="放大" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>＋</button>
+                        <button onClick={() => setPdfScale(1)} title="适应页面" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.7rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>适应</button>
+                      </span>
                     )}
                   </div>
                 </div>
               )}
-              {/* 内容区：md 居中阅读 / pdf 全幅 / 编辑模式 */}
+              {/* 内容区：md 居中阅读 / pdf 缩放 / 编辑模式 */}
               {activeTab ? (
                 activeTab.item.type === "pdf" ? (
-                  <iframe src={"/api/tools/docs/" + activeTab.item.id + "/file"} title={activeTab.item.name} style={{ flex: 1, width: "100%", border: "none", background: "#525659" }} />
+                  <div style={{ flex: 1, overflow: "auto", background: "#525659" }}>
+                    <div style={{ width: `${100 / pdfScale}%`, height: `${100 / pdfScale}%`, transform: `scale(${pdfScale})`, transformOrigin: "top left" }}>
+                      <iframe src={"/api/tools/docs/" + activeTab.item.id + "/file"} title={activeTab.item.name} style={{ width: "100%", height: "100%", border: "none" }} />
+                    </div>
+                  </div>
                 ) : activeTab.busy ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
                 ) : editingId === activeTab.item.id ? (
@@ -648,7 +691,7 @@ export default function DocsTool() {
                 ) : (
                   <div style={{ flex: 1, overflow: "auto" }}>
                     <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
-                      <MarkdownView>{activeTab.content ?? ""}</MarkdownView>
+                      <MarkdownView fontScale={fontScale}>{activeTab.content ?? ""}</MarkdownView>
                     </div>
                   </div>
                 )
@@ -663,7 +706,7 @@ export default function DocsTool() {
           )}        </div>
       </div>
 
-      {/* 右键菜单 */}
+      {/* 右键菜单（防溢出 + divider + danger 高亮） */}
       {menu && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 90 }}
@@ -672,27 +715,36 @@ export default function DocsTool() {
         >
           <div
             style={{
-              position: "fixed", left: menu.x, top: menu.y, zIndex: 95,
-              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
-              padding: "0.3rem", minWidth: 160,
+              position: "fixed",
+              left: Math.min(menu.x, (typeof window !== "undefined" ? window.innerWidth : 1000) - 200),
+              top: Math.min(menu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - menuItems().length * 36 - 16),
+              zIndex: 95,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 12px 32px rgba(15,23,42,0.16)",
+              padding: "0.35rem", minWidth: 180, maxHeight: "70vh", overflowY: "auto",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {menuItems().map((mi) => (
-              <button
-                key={mi.label}
-                onClick={() => { mi.onClick(); setMenu(null); }}
-                style={{
-                  display: "flex", alignItems: "center", gap: "0.5rem", width: "100%", textAlign: "left",
-                  padding: "0.45rem 0.7rem", borderRadius: 6, border: "none", background: "transparent",
-                  fontSize: "0.84rem", cursor: "pointer", color: mi.danger ? "#dc2626" : "#334155",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <span>{mi.icon}</span> {mi.label}
-              </button>
-            ))}
+            {menuItems().map((mi) =>
+              mi.divider ? (
+                <div key={mi.label} style={{ height: 1, background: "#e2e8f0", margin: "0.35rem 0.5rem" }} />
+              ) : (
+                <button
+                  key={mi.label}
+                  onClick={() => { mi.onClick?.(); setMenu(null); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.5rem", width: "100%", textAlign: "left",
+                    padding: "0.45rem 0.7rem", borderRadius: 6, border: "none", background: "transparent",
+                    fontSize: "0.84rem", cursor: "pointer", color: mi.danger ? "#dc2626" : "#334155",
+                    fontWeight: mi.danger ? 500 : 400,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = mi.danger ? "#fef2f2" : "#f1f5f9"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{ width: 18, textAlign: "center", flexShrink: 0 }}>{mi.icon}</span>
+                  <span>{mi.label}</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       )}
