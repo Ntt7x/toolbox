@@ -537,7 +537,8 @@ export default function DocsTool() {
   const trashCount = trash.items.length + trash.folders.length;
 
   return (
-    <div style={{ height: "calc(100vh - 20px)", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "calc(100dvh - 56px)", overflow: "hidden", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+      {/* 视口级布局：高度 = 100dvh − main 垂直 padding(1.75rem×2=56px)；overflow hidden 由内部滚动分区消化（memo 高度不够修复 2026-08-16） */}
       <PageHeader title="文档中心" desc="markdown / pdf 管理与浏览 · 文件夹 + tag · 右键/拖拽 · 回收站" />
       {/* 工具栏 */}
       <div style={{ ...card, flexShrink: 0 }}>
