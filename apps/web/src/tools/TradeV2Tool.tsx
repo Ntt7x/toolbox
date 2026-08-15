@@ -356,7 +356,7 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">所属分组</label>
             <Select value={draft.groupId} onValueChange={(v: string | null) => set("groupId", v ?? "")}>
-              <SelectTrigger className="w-full"><SelectValue placeholder="选择分组" /></SelectTrigger>
+              <SelectTrigger className="w-full"><SelectValue>{groups.find((g) => g.id === draft.groupId)?.name ?? "选择分组"}</SelectValue></SelectTrigger>
               <SelectContent>
                 {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
               </SelectContent>
@@ -373,7 +373,7 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">操作</label>
             <Select value={draft.action} onValueChange={(v: string | null) => set("action", (v ?? "buy") as "buy" | "sell")}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full"><SelectValue>{draft.action === "sell" ? "卖出" : "买入"}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="buy">买入</SelectItem>
                 <SelectItem value="sell">卖出</SelectItem>
@@ -488,7 +488,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
 
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{initial ? "分组设置" : "新建分组"}</DialogTitle>
           <DialogDescription>分组 = 交易的组织单元（如策略）；组内可实施仓位限制（总仓位 / 单日加仓 / 单标的上限）。</DialogDescription>
@@ -509,6 +509,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
           </div>
           <div className="col-span-2">
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单标的上限（% 占总仓位；可选）</label>
+            <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 4 }}>
             {limits.map((l, i) => (
               <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
                 <Input className="h-8 w-40" value={l.code} placeholder="代码" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))} />
@@ -517,6 +518,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setLimits((p) => (p.length > 1 ? p.filter((_, j) => j !== i) : p))}>✕</Button>
               </div>
             ))}
+            </div>
             <Button variant="outline" size="sm" onClick={() => setLimits((p) => [...p, { code: "" }])}>＋ 添加标的限制</Button>
           </div>
           <div className="col-span-2" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
@@ -584,13 +586,20 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 // ---------- 仓位明细表 ----------
 
 function PositionsTable({ positions, groupView, onRowClick, exportName }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string }) {
-  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "weightPct" | null>(null);
+  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
+  const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
+  const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
   const sorted = useMemo(() => {
     if (!sortKey) return positions;
-    const arr = [...positions].sort((a, b) => (a[sortKey] ?? 0) - (b[sortKey] ?? 0));
+    const arr = [...positions].sort((a, b) => {
+      // weightPct 排序：组视图用服务端值；全局视图用市值绝对值（占比排序 = 市值排序）
+      const av = sortKey === "weightPct" ? (weightOf(a) ?? 0) : (a[sortKey] ?? 0);
+      const bv = sortKey === "weightPct" ? (weightOf(b) ?? 0) : (b[sortKey] ?? 0);
+      return av - bv;
+    });
     return asc ? arr : arr.reverse();
-  }, [positions, sortKey, asc]);
+  }, [positions, sortKey, asc, totalMv]);
   const onSort = (k: typeof sortKey) => { if (sortKey === k) setAsc((v) => !v); else { setSortKey(k); setAsc(false); } };
   const sortableHead = (label: string, k: typeof sortKey, cls?: string) => (
     <TableHead className={cls} onClick={() => onSort(k)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
@@ -603,7 +612,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
     <Card><CardContent>
       {exportName && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
-          <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, p.avgCost, p.latestPrice ?? "", Math.round(p.marketValue * 100) / 100, Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
+          <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "占总仓位", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, p.avgCost, p.latestPrice ?? "", Math.round(p.marketValue * 100) / 100, weightOf(p) !== undefined ? Math.round(weightOf(p)! * 100) / 100 : "", Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
         </div>
       )}
       <Table>
@@ -614,7 +623,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
             {sortableHead("均价", "avgCost", "text-right")}
             <TableHead className="text-right">最新价</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
-            {groupView && sortableHead("占总仓位", "weightPct", "text-right")}
+            {sortableHead("占总仓位", "weightPct", "text-right")}
             {sortableHead("已实现", "realizedPnl", "text-right")}
             {groupView && sortableHead("未实现", "unrealizedPnl", "text-right")}
             {groupView && sortableHead("未实现%", "unrealizedPnl", "text-right")}
@@ -627,11 +636,11 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
               <TableCell className="text-right">{qtyFmt(Math.abs(p.quantity))}{p.quantity < 0 ? <span style={{ color: "#c2410c", fontSize: "0.72rem", marginLeft: 4 }}>卖</span> : null}</TableCell>
               <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
               <TableCell className="text-right">{p.latestPrice ? costFmt(p.latestPrice) : "—"}</TableCell>
-              <TableCell className="text-right" style={{ fontWeight: 600 }}>{cny2(p.marketValue)}</TableCell>
-              {groupView && <TableCell className="text-right">{p.weightPct !== undefined ? pct(p.weightPct) : "—"}</TableCell>}
-              <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl) }}>{pnlText(p.realizedPnl)}</TableCell>
-              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{pnlText(p.unrealizedPnl)}</TableCell>}
-              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>}
+              <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
+              <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl), fontWeight: 600 }}>{pnlText(p.realizedPnl)}</TableCell>
+              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 600 }}>{pnlText(p.unrealizedPnl)}</TableCell>}
+              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>}
             </TableRow>
           ))}
         </TableBody>
@@ -1094,7 +1103,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
     <Card><CardContent>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
         <Select value={groupId} onValueChange={(v: string | null) => setGroupId(v ?? groupId)}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-40"><SelectValue>{groups.find((g) => g.id === groupId)?.name ?? "选择分组"}</SelectValue></SelectTrigger>
           <SelectContent>
             {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
           </SelectContent>
@@ -1140,7 +1149,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
               </TableCell>
               <TableCell>
                 <Select value={r.action} onValueChange={(v: string | null) => setRow(r.key, { action: (v ?? "buy") as "buy" | "sell" })}>
-                  <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-24"><SelectValue>{r.action === "sell" ? "卖出" : "买入"}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="buy">买入</SelectItem>
                     <SelectItem value="sell">卖出</SelectItem>
@@ -1948,14 +1957,14 @@ export default function TradeV2Tool() {
               <Card><CardContent>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
                   <Select value={fGroup} onValueChange={(v: string | null) => setFGroup(v ?? "all")}>
-                    <SelectTrigger className="w-36"><SelectValue placeholder="全部分组" /></SelectTrigger>
+                    <SelectTrigger className="w-36"><SelectValue>{fGroup === "all" ? "全部分组" : groups.find((g) => g.id === fGroup)?.name ?? "分组"}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">全部分组</SelectItem>
                       {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <Select value={fAction} onValueChange={(v: string | null) => setFAction(v ?? "all")}>
-                    <SelectTrigger className="w-28"><SelectValue placeholder="全部操作" /></SelectTrigger>
+                    <SelectTrigger className="w-28"><SelectValue>{fAction === "all" ? "全部操作" : fAction === "sell" ? "卖出" : "买入"}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">全部操作</SelectItem>
                       <SelectItem value="buy">买入</SelectItem>
