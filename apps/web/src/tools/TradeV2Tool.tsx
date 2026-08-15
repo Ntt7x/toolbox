@@ -1634,7 +1634,8 @@ export default function TradeV2Tool() {
 
   const isGroupView = selectedId !== "all" && !!detail;
   const analysis = detail?.analysis ?? null;
-  const activeTab = isGroupView ? tab : tab === "analysis" || tab === "order" ? "positions" : tab;
+  // 功能区 tab：全部视图默认组合分析（analysis-global），分组视图默认收益分区（analysis）；其余 tab 共用
+  const activeTab = isGroupView ? (tab === "analysis-global" ? "analysis" : tab) : tab === "analysis" || tab === "analysis-global" ? "analysis-global" : tab;
   const selectedGroup = detail?.group ?? null;
 
   const cur = useMemo(() => {
@@ -1934,9 +1935,9 @@ export default function TradeV2Tool() {
           {/* 功能区横向分段控件（通栏等宽）——置于具体功能区上方 */}
           <Tabs value={activeTab} onValueChange={setTab}>
             <TabsList style={{ width: "100%" }}>
-              {isGroupView && <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分析</TabsTrigger>}
+              {!isGroupView && <TabsTrigger value="analysis-global" style={{ flex: 1 }}>🧩 组合分析</TabsTrigger>}
+              <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分区</TabsTrigger>
               <TabsTrigger value="positions" style={{ flex: 1 }}>📈 仓位明细</TabsTrigger>
-              {isGroupView && <TabsTrigger value="order" style={{ flex: 1 }}>💼 交易单</TabsTrigger>}
               <TabsTrigger value="ledger" style={{ flex: 1 }}>💹 交易流水</TabsTrigger>
             </TabsList>
 
@@ -1972,6 +1973,8 @@ export default function TradeV2Tool() {
             </div>
           )}
 
+            {!isGroupView && (
+              <TabsContent value="analysis-global">
           {/* 全部视图：分组贡献明细（点击行跳转该组） */}
           {!isGroupView && global && (
             <GroupContributionTable groups={groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
@@ -1997,6 +2000,8 @@ export default function TradeV2Tool() {
               </CardContent></Card>
             </div>
           )}
+              </TabsContent>
+            )}
 
             {isGroupView && analysis && (
               <TabsContent value="analysis">
@@ -2047,8 +2052,10 @@ export default function TradeV2Tool() {
               />
             </TabsContent>
 
-            {isGroupView && selectedGroup && analysis && (
-              <TabsContent value="order">
+
+            <TabsContent value="ledger">
+              {/* 分组视图：交易流水整合录入（记一笔/批量提交 → 流水下方即时可见） */}
+              {isGroupView && selectedGroup && analysis && (
                 <OrderSheet
                   initialGroup={selectedGroup}
                   groups={groups}
@@ -2059,10 +2066,7 @@ export default function TradeV2Tool() {
                   onEditEntry={openEdit}
                   onDeleteEntry={(e) => void removeEntry(e)}
                 />
-              </TabsContent>
-            )}
-
-            <TabsContent value="ledger">
+              )}
               <Card><CardContent>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
                   <Select value={fGroup} onValueChange={(v: string | null) => setFGroup(v ?? "all")}>
