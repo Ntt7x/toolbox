@@ -52,6 +52,10 @@ export default function DocsTool() {
   const [zhihuOpen, setZhihuOpen] = useState(false);
   const [zhihuResults, setZhihuResults] = useState<ZhihuCrawlBrief[]>([]);
   const [zhihuSel, setZhihuSel] = useState<Set<string>>(new Set());
+  // DeepSeek Chat 导入
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatUrl, setChatUrl] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
   // 新建文件夹
   const [newFolderName, setNewFolderName] = useState("");
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
@@ -276,6 +280,20 @@ export default function DocsTool() {
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
+  // DeepSeek Chat Share 导入
+  const deepseekImport = async () => {
+    const url = chatUrl.trim();
+    if (!url || chatBusy) return;
+    setChatBusy(true);
+    try {
+      const r = await api.docsDeepseekImport(url, curFolder ?? undefined);
+      setItems(r.items); setFolders(r.folders); setTags(r.tags);
+      setMsg({ kind: r.created && r.created.length > 0 ? "ok" : "err", text: r.created && r.created.length > 0 ? `✅ 已导入 ${r.created.length} 个文档` : (r.message ?? "导入失败") });
+      setChatOpen(false);
+    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
+    finally { setChatBusy(false); }
+  };
+
   // ---------- 右键菜单 ----------
   const openMenu = (e: React.MouseEvent, kind: "folder" | "item", id: string) => {
     e.preventDefault();
@@ -402,6 +420,9 @@ export default function DocsTool() {
           />
           <button onClick={() => void loadZhihu()} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontSize: "0.88rem", cursor: "pointer" }}>
             🤖 知乎导入
+          </button>
+          <button onClick={() => { setChatUrl(""); setChatOpen(true); }} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontSize: "0.88rem", cursor: "pointer" }}>
+            🔗 Chat 导入
           </button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
@@ -588,6 +609,35 @@ export default function DocsTool() {
               ) : (
                 <MarkdownView>{preview.content ?? ""}</MarkdownView>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DeepSeek Chat 导入模态 */}
+      {chatOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: 12, width: "min(560px, 95vw)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "0.7rem 1rem", borderBottom: "1px solid #e2e8f0" }}>
+              <span style={{ flex: 1, fontSize: "0.92rem", fontWeight: 600, color: "#1e293b" }}>🔗 从 DeepSeek Chat 导入</span>
+              <button onClick={() => setChatOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: "#64748b" }}>✕</button>
+            </div>
+            <div style={{ padding: "0.9rem 1rem" }}>
+              <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: "0.4rem" }}>输入 DeepSeek 分享链接（或 share id），对话将转换为 markdown 文档（含思考过程折叠）。</div>
+              <input
+                autoFocus
+                value={chatUrl}
+                onChange={(e) => setChatUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void deepseekImport(); }}
+                placeholder="https://chat.deepseek.com/share/xxxx 或裸 share id"
+                style={{ width: "100%", boxSizing: "border-box", padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+              />
+            </div>
+            <div style={{ padding: "0.7rem 1rem", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+              <button onClick={() => setChatOpen(false)} style={{ padding: "0.45rem 1rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "0.86rem", cursor: "pointer" }}>取消</button>
+              <button onClick={() => void deepseekImport()} disabled={!chatUrl.trim() || chatBusy} style={{ padding: "0.45rem 1.2rem", borderRadius: 8, border: "none", background: "#2563eb", color: "#fff", fontSize: "0.86rem", fontWeight: 600, cursor: chatUrl.trim() && !chatBusy ? "pointer" : "not-allowed", opacity: chatUrl.trim() && !chatBusy ? 1 : 0.6 }}>
+                {chatBusy ? "提取中…" : "导入为文档"}
+              </button>
             </div>
           </div>
         </div>

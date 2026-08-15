@@ -182,6 +182,18 @@ export function registerDocsFeature(app: Hono) {
     return c.json({ ok: true, items: ctx.docStore.listItems(), folders: ctx.docStore.listFolders(), tags: ctx.docIndex.listTags() });
   });
 
+  // DeepSeek Chat Share 导入为 md 文档（memo msuwx8k2）——静态路由，在 /:id 之前
+  app.post(`${API_PREFIX}/tools/docs/deepseek-import`, async (c: Context) => {
+    const body = (await c.req.json().catch(() => null)) as { url?: unknown; folderId?: unknown; tags?: unknown } | null;
+    const url = typeof body?.url === "string" ? body.url.trim() : "";
+    if (!url) return c.json({ ok: false, message: "请输入 DeepSeek 分享链接" }, 400);
+    const folderId = typeof body?.folderId === "string" ? body.folderId : undefined;
+    const tags = Array.isArray(body?.tags) ? body.tags.filter((t): t is string => typeof t === "string") : [];
+    const ctx = await getDocsCtx();
+    const r = await ctx.docImport.importFromDeepseek(url, folderId, tags);
+    return c.json({ ...r, items: ctx.docStore.listItems(), folders: ctx.docStore.listFolders(), tags: ctx.docIndex.listTags() });
+  });
+
   // 知乎结果导入为文档
   app.post(`${API_PREFIX}/tools/docs/zhihu-import`, async (c: Context) => {
     const body = (await c.req.json().catch(() => null)) as { resultIds?: unknown; folderId?: unknown; tags?: unknown } | null;

@@ -1,7 +1,11 @@
 // ============================================================
 // 共享 UI：Markdown 渲染组件（react-markdown + remark-gfm + remark-math + rehype-katex）
 // 用于展示抓取内容等 markdown 文本：标题/列表/表格/代码/引用/数学公式
-// 数学公式支持（与 DeepSeek 网页版一致）：$...$ 行内 / $$...$$ 块级（KaTeX 渲染）
+// 数学公式支持（与 DeepSeek 网页版一致）：
+//   - 块级 $$...$$（行首）始终支持
+//   - 行内公式：singleDollarTextMath=false（工业界推荐，避免 $5 货币/价格被误判为公式）
+//     —— 行内请用 $$x^2$$（双美元，markdown 中即 $x^2$ 无效但不会破坏正文）
+//   - 渲染失败：rehype-katex 内置兜底（红字显示原文，不崩页面）；errorColor 自定义
 // 样式与既有页面配色一致（浅色卡片、蓝链、表格边框斑马纹）
 // ============================================================
 import ReactMarkdown from "react-markdown";
@@ -31,8 +35,8 @@ export function MarkdownView(props: MdProps) {
   return (
     <div style={blockStyle} className="md-view">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={[[remarkMath, { singleDollarTextMath: false }], remarkGfm]}
+        rehypePlugins={[[rehypeKatex, { errorColor: "#dc2626" }]]}
         components={{
           h1: (p) => <h1 style={{ fontSize: "1.15rem", margin: "0.8rem 0 0.4rem", color: "#0f172a" }} {...p} />,
           h2: (p) => <h2 style={{ fontSize: "1.05rem", margin: "0.7rem 0 0.35rem", color: "#0f172a", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.2rem" }} {...p} />,

@@ -304,6 +304,9 @@ export const api = {
   docsZhihuResults: () => request<{ ok: true; results: ZhihuCrawlBrief[] }>("/tools/docs/zhihu-results"),
   docsZhihuImport: (resultIds: string[], folderId?: string, tags: string[] = []) =>
     request<DocsMutateResult & { imported: number; errors: string[]; tags: { name: string; count: number }[] }>("/tools/docs/zhihu-import", jsonInit("POST", { resultIds, folderId, tags })),
+  /** DeepSeek Chat Share 导入为 md 文档 */
+  docsDeepseekImport: (url: string, folderId?: string, tags: string[] = []) =>
+    request<DocsMutateResult & { message?: string; created?: { name: string; type: string }[]; tags: { name: string; count: number }[] }>("/tools/docs/deepseek-import", jsonInit("POST", { url, folderId, tags })),
   // 书籍下载（zlib）
   booksSearch: (q: string, page = 1, limit = 20) =>
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),

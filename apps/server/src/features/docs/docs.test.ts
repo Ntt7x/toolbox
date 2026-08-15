@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { kvGet, kvSet } from "../../core/kvStore.js";
+import { chatToMarkdown } from "./services.js";
 import {
   DOCS_CONTENT_PREFIX, DOCS_FOLDERS_KEY, DOCS_META_KEY, DOCS_FILE_DIR,
   DocStoreService, DocFileService, DocIndexService, DocImportService,
@@ -136,4 +137,16 @@ test("回收站：软删/恢复/彻底删除 + 文件夹级联 + 移动环拒绝
   store.purgeFolder(f1.id);
   // 数据独立断言：只验证「本测试创建的文件夹树已彻底删除」（真实用户数据共存时 length 不为 0，2026-08-16 修正）
   assert.ok(!store.listFolders("all").some((x) => x.id === f1.id || x.id === f2.id), "彻底删除文件夹整树");
+});
+
+test("chatToMarkdown：对话 → md（标题 + 来源 + 消息 + 思考折叠）", () => {
+  const md = chatToMarkdown("测试对话", "https://chat.deepseek.com/share/abc", [
+    { id: 1, role: "user", content: "你好" },
+    { id: 2, role: "assistant", content: "你好！有什么可以帮你？", thinking: "用户问好，礼貌回应" },
+  ]);
+  assert.ok(md.includes("# 测试对话"), "标题");
+  assert.ok(md.includes("来源：DeepSeek Chat 分享"), "来源行");
+  assert.ok(md.includes("## 🧑 用户") && md.includes("## 🤖 助手"), "角色徽标");
+  assert.ok(md.includes("<details>") && md.includes("🧠 思考过程"), "思考折叠");
+  assert.ok(md.includes("你好！有什么可以帮你？"), "正文保留");
 });

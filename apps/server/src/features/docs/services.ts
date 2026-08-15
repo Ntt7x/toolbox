@@ -11,7 +11,8 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import fs from "node:fs";
 import path from "node:path";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
-import type { DocFolder, DocItem } from "@toolbox/shared";
+import { parseShareId, extractShare } from "../../core/deepseekShare.js";
+import type { DocFolder, DocItem, ShareMessage } from "@toolbox/shared";
 
 export const DOCS_FOLDERS_KEY = "docs:folders";
 export const DOCS_META_KEY = "docs:meta";
@@ -456,6 +457,48 @@ export class DocImportService extends Service {
     }
     return { imported, errors };
   }
+
+  /** DeepSeek Chat Share 导入为 md 文档（memo msuwx8k2）：
+   *  提取分享对话 → 转 markdown（标题 + 消息序列 + 思考折叠）→ 存为文档 */
+  async importFromDeepseek(
+    url: string,
+    folderId?: string,
+    tags: string[] = []
+  ): Promise<{ ok: boolean; message?: string; created?: { name: string; type: string }[] }> {
+    const shareId = parseShareId(url);
+    if (!shareId) return { ok: false, message: "无法解析 DeepSeek 分享链接或 share id" };
+    const r = await extractShare(shareId);
+    if (!r.ok) return { ok: false, message: r.message };
+    const store = this.ctx.docStore;
+    const title = r.title || `对话-${shareId.slice(0, 8)}`;
+    const safeName = title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) + ".md";
+    const content = chatToMarkdown(title, r.url, r.messages);
+    const item = store.createItem({
+      name: safeName,
+      type: "md",
+      folderId,
+      tags: [...new Set([...tags, "DeepSeek"].filter(Boolean))],
+      content,
+      size: content.length,
+      source: { kind: "deepseek-share", url: r.url },
+    });
+    if (!item) return { ok: false, message: "文档数已达上限" };
+    return { ok: true, created: [{ name: safeName, type: "md" }] };
+  }
+}
+
+/** DeepSeek 对话 → markdown 文档（纯函数，供单测）：
+ *  标题 + 来源 + 逐条消息（用户/助手徽标 + 思考折叠 + 正文） */
+export function chatToMarkdown(title: string, url: string, messages: ShareMessage[]): string {
+  const parts: string[] = [`# ${title}`, "", `> 来源：DeepSeek Chat 分享 · ${url}`, ""];
+  for (const m of messages) {
+    parts.push(m.role === "user" ? "## 🧑 用户" : "## 🤖 助手", "");
+    if (m.thinking) {
+      parts.push("<details>", "<summary>🧠 思考过程</summary>", "", m.thinking.trim(), "", "</details>", "");
+    }
+    parts.push(m.content.trim(), "");
+  }
+  return parts.join("\n");
 }
 
 // ============================================================
