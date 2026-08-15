@@ -468,6 +468,7 @@ export default function DocsTool() {
       }}
       title={`${it.name}（右键更多操作，可拖拽）`}
     >
+      <span style={{ width: 14, textAlign: "center", flexShrink: 0 }} />
       <span style={{ width: 14, textAlign: "center", flexShrink: 0 }}>{it.type === "pdf" ? "📕" : "📄"}</span>
       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
       {it.tags.slice(0, 2).map((tg) => (
