@@ -198,6 +198,26 @@ export default function DocsTool() {
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
+  // 编辑模式（tab 内切换 浏览/编辑，保存后更新缓存）
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const toggleEdit = () => {
+    if (!activeTab || activeTab.item.type !== "md") return;
+    if (editingId === activeTab.item.id) { void saveEdit(); }
+    else { setEditText(activeTab.content ?? ""); setEditingId(activeTab.item.id); }
+  };
+  const saveEdit = async () => {
+    if (!activeTab) return;
+    try {
+      const r = await api.docsUpdate(activeTab.item.id, { content: editText });
+      contentCache.current.set(activeTab.item.id, editText);
+      setOpenTabs((p) => p.map((t) => (t.item.id === activeTab.item.id ? { ...t, content: editText, busy: false } : t)));
+      setItems(r.items);
+      setEditingId(null);
+      setMsg({ kind: "ok", text: "✅ 已保存" });
+    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
+  };
+
   // ---------- 操作（软删回收站） ----------
   const removeItem = async (it: DocItem) => {
     if (!confirm(`将「${it.name}」移到回收站？可恢复`)) return;
@@ -388,6 +408,39 @@ export default function DocsTool() {
   };
 
   // ---------- 渲染：文件夹树行 ----------
+  /** 文件夹内文档叶子（vscode 资源管理器式；tag 过滤时只显示匹配） */
+  const folderDocs = (fid: string | null) =>
+    items.filter((i) => (i.folderId ?? null) === fid && (!curTag || i.tags.includes(curTag)));
+
+  /** 文档叶子行：点击在编辑器区打开 */
+  const renderDocLeaf = (it: DocItem, depth: number) => (
+    <div
+      key={it.id}
+      onClick={() => { setTrashView(false); void openPreview(it); }}
+      onContextMenu={(e) => openMenu(e, "item", it.id)}
+      draggable
+      onDragStart={(e) => { e.dataTransfer.setData("text/doc", it.id); e.dataTransfer.effectAllowed = "move"; }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(it.id); }}
+      onDragLeave={() => setDragOver((d) => (d === it.id ? null : d))}
+      onDrop={(e) => { e.stopPropagation(); void onDropToFolder(e, it.id); }}
+      style={{
+        display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer",
+        padding: "0.28rem 0.45rem", paddingLeft: `${0.45 + depth * 0.9}rem`, borderRadius: 6,
+        background: dragOver === it.id ? "#dbeafe" : openTabs.some((t) => t.item.id === it.id) && activeTabId === it.id ? "#eff6ff" : "transparent",
+        fontSize: "0.85rem", color: activeTabId === it.id ? "#2563eb" : "#475569",
+        outline: dragOver === it.id ? "1px dashed #3b82f6" : "none",
+      }}
+      title={`${it.name}（右键更多操作，可拖拽）`}
+    >
+      <span style={{ width: 14, textAlign: "center", flexShrink: 0 }}>{it.type === "pdf" ? "📕" : "📄"}</span>
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+      {it.source?.kind === "answer" || it.source?.kind === "article" ? (
+        <span style={{ fontSize: "0.62rem", color: "#94a3b8" }}>{it.source.kind === "answer" ? "答" : "文"}</span>
+      ) : null}
+    </div>
+  );
+
+  /** 文档叶子（vscode 资源管理器式）：在 renderFolder 之后渲染该文件夹下文档 */
   const renderFolder = (f: DocFolder, depth: number) => {
     const childCount = folders.filter((x) => x.parentId === f.id).length;
     return (
@@ -436,6 +489,7 @@ export default function DocsTool() {
           <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>{items.filter((i) => i.folderId === f.id).length}</span>
         </div>
         {!collapsed.has(f.id) ? childrenOf(f.id).map((c) => renderFolder(c, depth + 1)) : null}
+        {!collapsed.has(f.id) ? folderDocs(f.id).map((it) => renderDocLeaf(it, depth + 1)) : null}
       </Fragment>
     );
   };
@@ -508,6 +562,7 @@ export default function DocsTool() {
           >
             🗂️ 根目录
           </div>
+          {folderDocs(null).map((it) => renderDocLeaf(it, 0))}
           {rootFolders.map((f) => renderFolder(f, 0))}
           <input
             id="new-folder-input"
@@ -519,10 +574,10 @@ export default function DocsTool() {
           />
         </div>
 
-        {/* 右栏：文档列表 / 回收站 */}
-        <div style={{ ...card, flex: 1 }}>
+        {/* 右栏：编辑器区（vscode 风格：tab 栏 + 内容，非弹窗；memo msuxq76n） */}
+        <div style={{ ...card, flex: 1, display: "flex", flexDirection: "column", minWidth: 0, padding: 0, overflow: "hidden" }}>
           {trashView ? (
-            <>
+            <div style={{ padding: "1rem 1.25rem", overflow: "auto", flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.6rem", fontSize: "0.85rem", color: "#334155" }}>
                 <span style={{ fontWeight: 600 }}>🗑️ 回收站</span>
                 <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>删除后保留，可恢复；彻底删除不可恢复</span>
@@ -554,57 +609,58 @@ export default function DocsTool() {
                   ))}
                 </>
               )}
-            </>
-          ) : loading ? (
-            <div style={{ textAlign: "center", padding: "2rem", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
-          ) : visibleItems.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "#94a3b8", fontSize: "0.9rem" }}>
-              暂无文档{curFolder ? "（当前文件夹）" : ""}<br />
-              <span style={{ fontSize: "0.8rem" }}>上传 md/pdf 文件或文件夹，或从知乎爬取结果导入；右键/拖拽管理</span>
             </div>
           ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {visibleItems.map((it) => (
-                <li
-                  key={it.id}
-                  draggable
-                  onDragStart={(e) => { e.dataTransfer.setData("text/doc", it.id); e.dataTransfer.effectAllowed = "move"; }}
-                  onContextMenu={(e) => openMenu(e, "item", it.id)}
-                  style={{ display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.5rem 0.55rem", borderRadius: 8, marginBottom: "0.3rem", border: "1px solid #eef2f7", background: "#fff", flexWrap: "wrap", cursor: "grab" }}
-                >
-                  <span style={{ flexShrink: 0, fontSize: "0.66rem", fontWeight: 700, color: "#fff", background: TYPE_COLOR[it.type], borderRadius: 4, padding: "0.1rem 0.35rem" }}>{TYPE_LABEL[it.type]}</span>
-                  <button
-                    onClick={() => void openPreview(it)}
-                    title="预览（右键更多操作，可拖到文件夹）"
-                    style={{ flex: 1, textAlign: "left", border: "none", background: "transparent", cursor: "pointer", fontSize: "0.9rem", color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  >
-                    {it.name}
-                    {it.source?.kind === "answer" || it.source?.kind === "article" ? `（${it.source.kind}）` : ""}
-                  </button>
-                  {it.folderId && <span title={folderName.get(it.folderId)} style={{ flexShrink: 0, fontSize: "0.68rem", color: "#64748b", background: "#f1f5f9", borderRadius: 999, padding: "0.08rem 0.5rem" }}>📁 {folderName.get(it.folderId)}</span>}
-                  {it.tags.map((t) => (
-                    <span key={t} title="点击移除标签" onClick={() => void removeTagFromItem(it, t)} style={{ flexShrink: 0, fontSize: "0.68rem", color: "#2563eb", background: "#eff6ff", borderRadius: 999, padding: "0.08rem 0.5rem", cursor: "pointer" }}>
-                      #{t} ✕
-                    </span>
+            <>
+              {/* tab 栏（vscode 风格，常驻编辑器区顶部） */}
+              {openTabs.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", flexShrink: 0, overflowX: "auto" }}>
+                  {openTabs.map((t) => (
+                    <div key={t.item.id} onClick={() => setActiveTabId(t.item.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.45rem 0.9rem", cursor: "pointer", borderRight: "1px solid #e2e8f0", background: t.item.id === activeTabId ? "#fff" : "transparent", borderTop: t.item.id === activeTabId ? "2px solid #2563eb" : "2px solid transparent", fontSize: "0.8rem", color: t.item.id === activeTabId ? "#1e293b" : "#64748b", fontWeight: t.item.id === activeTabId ? 600 : 400, maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", flexShrink: 0 }} title={t.item.name}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.item.type === "pdf" ? "📕" : "📄"} {t.item.name}</span>
+                      <span role="button" onClick={(e) => { e.stopPropagation(); closeTab(t.item.id); }} style={{ color: "#94a3b8", fontSize: "0.75rem", padding: "0 2px", borderRadius: 4, flexShrink: 0 }} title="关闭">✕</span>
+                    </div>
                   ))}
-                  <span style={{ flexShrink: 0, fontSize: "0.68rem", color: "#94a3b8" }}>{it.size > 1024 ? `${(it.size / 1024).toFixed(1)}KB` : `${it.size}B`}</span>
-                  <span style={{ flexShrink: 0, fontSize: "0.68rem", color: "#94a3b8" }}>{it.updatedAt.slice(0, 10)}</span>
-                  <select
-                    value=""
-                    onChange={(e) => { if (e.target.value) void moveItem(it, e.target.value === "__none__" ? "none" : e.target.value); }}
-                    title="移动到文件夹"
-                    style={{ flexShrink: 0, fontSize: "0.72rem", padding: "0.15rem 0.3rem", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer" }}
-                  >
-                    <option value="">移动…</option>
-                    <option value="__none__">🗂️ 根目录</option>
-                    {folders.map((f) => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
-                  </select>
-                  <button onClick={() => void removeItem(it)} title="移到回收站" style={{ flexShrink: 0, fontSize: "0.78rem", border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer" }}>🗑️</button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, padding: "0 0.6rem", flexShrink: 0 }}>
+                    {activeTab?.item.type === "md" && (
+                      <>
+                        <button onClick={toggleEdit} title="编辑/保存" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: editingId === activeTab.item.id ? "#16a34a" : "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>{editingId === activeTab.item.id ? "💾 保存" : "✏️ 编辑"}</button>
+                        <button onClick={() => void copyActive()} title="复制内容" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
+                        <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 VSCode</button>
+                      </>
+                    )}
+                    {activeTab?.item.type === "pdf" && (
+                      <a href={"/api/tools/docs/" + activeTab.item.id + "/file"} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "#2563eb", textDecoration: "none", padding: "0.3rem 0.5rem" }}>新窗口打开 ↗</a>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* 内容区：md 居中阅读 / pdf 全幅 / 编辑模式 */}
+              {activeTab ? (
+                activeTab.item.type === "pdf" ? (
+                  <iframe src={"/api/tools/docs/" + activeTab.item.id + "/file"} title={activeTab.item.name} style={{ flex: 1, width: "100%", border: "none", background: "#525659" }} />
+                ) : activeTab.busy ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
+                ) : editingId === activeTab.item.id ? (
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    <textarea value={editText} onChange={(e) => setEditText(e.target.value)} spellCheck={false} style={{ flex: 1, width: "100%", boxSizing: "border-box", border: "none", outline: "none", padding: "1rem 1.25rem", fontFamily: "'Cascadia Code', Consolas, monospace", fontSize: "0.85rem", lineHeight: 1.7, resize: "none", background: "#fff", color: "#334155" }} />
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, overflow: "auto" }}>
+                    <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
+                      <MarkdownView>{activeTab.content ?? ""}</MarkdownView>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem", gap: "0.4rem" }}>
+                  <div style={{ fontSize: "2rem" }}>📄</div>
+                  <div>从左侧文件夹选择文档，在编辑器区打开</div>
+                  <div style={{ fontSize: "0.78rem" }}>上传 md/pdf 或从知乎 / DeepSeek Chat 导入；右键 / 拖拽管理</div>
+                </div>
+              )}
+            </>
+          )}        </div>
       </div>
 
       {/* 右键菜单 */}
@@ -637,64 +693,6 @@ export default function DocsTool() {
                 <span>{mi.icon}</span> {mi.label}
               </button>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* 预览模态（vscode 风格多 tab；遮罩/Esc 收起保留 tab，memo msuxe7hg） */}
-      {activeTabId !== null && openTabs.length > 0 && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }} onClick={collapsePreview}>
-          <div style={{ background: "#fff", borderRadius: 12, width: "min(1080px, 95vw)", height: "min(760px, 90vh)", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            {/* tab 栏 */}
-            <div style={{ display: "flex", alignItems: "stretch", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", flexShrink: 0 }}>
-              {openTabs.map((t) => (
-                <div
-                  key={t.item.id}
-                  onClick={() => setActiveTabId(t.item.id)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "0.45rem 0.9rem", cursor: "pointer",
-                    borderRight: "1px solid #e2e8f0", background: t.item.id === activeTabId ? "#fff" : "transparent",
-                    borderTop: t.item.id === activeTabId ? "2px solid #2563eb" : "2px solid transparent",
-                    fontSize: "0.8rem", color: t.item.id === activeTabId ? "#1e293b" : "#64748b", fontWeight: t.item.id === activeTabId ? 600 : 400,
-                    maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden",
-                  }}
-                  title={t.item.name}
-                >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.item.type === "pdf" ? "📕" : "📄"} {t.item.name}</span>
-                  <span
-                    role="button"
-                    onClick={(e) => { e.stopPropagation(); closeTab(t.item.id); }}
-                    style={{ color: "#94a3b8", fontSize: "0.75rem", padding: "0 2px", borderRadius: 4 }}
-                    title="关闭"
-                  >✕</span>
-                </div>
-              ))}
-              {/* 工具栏（右侧） */}
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", padding: "0 0.6rem" }}>
-                {activeTab?.item.type === "md" && (
-                  <>
-                    <button onClick={() => void copyActive()} title="复制内容" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
-                    <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 VSCode</button>
-                  </>
-                )}
-                {activeTab?.item.type === "pdf" && (
-                  <a href={`/api/tools/docs/${activeTab.item.id}/file`} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "#2563eb", textDecoration: "none", padding: "0.3rem 0.5rem" }}>新窗口打开 ↗</a>
-                )}
-                <button onClick={() => { setOpenTabs([]); setActiveTabId(null); }} title="关闭全部" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: "#64748b", padding: "0.3rem 0.5rem" }}>✕</button>
-              </div>
-            </div>
-            {/* 内容区：md 居中阅读（maxWidth 800），pdf 全幅 */}
-            <div style={{ flex: 1, overflow: "auto", background: activeTab?.item.type === "pdf" ? "#525659" : "#fff" }}>
-              {activeTab?.item.type === "pdf" ? (
-                <iframe src={`/api/tools/docs/${activeTab.item.id}/file`} title={activeTab.item.name} style={{ width: "100%", height: "100%", border: "none" }} />
-              ) : activeTab?.busy ? (
-                <div style={{ textAlign: "center", padding: "3rem", color: "#94a3b8" }}>加载中…</div>
-              ) : (
-                <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
-                  <MarkdownView>{activeTab?.content ?? ""}</MarkdownView>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}

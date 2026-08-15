@@ -565,6 +565,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **专业领域文档**：Cordis 框架实践（Service 类 / declare module / 异步 plugin 集成 Hono / 踩坑 / 数据安全）**见 `docs/for_agent/domains/cordis.md`**——涉足 Cordis 或新框架集成时按需加载。
 - **todo 演进**：v1（树状 parentId）→ v2（自研 Cordis 风格 DAG）→ v3（真 Cordis 框架 + 分解树 × 依赖正交合并）——最终统一为 v3（`features/todoV3/`，数据 `todoV3:items`）；v1/v2 已清理。
 - **数据安全铁律（2026-08-14 事故）**：单测操作真实 KV **禁止 finally 清空**（曾清掉用户全部待办）——必须 beforeEach 备份 / afterEach 恢复（见 domains/cordis.md §5）。
+- **数据安全铁律 2（2026-08-16 事故）**：**「写操作类」UI 验证（编辑/保存/更新）严禁直接作用在真实用户文档上**——曾用 playwright 编辑测试「货币周期策略v1.md」导致原文被覆盖（仅能从 archive 恢复开头 176 字符）。**必须**：① 先用 KV 备份（`kv.mjs backup <key>`）或 ② 上传一个专属测试文档（如 `_测试.md`）并测试后彻底删除，或 ③ 保存前先读原文并验证可恢复。任何会写 KV 的自动化验证，先确认「写的是什么、能否回滚」。
 
 ## 8. 历史进度记录（必须遵守）
 
