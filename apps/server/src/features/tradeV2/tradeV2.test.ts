@@ -782,3 +782,52 @@ test("做空：每日动态含空头（openCount 计入、市值含负占用）"
   assert.equal(last.openCount, 1); // 空头也算持仓标
   assert.equal(last.marketValue, -650); // 空头占用（成本口径）
 });
+
+// ---------- 收益曲线接入历史行情（真实市值口径） ----------
+
+test("每日动态：传入历史日 K → 市值用真实收盘价（有行情标的口径切换）", () => {
+  const entries = [
+    mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),
+    mkEntry({ code: "000001", date: "2026-01-02", action: "buy", quantity: 5, price: 10 }),
+  ];
+  // 600519 有历史价（01-02 收盘 120）；000001 无历史价 → 回退成本口径
+  const klines = new Map([
+    ["600519", new Map([["2026-01-02", 120], ["2026-01-03", 125]])],
+  ]);
+  const ds = buildDailySeries(entries, klines);
+  const last = ds[ds.length - 1]!;
+  // 600519: 10×120(真实) = 1200；000001: 5×10(成本) = 50 → 合计 1250
+  assert.equal(last.marketValue, 1250);
+});
+
+test("每日动态：历史价下市值随时间变化（价格波动反映到曲线）", () => {
+  const entries = [
+    mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),
+  ];
+  const klines = new Map([
+    ["600519", new Map([
+      ["2026-01-02", 100],
+      ["2026-01-03", 110],
+      ["2026-01-04", 90],
+    ])],
+  ]);
+  const ds = buildDailySeries(entries, klines);
+  // 仅 01-02 有交易 → 单日；市值 = 10×当日收盘价（01-02 为 100）
+  const day = ds[0]!;
+  assert.equal(day.marketValue, 1000);
+});
+
+test("组分析：klinePrices 传入后 dailySeries 为真实市值口径", () => {
+  const entries = [
+    mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),
+  ];
+  const klines = new Map([
+    ["600519", new Map([["2026-01-02", 130]])],
+  ]);
+  const a = analyzeGroup(group, entries, {}, klines);
+  const day = a.dailySeries[0]!;
+  assert.equal(day.marketValue, 1300); // 10×130 真实价
+  // 不传 kline → 回退成本口径 1000
+  const b = analyzeGroup(group, entries);
+  assert.equal(b.dailySeries[0]!.marketValue, 1000);
+});

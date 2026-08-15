@@ -1,0 +1,168 @@
+// ============================================================
+// K 线数据流管理（core/kline.ts）—— 收益曲线接入历史行情的服务端底座
+// 能力：
+//   1) getDailyKline(code, fromDate)     单标的日 K（日期→收盘价），KV 缓存 + 增量拉取
+//   2) fetchKlinesForCodes(codes, from)  批量并发拉取（收益分析接口用，按组内标的）
+//   3) getKlineHistoryMap(codes, dates)  批量 → 日期→收盘价映射（compute 直接消费）
+// 数据源：腾讯 fqkline day 周期（与月 K 同源），qfq 前复权收盘价
+// 缓存：kline:d:<normCode> → { name, bars:[{date,close}], fetchedAt }；TTL 6 小时
+//   （历史日 K 基本稳定，6h 足够；下次拉取增量合并新根）
+// 设计取舍：
+//   - 服务端拉取 + 缓存 → 前端无需管行情，compute 拿到映射即可重算真实市值
+//   - 拉取失败静默（返回空映射）→ 调用方回退成本口径，不阻塞分析
+//   - 无行情标的（基金/停牌/代码错误）→ 空映射，同样回退成本口径
+// ============================================================
+import { kvGet, kvSet } from "./kvStore.js";
+import { registerDataSource } from "./dataRegistry.js";
+
+registerDataSource({
+  kind: "kv",
+  name: "kline:d:",
+  page: "行情工具",
+  tag: "分析数据",
+  description: "日 K 线缓存（腾讯 fqkline，历史收盘价，TTL 6 小时，收益曲线接入用）",
+});
+
+const KLINE_PREFIX = "kline:d:";
+/** 历史日 K 缓存 TTL：6 小时（历史数据稳定；下次拉取增量合并） */
+const KLINE_TTL_MS = 6 * 60 * 60 * 1000;
+/** 单次拉取根数：覆盖约半年交易日（收益分析常见跨度） */
+const DEFAULT_COUNT = 130;
+
+interface KlineBar {
+  date: string;
+  close: number;
+}
+interface KlineCache {
+  name?: string;
+  bars: KlineBar[];
+  fetchedAt: number;
+}
+
+/** 代码解析（腾讯 param：sh600519 / sz000001 / hk00700 / bj…）——复用 quote 语义 */
+function parseSecCode(input: string): { market: string; code: string; normCode: string } | null {
+  const s = input.trim().toUpperCase();
+  if (!/^[0-9HKSHZBJ]{2,10}$/.test(s)) return null;
+  if (s.startsWith("BJ")) {
+    const c = s.slice(2);
+    if (!/^\d{6}$/.test(c)) return null;
+    return { market: "bj", code: c, normCode: `bj${c}` };
+  }
+  if (s.startsWith("HK")) {
+    const c = s.slice(2).replace(/^0+/, "");
+    if (!/^\d{3,5}$/.test(c)) return null;
+    const code = c.padStart(5, "0");
+    return { market: "hk", code, normCode: `hk${code}` };
+  }
+  if (s.startsWith("SH")) {
+    const c = s.slice(2);
+    if (!/^\d{6}$/.test(c)) return null;
+    return { market: "sh", code: c, normCode: `sh${c}` };
+  }
+  if (s.startsWith("SZ")) {
+    const c = s.slice(2);
+    if (!/^\d{6}$/.test(c)) return null;
+    return { market: "sz", code: c, normCode: `sz${c}` };
+  }
+  if (/^\d{6}$/.test(s)) {
+    if (/^(4|8|92)/.test(s)) return { market: "bj", code: s, normCode: `bj${s}` };
+    if (/^[569]/.test(s)) return { market: "sh", code: s, normCode: `sh${s}` };
+    return { market: "sz", code: s, normCode: `sz${s}` };
+  }
+  if (/^\d{3,5}$/.test(s)) {
+    const code = s.padStart(5, "0");
+    return { market: "hk", code, normCode: `hk${code}` };
+  }
+  return null;
+}
+
+/** 从腾讯拉取日 K（qfq 前复权；返回按日期升序的收盘序列） */
+async function fetchDailyCloses(p: { market: string; code: string }, count = DEFAULT_COUNT): Promise<{ name: string; bars: KlineBar[] }> {
+  const paramKey = `${p.market}${p.code}`;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${paramKey},day,,,${count},qfq`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`K 线接口 HTTP ${res.status}`);
+  const json = (await res.json()) as {
+    data?: Record<string, { qfqday?: string[][]; day?: string[][]; qt?: Record<string, string[]> }>;
+  };
+  const data = json.data?.[paramKey];
+  const klines = data?.qfqday ?? data?.day;
+  if (!Array.isArray(klines) || klines.length === 0) throw new Error("无日 K 数据");
+  const bars = klines
+    .map((row) => ({ date: String(row[0]), close: Number(row[2]) }))
+    .filter((b) => /^\d{4}-\d{2}-\d{2}$/.test(b.date) && Number.isFinite(b.close) && b.close > 0);
+  const name = data?.qt?.[paramKey]?.[1] ?? "";
+  return { name, bars };
+}
+
+/** 合并新拉取的 bars 到缓存（按日期去重，升序） */
+export function mergeBars(cached: KlineBar[] | undefined, fresh: KlineBar[]): KlineBar[] {
+  const map = new Map<string, number>();
+  for (const b of cached ?? []) map.set(b.date, b.close);
+  for (const b of fresh) map.set(b.date, b.close);
+  return [...map.entries()].map(([date, close]) => ({ date, close })).sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * 获取单标的历史日 K（日期→收盘价映射）。
+ * 缓存命中（6h 内）直接返回；过期/缺失则拉取并合并缓存。
+ * 拉取失败静默 → 返回空映射（调用方回退成本口径）。
+ */
+export async function getDailyKline(codeInput: string): Promise<Map<string, number>> {
+  const parsed = parseSecCode(codeInput);
+  if (!parsed) return new Map();
+  const key = KLINE_PREFIX + parsed.normCode;
+  let cached: KlineCache | null = null;
+  try {
+    cached = kvGet<KlineCache>(key);
+    if (cached && Array.isArray(cached.bars) && Date.now() - cached.fetchedAt < KLINE_TTL_MS) {
+      return new Map(cached.bars.map((b) => [b.date, b.close]));
+    }
+    const { name, bars } = await fetchDailyCloses(parsed);
+    const merged = mergeBars(cached?.bars, bars);
+    kvSet(key, { ...(name ? { name } : {}), bars: merged, fetchedAt: Date.now() });
+    return new Map(merged.map((b) => [b.date, b.close]));
+  } catch {
+    // 拉取失败/无数据：有缓存则用缓存（过期也可用），否则空
+    if (cached && Array.isArray(cached.bars)) {
+      return new Map(cached.bars.map((b) => [b.date, b.close]));
+    }
+    return new Map();
+  }
+}
+
+/**
+ * 批量获取多标的历史日 K（并发；单个失败不影响其它）。
+ * @returns code → 日期→收盘价映射（无行情标的为空 Map）
+ */
+export async function fetchKlinesForCodes(codes: string[]): Promise<Map<string, Map<string, number>>> {
+  const uniq = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
+  const results = await Promise.all(uniq.map(async (code) => [code, await getDailyKline(code)] as const));
+  return new Map(results);
+}
+
+/**
+ * 按账本日期取每个标的的当日收盘价（无则回退最近可得的历史价）。
+ * @param klines code → 日期→收盘价
+ * @param code 标的
+ * @param date 账本日期 YYYY-MM-DD
+ */
+export function priceOnOrBefore(klines: Map<string, Map<string, number>>, code: string, date: string): number | undefined {
+  const m = klines.get(code);
+  if (!m || m.size === 0) return undefined;
+  const direct = m.get(date);
+  if (direct !== undefined) return direct;
+  // 无当日（停牌/非交易日）→ 找最近的 <= date 的收盘价
+  let best: number | undefined;
+  let bestDate = "";
+  for (const [d, close] of m) {
+    if (d <= date && d > bestDate) {
+      bestDate = d;
+      best = close;
+    }
+  }
+  return best;
+}

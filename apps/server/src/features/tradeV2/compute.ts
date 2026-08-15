@@ -260,6 +260,7 @@ export function analyzeGroup(
   group: TradeV2Group,
   entries: TradeV2Entry[],
   latestPrices: Record<string, number> = {},
+  klinePrices?: Map<string, Map<string, number>>,
 ): TradeV2GroupAnalysis {
   const positions = buildPositions(entries);
   const deals = buildDeals(entries);
@@ -333,8 +334,8 @@ export function analyzeGroup(
     closedCount: closed.length,
     ...(closed.length > 0 ? { winRate: Math.round((winCount / closed.length) * 1000) / 10 } : {}),
     ...(avgDays !== undefined ? { avgDays: Math.round(avgDays * 10) / 10 } : {}),
-    // 收益·时间性 / 空间（由账本派生，成本口径）
-    dailySeries: buildDailySeries(entries),
+    // 收益·时间性 / 空间（由账本派生；传入历史日 K 时为真实市值口径，否则成本口径）
+    dailySeries: buildDailySeries(entries, klinePrices),
     monthlySeries: buildMonthlySeries(entries),
     pnlAttribution: buildPnlAttribution(entries, latestPrices),
   };
@@ -345,10 +346,14 @@ export function analyzeGroup(
 // ============================================================
 
 /**
- * 每日动态（成本口径）：逐日 买入金额/卖出回款/当日已实现/收盘持仓市值/持仓标数。
- * 市值 = Σ qty×avgCost（含手续费的成本基数），无行情依赖——完全由账本确定。
+ * 每日动态：逐日 买入金额/卖出回款/当日已实现/收盘持仓市值/持仓标数。
+ * 市值口径：传入 klinePrices（历史日 K）时用「当日真实收盘价 × 持仓数」= 市值口径；
+ *   无历史价标的回退成本口径（Σ qty×avgCost 含费基数）——向后兼容。
  */
-export function buildDailySeries(entries: TradeV2Entry[]): TradeV2DailyPoint[] {
+export function buildDailySeries(
+  entries: TradeV2Entry[],
+  klinePrices?: Map<string, Map<string, number>>,
+): TradeV2DailyPoint[] {
   const sorted = sortEntries(entries);
   if (sorted.length === 0) return [];
   interface DailyRow {
@@ -383,13 +388,16 @@ export function buildDailySeries(entries: TradeV2Entry[]): TradeV2DailyPoint[] {
     if (e.action === "buy") row.buyAmount += amount + fee;
     else row.sellAmount += amount - fee;
     state.set(e.code, st);
-    // 收盘口径重算（该日最后一条后即是当日收盘）；空头 qty<0 计入 openCount，市值按成本基数（负=空头占用）
+    // 收盘口径重算（该日最后一条后即是当日收盘）；空头 qty<0 计入 openCount
+    // 市值：有历史日 K 用「当日收盘价 × qty」真实市值；无则回退成本基数（负=空头占用）
     let mv = 0;
     let oc = 0;
     let cum = 0;
-    for (const s of state.values()) {
+    for (const [code, s] of state) {
       if (s.qty !== 0) {
-        mv += s.costBasis;
+        const hist = klinePrices?.get(code);
+        const px = hist && hist.size > 0 ? priceOnOrBefore(hist, e.date) : undefined;
+        mv += typeof px === "number" && px > 0 ? s.qty * px : s.costBasis;
         oc++;
       }
       cum += s.realized;
@@ -398,6 +406,21 @@ export function buildDailySeries(entries: TradeV2Entry[]): TradeV2DailyPoint[] {
     row.marketValue = mv;
     row.openCount = oc;
   }
+
+/** 取某标的历史日 K 中 <= 目标日期最近收盘价（无则 undefined）；供 buildDailySeries 用 */
+function priceOnOrBefore(hist: Map<string, number>, date: string): number | undefined {
+  const direct = hist.get(date);
+  if (direct !== undefined) return direct;
+  let best: number | undefined;
+  let bestDate = "";
+  for (const [d, close] of hist) {
+    if (d <= date && d > bestDate) {
+      bestDate = d;
+      best = close;
+    }
+  }
+  return best;
+}
   // 累计已实现 → 每日增量
   let prevCum = 0;
   return rows.map((r) => {
@@ -655,7 +678,7 @@ export function buildGroupSummary(
 
 /** 全局分析：跨组汇总 + 累计已实现盈亏时间线（closed 交易按清仓日累计） */
 export function buildGlobalAnalysis(
-  groups: { group: TradeV2Group; entries: TradeV2Entry[]; latestPrices: Record<string, number> }[],
+  groups: { group: TradeV2Group; entries: TradeV2Entry[]; latestPrices: Record<string, number>; klines?: Map<string, Map<string, number>> }[],
 ): TradeV2GlobalAnalysis {
   const summaries: TradeV2GroupSummary[] = [];
   let totalMv = 0;
@@ -670,8 +693,8 @@ export function buildGlobalAnalysis(
   let daysTotal = 0;
   const timeline: { date: string; amount: number }[] = [];
 
-  for (const { group, entries, latestPrices } of groups) {
-    const a = analyzeGroup(group, entries, latestPrices);
+  for (const { group, entries, latestPrices, klines } of groups) {
+    const a = analyzeGroup(group, entries, latestPrices, klines);
     summaries.push(buildGroupSummary(group, entries, latestPrices));
     totalMv += a.totalMv;
     totalCost += a.totalCost;
@@ -701,8 +724,8 @@ export function buildGlobalAnalysis(
 
   // 组合每日动态：跨组合按日合并（市值/买入/卖出/已实现/持仓数，成本口径）
   const dailyByDate = new Map<string, TradeV2DailyPoint>();
-  for (const { entries } of groups) {
-    for (const d of buildDailySeries(entries)) {
+  for (const { entries, klines } of groups) {
+    for (const d of buildDailySeries(entries, klines)) {
       const row = dailyByDate.get(d.date) ?? { date: d.date, buyAmount: 0, sellAmount: 0, realizedPnl: 0, marketValue: 0, openCount: 0 };
       row.buyAmount = Math.round((row.buyAmount + d.buyAmount) * 100) / 100;
       row.sellAmount = Math.round((row.sellAmount + d.sellAmount) * 100) / 100;

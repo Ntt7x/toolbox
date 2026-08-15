@@ -19,6 +19,7 @@ import type {
   TradeV2V1StrategyPreview,
 } from "@toolbox/shared";
 import { kvGet } from "../../core/kvStore.js";
+import { fetchKlinesForCodes } from "../../core/kline.js";
 
 // ---------- 名称解析（交易员可读性：代码 → 名称） ----------
 
@@ -255,7 +256,9 @@ export class TradeV2AnalysisService extends Service {
     let entries = this.ctx.tradeV2Ledger.listByGroup(groupId);
     entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
     const prices = await this.latestPrices(entries);
-    return { group, analysis: analyzeGroup(group, entries, prices) };
+    // 历史日 K（收益曲线真实市值口径）：组内全部标的并发拉取；无行情静默回退成本口径
+    const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
+    return { group, analysis: analyzeGroup(group, entries, prices, klines) };
   }
 
   /** 约束校验（allEntries = 目标条目最终形态所在的全量列表） */
@@ -276,7 +279,8 @@ export class TradeV2AnalysisService extends Service {
         let entries = this.ctx.tradeV2Ledger.listByGroup(g.id);
         entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [g]);
         const latestPrices = await this.latestPrices(entries);
-        return { group: g, entries, latestPrices };
+        const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
+        return { group: g, entries, latestPrices, klines };
       }),
     );
     return buildGlobalAnalysis(inputs);

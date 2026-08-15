@@ -103,7 +103,7 @@
 
 > **能力速览（改动 trade-v2 前先读本块，按需深入下方小节）**：
 > 数据：逐笔账本 TradeV2Entry（增）→ 仓位/复盘/收益全由重放纯派生（单一数据源）→ 分组约束 TradeV2Group
-> 模型：加权平均成本（含费）+ 负成本统一（V1 对齐）+ 组合净值曲线（现金+市值）+ 融资/做空（负持仓 allowShort）
+> 模型：加权平均成本（含费）+ 负成本统一（V1 对齐）+ 组合净值曲线（现金+市值）+ 融资/做空（负持仓 allowShort）+ 收益曲线历史价口径（core/kline 日 K）
 > 接口：/tools/trade-v2（组 CRUD / 条目 CRUD / entries/check / entries/batch(preview) / analysis / import/v1）
 > 前端：📊收益分析（三视图+净值+月度）📈仓位明细（排序/导出/下钻）💼交易单（Enter流/⚡现价/归并预览/校验禁提交）💹交易流水（筛选/分页/sticky）
 > 验证：单测 38/38（tradeV2）+ 集成 + L3 冒烟；V1 导入幂等（同名跳过）

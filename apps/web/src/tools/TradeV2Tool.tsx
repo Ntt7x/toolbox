@@ -979,7 +979,7 @@ function DailyTable({ dailySeries }: { dailySeries: TradeV2DailyPoint[] }) {
   const rowsWithCum = rows.map((d) => { cum += d.realizedPnl; return { ...d, cumRealized: Math.round(cum * 100) / 100 }; });
   return (
     <Card><CardContent>
-      <SectionTitle icon="📅" color={C.accent}>每日动态（成本口径）</SectionTitle>
+      <SectionTitle icon="📅" color={C.accent}>每日动态（历史价口径 · 有行情时真实市值）</SectionTitle>
       <Table>
         <TableHeader>
           <TableRow>
@@ -1973,7 +1973,7 @@ export default function TradeV2Tool() {
                 <EChart option={globalLineOption} height={200} />
               </CardContent></Card>
               <Card style={{ gridColumn: "1 / -1" }}><CardContent>
-                <SectionTitle icon="📊" color={C.indigo}>组合净值曲线（现金+市值口径：期初本金 + 已实现 + 未实现）</SectionTitle>
+                <SectionTitle icon="📊" color={C.indigo}>组合净值曲线（现金+市值口径 · 历史价：期初本金 + 已实现 + 未实现）</SectionTitle>
                 <EChart option={globalScaleOption} height={220} />
               </CardContent></Card>
             </div>
@@ -2000,7 +2000,7 @@ export default function TradeV2Tool() {
                       {analysis.pnlAttribution.length > 0 ? <EChart option={attrOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无交易</div>}
                     </CardContent></Card>
                     <Card style={{ gridColumn: "1 / -1" }}><CardContent>
-                      <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 时间性）</SectionTitle>
+                      <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 历史价时间性）</SectionTitle>
                       <EChart option={scaleOption} height={220} />
                     </CardContent></Card>
                     <Card style={{ gridColumn: "1 / -1" }}><CardContent>
