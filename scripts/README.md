@@ -27,7 +27,11 @@ scripts/
     ├── patch.mjs             文件文本替换执行器（patch.json 驱动）
     ├── check-change.mjs      改动健康检查
     ├── browser-probe.mjs     浏览器探针
-    └── self-test.mjs         工具自测
+    ├── browser-run.mjs       浏览器冒烟运行器（playwright 模板固化）
+    ├── ts-resolve-hook.mjs   TS resolve hook（免 spawn 跑 TS 单测）
+    ├── _lib.mjs              共享库（ROOT/tsxCli/viteCli 动态路径）
+    ├── self-test.mjs         工具自测
+    └── browser-run.mjs 占位
 ```
 
 ## 2. 命令速查表（toolbox 入口）
@@ -37,11 +41,12 @@ scripts/
 | `dev` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，单实例防重 | `toolbox dev start|stop|restart|status|kill-port <port>` |
 | `proc` | **进程诊断/清理**：端口占用 + supervisor 状态 + node 进程命令行（查残留） | `toolbox proc status|list|kill <pid>|kill-port <port>` |
 | `typecheck` | **TypeScript 类型检查（L0 必跑）**：全仓或单 app | `toolbox typecheck [--app server|web]` |
-| `test` | **模块单测快捷**（自动定位测试文件/全量） | `toolbox test tradePlan` |
+| `test` | **模块单测快捷**（自动定位测试文件/全量；`--no-spawn` 受限环境用 resolve hook 免 tsx） | `toolbox test tradePlan` / `toolbox test tradeV2 --no-spawn` |
 | `smoke` | 页面冒烟（18 页；`--page` 定向单页配合 L2） | `toolbox smoke [--page /tools/x]` |
 | `api` | **API CLI**（curl 替代，Windows 引号安全，自动加 /api 前缀） | `toolbox api GET /health` |
 | `check` | 改动健康检查（文件数/行数/触及分层 → 建议验证级别） | `toolbox check [--base main]` |
 | `probe` | 浏览器探针：launch 系统 Chrome + 选择器状态 | `toolbox probe <url> --check "textarea:主输入框"` |
+| `browser` | **浏览器冒烟运行器**：playwright 模板固化（TMP/日志/Chrome 自动；裸表达式脚本直接跑） | `toolbox browser <script.mjs> [url]` |
 | `memo` | **改进备忘录 CLI**（每轮「处理备忘录」必用；cmd 分号防御内置） | `toolbox memo list|stats|bypage <关键词>|done <id>...|add <text>` |
 | `kv` | KV/DB 只读检查（前缀过滤/统计/取值；查测试数据残留） | `toolbox kv list|count|get <key>` |
 | `commit` | **git 提交包装**（消息引号安全，自动 add+commit+push） | `toolbox commit "feat(x): 说明"` |
@@ -71,6 +76,9 @@ scripts/
 | HTTP API 调用/集成验证 | tmp_tp_e2e / tmp_srv_check / tmp_v*.mjs | → `api.mjs` + `e2e.mjs` |
 | 文件文本替换/补丁（最多） | tmp_patch_*.mjs 系列 | → `patch.mjs` |
 | 浏览器自动化调试 | tmp_diag_* / tmp_browser_* / probe_*.cjs | → `browser-probe.mjs` |
+    ├── browser-run.mjs       浏览器冒烟运行器（playwright 模板固化）
+    ├── ts-resolve-hook.mjs   TS resolve hook（免 spawn 跑 TS 单测）
+    ├── _lib.mjs              共享库（ROOT/tsxCli/viteCli 动态路径）
 | 备忘录批量操作 | 手写 node -e fetch | → `memo.mjs` |
 | KV/DB 残留排查 | 手写 node:sqlite | → `kv.mjs` |
 | 进程管理/诊断 | 手写 netstat+taskkill+wmic | → `dev.mjs`（管理）+ `proc.mjs`（诊断） |

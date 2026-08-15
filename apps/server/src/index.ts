@@ -36,6 +36,7 @@ import * as tradePlanFeature from "./features/tradePlan/index.js";
 import * as browserChatFeature from "./features/browserChat/index.js";
 import * as todoV3Feature from "./features/todoV3/index.js";
 import * as docsFeature from "./features/docs/index.js";
+import * as tradeV2Feature from "./features/tradeV2/index.js";
 
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
@@ -67,6 +68,7 @@ const tools: ToolMeta[] = [
   tradePlanFeature.meta,
   todoV3Feature.meta,
   docsFeature.meta,
+  tradeV2Feature.meta,
 ];
 
 app.get(`${API_PREFIX}/tools`, (c) => {
@@ -102,6 +104,8 @@ knowledgeHubFeature.register(app);
 todoV3Feature.registerTodoV3Feature(app);
 // 文档中心（markdown/pdf 管理与浏览）
 docsFeature.registerDocsFeature(app);
+// 仓位管理 v2（逐笔交易账本 + 仓位明细派生 + 分组约束与分析）
+tradeV2Feature.registerTradeV2Feature(app);
 // 新闻中心：注册东财源 + 路由
 newsCenterFeature.registerNewsSource(newsCenterFeature.EASTMONEY_SOURCE);
 newsCenterFeature.register(app);

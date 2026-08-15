@@ -1,4 +1,4 @@
-﻿import {
+import {
   API_PREFIX,
   type AsyncTaskResult,
   type CbRateRequest,
@@ -91,6 +91,16 @@
   type ToolListResponse,
   type TreasuryFxRequest,
   type TreasuryFxResponse,
+  type TradeV2OverviewResult,
+  type TradeV2GroupResult,
+  type TradeV2GroupDetailResult,
+  type TradeV2EntryDraft,
+  type TradeV2EntryResult,
+  type TradeV2CheckResponse,
+  type TradeV2GlobalResult,
+  type TradeV2V1StrategyPreview,
+  type TradeV2ImportV1Result,
+  type TradeV2BatchResult,
 } from "@toolbox/shared";
 
 // API 客户端：前端唯一访问后端的入口。
@@ -220,6 +230,25 @@ export const api = {
     request<TradePlanStrategyResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("PUT", strategy)),
   tradePlanDeleteStrategy: (id: string) =>
     request<TradePlanStrategyDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  /** 仓位管理 v2：逐笔交易账本 + 仓位明细（自动派生）+ 分组约束 */
+  tradeV2Overview: () => request<TradeV2OverviewResult>("/tools/trade-v2"),
+  tradeV2Group: (id: string) => request<TradeV2GroupDetailResult>("/tools/trade-v2/groups/" + encodeURIComponent(id)),
+  tradeV2CreateGroup: (name: string) => request<TradeV2GroupResult>("/tools/trade-v2/groups", jsonInit("POST", { name })),
+  tradeV2SaveGroup: (id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: { code: string; name?: string; maxWeightPct?: number }[]; allowShort?: boolean }) =>
+    request<TradeV2GroupResult>("/tools/trade-v2/groups/" + encodeURIComponent(id), jsonInit("PUT", patch)),
+  tradeV2DeleteGroup: (id: string) => request<{ ok: boolean; message?: string }>("/tools/trade-v2/groups/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  tradeV2CheckEntry: (draft: TradeV2EntryDraft) => request<TradeV2CheckResponse>("/tools/trade-v2/entries/check", jsonInit("POST", draft)),
+  tradeV2CreateEntry: (draft: TradeV2EntryDraft) => request<TradeV2EntryResult>("/tools/trade-v2/entries", jsonInit("POST", draft)),
+  tradeV2UpdateEntry: (id: string, draft: TradeV2EntryDraft) => request<TradeV2EntryResult>("/tools/trade-v2/entries/" + encodeURIComponent(id), jsonInit("PUT", draft)),
+  tradeV2DeleteEntry: (id: string) => request<{ ok: boolean; message?: string }>("/tools/trade-v2/entries/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  /** 每日交易单批量提交（整批校验 → 入库 + 逐标的净归并汇总；preview=true 只校验不入库） */
+  tradeV2BatchEntries: (items: TradeV2EntryDraft[], preview = false) =>
+    request<TradeV2BatchResult>("/tools/trade-v2/entries/batch", jsonInit("POST", { items, ...(preview ? { preview: true } : {}) })),
+  tradeV2Analysis: () => request<TradeV2GlobalResult>("/tools/trade-v2/analysis"),
+  /** V1（trade-plan）导入 */
+  tradeV2ImportV1Preview: () => request<{ ok: boolean; strategies: TradeV2V1StrategyPreview[] }>("/tools/trade-v2/import/v1-preview"),
+  tradeV2ImportV1: (date: string, strategyIds?: string[]) =>
+    request<TradeV2ImportV1Result>("/tools/trade-v2/import/v1", jsonInit("POST", { date, ...(strategyIds && strategyIds.length ? { strategyIds } : {}) })),
   /** 交易规划：校验与日度计划（按策略） */
   tradePlanCheck: (strategyId: string, items: TradePlanItem[]) =>
     request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/check", jsonInit("POST", { items })),
@@ -270,6 +299,10 @@ export const api = {
     request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
   todoV3Delete: (id: string) => request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   todoV3ClearDone: () => request<TodoV3MutateResult>("/tools/todo-v3/clear-done", jsonInit("POST", {})),
+  /** closed todo 归档：归档区 / 手动归档 / 恢复 */
+  todoV3ArchiveList: () => request<TodoV3ListResult>("/tools/todo-v3/archive"),
+  todoV3Archive: (id: string) => request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}/archive`, jsonInit("POST", {})),
+  todoV3Restore: (id: string) => request<TodoV3MutateResult>(`/tools/todo-v3/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
   // 文档中心（markdown/pdf 管理与浏览）
   docsList: () => request<DocsListResult>("/tools/docs"),
   docsDetail: (id: string) => request<DocDetailResult>(`/tools/docs/${encodeURIComponent(id)}`),

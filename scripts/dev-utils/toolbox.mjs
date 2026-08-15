@@ -25,6 +25,7 @@ const TOOLS = [
   { cmd: "api", script: "api-cli.mjs", group: "验证", desc: "API CLI（curl 替代，Windows 引号安全；自动加 /api 前缀）", example: "toolbox api GET /health" },
   { cmd: "check", script: "check-change.mjs", group: "验证", desc: "改动健康检查（文件数/行数/触及分层 → 建议验证级别）", example: "toolbox check [--base main]" },
   { cmd: "probe", script: "browser-probe.mjs", group: "验证", desc: "浏览器探针（launch 系统 Chrome + 选择器状态检查）", example: "toolbox probe <url> --check 'textarea:主输入框'" },
+  { cmd: "browser", script: "browser-run.mjs", group: "验证", desc: "浏览器冒烟运行器（playwright 模板固化：TMP/日志/Chrome 自动处理）", example: "toolbox browser <script.mjs> [url]" },
   // ---- 数据 ----
   { cmd: "kv", script: "kv.mjs", group: "数据", desc: "KV/DB 检查与备份（list/count/get/backup/restore）", example: "toolbox kv count|list|get <key>" },
   { cmd: "memo", script: "memo.mjs", group: "数据", desc: "改进备忘录 CLI（每轮「处理备忘录」必用）", example: "toolbox memo list|stats|bypage <关键词>|done <id>...|add <text>" },
@@ -39,6 +40,8 @@ const TOOLS = [
 const LIBS = [
   { cmd: "api", script: "api.mjs", desc: "通用 API 客户端（fetch+json 包装，非 2xx 抛带 message 的 Error）" },
   { cmd: "e2e", script: "e2e.mjs", desc: "API E2E 断言脚手架（用例列表 + 统计 + 失败 exit 1）" },
+  { cmd: "_lib", script: "_lib.mjs", desc: "共享库（ROOT/tsxCli/viteCli 动态路径）" },
+  { cmd: "ts-hook", script: "ts-resolve-hook.mjs", desc: "TS resolve hook（免 spawn 跑 TS 单测，--no-spawn 模式用）" },
 ];
 
 const byCmd = new Map(TOOLS.map((t) => [t.cmd, t]));

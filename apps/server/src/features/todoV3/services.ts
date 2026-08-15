@@ -38,6 +38,7 @@ function normalize(item: Partial<TodoItemV3>): TodoItemV3 | null {
     dependencies: Array.isArray(item.dependencies) ? item.dependencies.filter((d): d is string => typeof d === "string" && d !== item.id) : [],
     ...(REPEATS.includes(item.repeat as Repeat) ? { repeat: item.repeat as Repeat } : {}),
     ...(typeof item.lastDoneAt === "string" ? { lastDoneAt: item.lastDoneAt } : {}),
+    ...(typeof item.archivedAt === "string" ? { archivedAt: item.archivedAt } : {}),
     createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
   };
@@ -132,7 +133,21 @@ export class TodoStoreService extends Service {
       }
       items = items.map((x) => (reset.has(x.id) ? { ...x, done: false } : x));
     }
-    return items.sort((a, b) => Number(b.done) - Number(a.done) || b.createdAt.localeCompare(a.createdAt));
+    // closed todo 到期自动归档（2026-08-15）：非周期已完成项超过保留期（3 天）→ 自动归档（幂等）
+    const ARCHIVE_RETENTION_MS = 3 * 24 * 3600 * 1000;
+    let archived = false;
+    for (const x of items) {
+      if (!x.done || x.repeat || x.archivedAt) continue;
+      const doneAt = Date.parse(x.lastDoneAt ?? x.updatedAt);
+      if (Number.isFinite(doneAt) && now - doneAt > ARCHIVE_RETENTION_MS) {
+        x.archivedAt = new Date(now).toISOString();
+        archived = true;
+      }
+    }
+    if (archived) kvSet(TODO_V3_KEY, { items });
+    return items
+      .filter((x) => !x.archivedAt)
+      .sort((a, b) => Number(b.done) - Number(a.done) || b.createdAt.localeCompare(a.createdAt));
   }
 
   /** 组合环检测（①）：Kahn 拓扑把 parentId 边（子依赖父）与 dependencies 边统一建图。
@@ -278,10 +293,40 @@ export class TodoStoreService extends Service {
     return { ok: true, items: this.list() };
   }
 
-  /** 清空已完成：删 done 项 + 依赖引用清理 + 孤儿自愈（未完成子提升顶层） */
+  /** 手动归档（closed todo）：仅已完成项可归档（设置 archivedAt，从主列表隐藏进归档区） */
+  archive(id: string): { ok: true; items: TodoItemV3[] } | { ok: false; message: string } | null {
+    const items = loadAll();
+    const it = items.find((x) => x.id === id);
+    if (!it) return null;
+    if (!it.done) return { ok: false, message: "仅已完成的待办可归档" };
+    it.archivedAt = new Date().toISOString();
+    it.updatedAt = new Date().toISOString();
+    kvSet(TODO_V3_KEY, { items });
+    return { ok: true, items: this.list() };
+  }
+
+  /** 恢复归档（清 archivedAt，回到主列表） */
+  restore(id: string): { ok: true; items: TodoItemV3[] } | null {
+    const items = loadAll();
+    const it = items.find((x) => x.id === id);
+    if (!it) return null;
+    delete it.archivedAt;
+    it.updatedAt = new Date().toISOString();
+    kvSet(TODO_V3_KEY, { items });
+    return { ok: true, items: this.list() };
+  }
+
+  /** 归档区列表（已归档，按归档时间倒序） */
+  listArchived(): TodoItemV3[] {
+    return loadAll()
+      .filter((x) => x.archivedAt)
+      .sort((a, b) => b.archivedAt!.localeCompare(a.archivedAt!));
+  }
+
+  /** 清空已完成：删 done 项（已归档的保留）+ 依赖引用清理 + 孤儿自愈（未完成子提升顶层） */
   clearDone(): { ok: true; items: TodoItemV3[] } {
     const items = loadAll();
-    const removed = new Set(items.filter((x) => x.done).map((x) => x.id));
+    const removed = new Set(items.filter((x) => x.done && !x.archivedAt).map((x) => x.id));
     const kept = healOrphans(
       this.healDependencies(items.filter((x) => !removed.has(x.id)), removed)
     );

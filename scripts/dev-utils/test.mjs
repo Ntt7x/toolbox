@@ -8,12 +8,10 @@
 // 路径自动补全：参数支持 模块名 / features/模块 / core/模块 / 相对路径。
 // ============================================================
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync } from "node:fs";
+import { ROOT as root, tsxCli as TSX } from "./_lib.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const TSX = path.join(root, "node_modules", ".pnpm", "tsx@4.23.5", "node_modules", "tsx", "dist", "cli.mjs");
 const SERVER_TESTS = path.join(root, "apps", "server", "src");
 
 function findTests(arg) {
@@ -53,24 +51,49 @@ function findTests(arg) {
   return null;
 }
 
-const arg = process.argv[2];
+
+// 能力探测：workspace-write 沙盒禁 pipe 模式 spawn（node:test 子进程隔离会 EPERM），
+// 此时自动回退 --no-spawn（resolve hook 免 spawn）。FullAccess 下 tsx --test 可直跑。
+const args0 = process.argv.slice(2);
+const noSpawn = args0.includes("--no-spawn");
+const HOOK = path.join(root, "scripts", "dev-utils", "ts-resolve-hook.mjs");
+const args = args0.filter((a) => a !== "--no-spawn");
+const arg = args[0];
+
+function canSpawnPipe() {
+  try {
+    // ESM 下不可用 require（曾导致恒 false 总是回退）——直接复用已导入的 spawnSync
+    const r = spawnSync(process.execPath, ["-e", "setTimeout(()=>{},50)"], { stdio: "pipe", timeout: 5000 });
+    return r.status === 0;
+  } catch { return false; }
+}
+
 const tests = findTests(arg);
 if (!tests) {
   console.error(`未找到 ${arg || ""} 对应的单测（支持：模块名 / features/x / core/x / 全量）`);
   process.exit(1);
 }
 console.log(`跑 ${tests.length} 个测试文件${arg ? `（${arg}）` : "（全量）"}`);
-// 全量时逐文件串行：多个测试文件共享同一 SQLite DB，node:test 默认并行会写锁
-// （曾出现 "database is locked"）；单文件直接跑。
+
+// 执行：--no-spawn 用 resolve hook（node --import + --test-isolation=none，免 tsx spawn）；
+// 默认用 tsx --test。全量时逐文件串行（多文件共享 SQLite，node:test 并行会写锁）。
 let status = 0;
+// 显式 --no-spawn 或沙盒禁 pipe spawn → resolve hook 模式；否则 tsx --test
+const useHook = noSpawn || !canSpawnPipe();
+if (useHook && !noSpawn) console.log("⚠ 沙盒禁 pipe spawn，自动回退 --no-spawn（resolve hook 免 tsx）");
+const runOne = (t) => {
+  if (useHook) {
+    return spawnSync(process.execPath, ["--import", "file:///" + HOOK.replace(/\\/g, "/"), "--test-isolation=none", "--test", t], { stdio: "inherit", env: { ...process.env, TOOLBOX_TEST: "1" } }).status ?? 1;
+  }
+  return spawnSync(process.execPath, [TSX, "--test", t], { stdio: "inherit" }).status ?? 1;
+};
 if (tests.length === 1) {
-  status = spawnSync(process.execPath, [TSX, "--test", ...tests], { stdio: "inherit" }).status ?? 1;
+  status = runOne(tests[0]);
 } else {
   for (const t of tests) {
-    const name = path.relative(SERVER_TESTS, t);
-    console.log(`\n── ${name} ──`);
-    const r = spawnSync(process.execPath, [TSX, "--test", t], { stdio: "inherit" });
-    if ((r.status ?? 1) !== 0) status = r.status ?? 1;
+    console.log(`\n── ${path.relative(SERVER_TESTS, t)} ──`);
+    const s = runOne(t);
+    if (s !== 0) status = s;
   }
 }
 process.exit(status);

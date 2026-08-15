@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // API 契约层（前后端共享）
 // 前端只依赖本文件中的类型与路由约定；后端实现可替换
 // （TS / 未来 Go 等），只要保持本契约不变即可无缝切换。
@@ -1416,6 +1416,8 @@ export interface TodoItemV3 {
   repeat?: "daily" | "weekly" | "monthly";
   /** 上次完成时间（周期项；跨期后视为 done=false） */
   lastDoneAt?: string;
+  /** 归档时间（closed todo：手动归档 / 到期自动归档；归档后从主列表隐藏，进归档区可恢复） */
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -2094,3 +2096,375 @@ export interface DocsTrashResult {
   /** 回收站中的文件夹（含被软删的子文件夹） */
   folders: DocFolder[];
 }
+
+// ============================================================
+// 仓位管理 v2（trade-v2）：逐笔交易（增量）→ 仓位明细（存量）→ 分组约束与分析
+// 单一数据源：仓位 = 组内交易按日期重放（加权平均成本，含手续费）纯派生；
+// 改/删任一笔交易 → 全部派生结果自动重算（无 v1 基线/重放一致性问题）
+// ============================================================
+
+/** 单标的上限配置（组内约束） */
+export interface TradeV2StockLimit {
+  code: string;
+  name?: string;
+  /** 单标的上限：占组总仓位百分比（0~100，可选；不配则不受单标的上限约束） */
+  maxWeightPct?: number;
+}
+
+/** 交易分组（tag 组织单元，如策略）：名称 + 仓位限制 */
+export interface TradeV2Group {
+  id: string;
+  /** 组名（如策略名） */
+  name: string;
+  /** 总仓位上限（元）——组内持仓市值不得超过 */
+  totalCapital: number;
+  /** 单日加仓上限（元）——组内当日所有加仓金额合计不得超过（期初建仓除外） */
+  dailyAddLimit: number;
+  /** 单标的上限配置 */
+  stockLimits: TradeV2StockLimit[];
+  /** 允许做空（卖出可超持仓 → 负持仓）。默认 false：卖出超持仓视为异常 */
+  allowShort?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 一笔交易（增量；账本条目）。期初建仓 initial=true 为存量起点（不计入限额校验）。
+ * 做空（组 allowShort）：卖出可超过当前持仓，超卖部分形成负持仓（空头）。 */
+
+export interface TradeV2Entry {
+  id: string;
+  /** 所属分组 */
+  groupId: string;
+  /** 成交日期 YYYY-MM-DD */
+  date: string;
+  code: string;
+  name?: string;
+  /** 买入 / 卖出 */
+  action: "buy" | "sell";
+  /** 数量（股，>0 整数） */
+  quantity: number;
+  /** 成交价（>0） */
+  price: number;
+  /** 手续费（可选，≥0；摊入成本/回款） */
+  fee?: number;
+  /** 期初建仓（存量起点；不参与单日加仓/单标的上限校验） */
+  initial?: boolean;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 仓位明细行（存量，由账本重放派生）。quantity<0 = 空头（做空，组 allowShort）。 */
+export interface TradeV2Position {
+  code: string;
+  name?: string;
+  /** 持仓数量（股；负 = 空头） */
+  quantity: number;
+  /** 加权平均成本（含手续费摊入；空头为开空均价，正数） */
+  avgCost: number;
+  /** 持仓成本（= quantity × avgCost；空头为负 = 空头占用） */
+  costValue: number;
+  /** 最新价（行情可得时） */
+  latestPrice?: number;
+  /** 市值（行情可得：quantity × latestPrice；否则按成本计；空头为负） */
+  marketValue: number;
+  /** 未实现盈亏（= marketValue − costValue；空头：价格下跌为正盈利） */
+  unrealizedPnl: number;
+  /** 未实现盈亏率 %（costValue>0 时；空头/负成本不显示） */
+  unrealizedPnlPct?: number;
+  /** 占总仓位百分比（marketValue / totalCapital × 100） */
+  weightPct?: number;
+  /** 本 code 累计已实现盈亏（组内卖出/回补累计） */
+  realizedPnl: number;
+}
+
+/** 一笔完整交易（买入→清仓配对；在途 = 当前仍持有） */
+export interface TradeV2Deal {
+  code: string;
+  name?: string;
+  /** open=在途 / closed=已完结 */
+  status: "open" | "closed";
+  entryDate: string;
+  exitDate?: string;
+  /** 持仓天数（closed: entry→exit；open: entry→今天） */
+  days?: number;
+  /** 段内累计买入数量（股） */
+  buyQty: number;
+  /** 段内累计买入金额（元） */
+  buyAmount: number;
+  /** 段内卖出回款（元）= Σ 卖出数量 × 卖出价 */
+  sellAmount: number;
+  /** 段内手续费合计（元） */
+  feeTotal: number;
+  /** 段内剩余数量（open > 0） */
+  qty: number;
+  /** 段内平均成本 = buyAmount / buyQty */
+  avgCost: number;
+  /** 已实现盈亏（closed）= sellAmount − buyAmount − feeTotal */
+  pnl?: number;
+}
+
+/** 每日动态点（成本口径，按日期升序；供每日动态表与规模曲线） */
+export interface TradeV2DailyPoint {
+  date: string;
+  /** 当日买入金额（含手续费） */
+  buyAmount: number;
+  /** 当日卖出回款（扣手续费） */
+  sellAmount: number;
+  /** 当日已实现盈亏（卖出时按摊余成本结算） */
+  realizedPnl: number;
+  /** 当日收盘持仓市值（成本口径 Σ qty×avgCost） */
+  marketValue: number;
+  /** 当日持仓标数 */
+  openCount: number;
+}
+
+/** 月度汇总（供月度收益柱状图/表） */
+export interface TradeV2MonthlyPoint {
+  month: string;
+  buyAmount: number;
+  sellAmount: number;
+  realizedPnl: number;
+  /** 月末持仓市值（成本口径） */
+  marketValue: number;
+  /** 月收益率 %（成本口径：(月已实现 + 市值变动 − 净流入) / 月初市值；首月缺省） */
+  pnlPct?: number;
+}
+
+/** 收益归因（按标的：已实现 + 未实现 贡献） */
+export interface TradeV2PnlAttribution {
+  code: string;
+  name?: string;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  totalPnl: number;
+  /** 贡献度 %（|totalPnl| 合计口径） */
+  sharePct?: number;
+}
+
+/** 组分析（详情接口附：仓位明细 + 复盘 + 汇总 + 收益时间/空间/每日动态） */
+export interface TradeV2GroupAnalysis {
+  groupId: string;
+  name: string;
+  totalCapital: number;
+  dailyAddLimit: number;
+  positions: TradeV2Position[];
+  deals: TradeV2Deal[];
+  /** 持仓成本合计 */
+  totalCost: number;
+  /** 持仓市值合计 */
+  totalMv: number;
+  /** 未实现盈亏 */
+  unrealizedPnl: number;
+  /** 已实现盈亏（卖出累计） */
+  realizedPnl: number;
+  /** 总盈亏 = realized + unrealized */
+  totalPnl: number;
+  /** 累计净投入（Σ买入金额 − Σ卖出回款，现金口径） */
+  invested: number;
+  /** 仓位占比 %（totalMv / totalCapital × 100） */
+  positionPct?: number;
+  /** 剩余可用仓位（totalCapital − totalMv） */
+  remaining: number;
+  /** 当日加仓金额合计 */
+  todayAdd: number;
+  /** 在仓标的数 */
+  openCount: number;
+  /** 负成本（已回本/做空记账）标的数——存在时盈亏率无意义（显示 —） */
+  negCount: number;
+  /** 已完结笔数 */
+  closedCount: number;
+  /** 胜率 %（closed 中盈利笔占比；无 closed 缺省） */
+  winRate?: number;
+  /** 平均持仓天数（closed） */
+  avgDays?: number;
+  /** 收益·时间性：每日动态（成本口径） */
+  dailySeries: TradeV2DailyPoint[];
+  /** 收益·时间性：月度汇总 */
+  monthlySeries: TradeV2MonthlyPoint[];
+  /** 收益·空间：按标的归因（已实现+未实现贡献） */
+  pnlAttribution: TradeV2PnlAttribution[];
+}
+
+/** 交易单净归并：逐标的当日买卖净效果 */
+export interface TradeV2OrderNet {
+  code: string;
+  name?: string;
+  /** 净数量（买+ 卖−） */
+  netQty: number;
+  /** 净动作（netQty>0 buy / <0 sell / =0 持平） */
+  action: "buy" | "sell" | "flat";
+  /** 净金额（净买入额 / 净卖出额） */
+  netAmount: number;
+}
+
+/** 交易单当日归并汇总（服务端权威计算） */
+export interface TradeV2DayOrderSummary {
+  /** 当日买入合计（含手续费） */
+  buyTotal: number;
+  /** 当日卖出回款（扣手续费） */
+  sellTotal: number;
+  /** 当日已实现盈亏（按摊余成本） */
+  realizedPnl: number;
+  /** 逐标的净归并 */
+  netPerCode: TradeV2OrderNet[];
+}
+
+/** 交易单批量提交结果 */
+export interface TradeV2BatchResult {
+  ok: boolean;
+  /** 实际入库笔数 */
+  createdCount: number;
+  result?: TradeV2CheckResult;
+  daySummary?: TradeV2DayOrderSummary;
+  message?: string;
+  rejectReason?: string;
+}
+
+/** 组摘要（列表接口附） */
+export interface TradeV2GroupSummary {
+  id: string;
+  name: string;
+  totalCapital: number;
+  dailyAddLimit: number;
+  stockLimitCount: number;
+  /** 交易笔数 */
+  entryCount: number;
+  /** 在仓标的数 */
+  openCount: number;
+  totalMv: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  totalPnl: number;
+  positionPct?: number;
+  /** 违反组约束的告警数（服务端权威校验：超总仓位/超单标的上限/超日限等）——前端显示 ⚠️ 徽章 */
+  riskCount?: number;
+  updatedAt: string;
+}
+
+/** 交易条目草稿（前端提交/校验用；无 id/时间戳） */
+export interface TradeV2EntryDraft {
+  groupId: string;
+  /** 成交日期 YYYY-MM-DD */
+  date: string;
+  code: string;
+  name?: string;
+  action: "buy" | "sell";
+  quantity: number;
+  /** 成交价（普通交易必须 > 0；期初建仓 initial=true 可为负——负成本基点：已回本/做空记账） */
+  price: number;
+  fee?: number;
+  /** 期初建仓（存量起点；不参与单日加仓/单标的上限校验；允许负价成本基点） */
+  initial?: boolean;
+  note?: string;
+}
+
+/** 校验告警级别 */
+export type TradeV2AlertLevel = "error" | "warn" | "info";
+
+/** 单条校验结果 */
+export interface TradeV2Alert {
+  level: TradeV2AlertLevel;
+  message: string;
+  code?: string;
+  detail?: string;
+}
+
+/** 交易校验结果（保存前服务端权威校验） */
+export interface TradeV2CheckResult {
+  ok: boolean;
+  alerts: TradeV2Alert[];
+}
+
+/** 全局分析（跨组对比 + 时间线） */
+export interface TradeV2GlobalAnalysis {
+  groups: TradeV2GroupSummary[];
+  /** 全部组合计市值 */
+  totalMv: number;
+  /** 持仓成本合计（V1 口径：仅正成本；负成本标的已回本不计入） */
+  totalCost: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  totalPnl: number;
+  invested: number;
+  openCount: number;
+  closedCount: number;
+  /** 负成本标的数（跨组合合计） */
+  negCount: number;
+  winRate?: number;
+  avgDays?: number;
+  /** 累计已实现盈亏时间线（closed 交易按清仓日期累计；供曲线图） */
+  realizedTimeline: { date: string; cumulative: number }[];
+  /** 组合每日动态（跨组合按日合并市值/买入/卖出/已实现/持仓数；成本口径） */
+  dailySeries: TradeV2DailyPoint[];
+}
+
+// ---------- 响应 ----------
+
+export interface TradeV2OverviewResult {
+  ok: true;
+  groups: TradeV2GroupSummary[];
+  entries: TradeV2Entry[];
+}
+
+export interface TradeV2GroupResult {
+  ok: boolean;
+  group?: TradeV2Group;
+  message?: string;
+}
+
+export interface TradeV2GroupDetailResult {
+  ok: boolean;
+  group?: TradeV2Group;
+  analysis?: TradeV2GroupAnalysis;
+  message?: string;
+}
+
+export interface TradeV2EntryResult {
+  ok: boolean;
+  entry?: TradeV2Entry;
+  result?: TradeV2CheckResult;
+  message?: string;
+  /** 违反组约束时的具体原因（多条用；分隔） */
+  rejectReason?: string;
+}
+
+export interface TradeV2CheckResponse {
+  ok: boolean;
+  result?: TradeV2CheckResult;
+  message?: string;
+}
+
+export interface TradeV2GlobalResult {
+  ok: boolean;
+  analysis?: TradeV2GlobalAnalysis;
+  message?: string;
+}
+
+/** V1 策略导入预览（trade-plan → trade-v2） */
+export interface TradeV2V1StrategyPreview {
+  id: string;
+  name: string;
+  totalCapital: number;
+  dailyAddLimit: number;
+  stockCount: number;
+  positionCount: number;
+  /** 可导入为期初建仓的持仓数（数量>0 且成本价>0） */
+  importableCount: number;
+  /** V2 已有同名分组 → 导入时跳过 */
+  conflict: boolean;
+}
+
+/** V1 导入结果 */
+export interface TradeV2ImportV1Result {
+  ok: boolean;
+  /** 实际创建的分组 */
+  created: { groupId: string; name: string; entryCount: number }[];
+  /** 跳过的策略（同名冲突/数据缺失） */
+  skipped: { name: string; reason: string }[];
+  /** 跳过的期初建仓（负成本/无有效成本价） */
+  skippedPositions: { groupName: string; code: string; reason: string }[];
+  date: string;
+  message?: string;
+}
+

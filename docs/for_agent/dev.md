@@ -46,7 +46,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 │       │                       sse / db / tableStore / kvStore / settingsStore / dataRegistry
 │       └── features/          上层业务模块（依赖 core）：gridPlan / cbRate / treasuryFx / reverseRepo /
 │                               watchlist / kelly / tradePlan / knowledgeHub / newsCenter / browserChat /
-│                               zhihuCrawler / books / memo / deepseekShareTool / agentSessions / localData
+│                               zhihuCrawler / books / memo / deepseekShareTool / agentSessions / localData /
+│                               tradeV2
 ├── apps/web/          Vite + React 19 + react-router-dom
 │   └── src/
 │       ├── App.tsx            侧边栏分组菜单 MENU_GROUPS + toolPages 映射 + 路由
@@ -501,7 +502,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 | Reasonix ACP（协议/会话/进程/MCP/托管/引导词去重） | `domains/reasonix.md` | 涉足 Reasonix 会话/知识库会话复用 |
 | shadcn/ui 组件（Base UI 底层/API 差异/主题映射） | `domains/shadcn.md` | 涉足前端组件/页面 UI（新增组件、组件库维护） |
 | 浏览器自动化（DeepSeek 网页版 Chat） | `domains/features.md` | 改 browserChat / 网页自动化 |
-| 策略仓位管理（trade-plan） | `domains/features.md` | 改 trade-plan |
+| 策略仓位管理（trade-plan / trade-v2） | `domains/features.md` | 改 trade-plan / trade-v2（仓位管理 v2） |
 | 数据可信度（cbRate 结构化输出） | `domains/features.md` | 改 LLM 结构化输出业务 |
 | 外部数据源（知乎/知识库中心/行情/分享/快讯） | `domains/data-sources.md` | 涉足外部数据源 |
 
@@ -512,9 +513,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - **专业领域文档**：浏览器自动化经验（DeepSeek 网页版 Chat 操作、受控输入 insertText、aria-pressed、profile 锁）**见 `docs/for_agent/domains/features.md`**。
 
-### 7.3 策略仓位管理（trade-plan）
+### 7.3 策略仓位管理（trade-plan / 仓位管理 v2）
 
 - **专业领域文档**：策略仓位管理实现经验（配置/仓位拆分、日度计划按数量、保存即应用、基线+重放、校验分工）**见 `docs/for_agent/domains/features.md`**；通用原则见 §6.7（前后端分工）。
+- **仓位管理 v2（2026-08-15，features/tradeV2 + tools/TradeV2Tool）**：逐笔交易账本（增量）→ 仓位明细（存量，由账本重放**纯派生**，单一数据源——改/删任一笔交易自动重算，无 v1 基线/重放一致性问题）+ 分组（tag）约束（总仓位/单日加仓/单标的上限）+ 分析复盘（统计卡/ECharts/Deal 配对）；Cordis 服务化（todoV3/docs 同模式）；服务端权威校验（§6.7），期初建仓 initial 不参与限额；细节见 domains/features.md「仓位管理 v2」节。
 
 ### 7.4 数据可信度（cbRate 等 LLM 结构化输出）
 

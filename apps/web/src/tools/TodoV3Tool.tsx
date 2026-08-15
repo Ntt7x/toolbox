@@ -121,6 +121,42 @@ export default function TodoV3Tool() {
     }
   };
 
+  // ---------- closed todo 归档（手动 + 到期自动） ----------
+  const [showArchived, setShowArchived] = useState(false);
+  const [archived, setArchived] = useState<TodoItemV3View[]>([]);
+
+  const loadArchived = async () => {
+    try {
+      const r = await api.todoV3ArchiveList();
+      setArchived(r.items);
+    } catch (e) {
+      setMsg({ kind: "err", text: errMsg(e) });
+    }
+  };
+
+  const archiveItem = async (it: TodoItemV3View) => {
+    if (!it.done) { setMsg({ kind: "err", text: "仅已完成的待办可归档" }); return; }
+    try {
+      const r = await api.todoV3Archive(it.id);
+      setItems(r.items);
+      void loadArchived();
+      setMsg({ kind: "ok", text: "🗄 已归档（可在归档区查看/恢复）" });
+    } catch (e) {
+      setMsg({ kind: "err", text: errMsg(e) });
+    }
+  };
+
+  const restoreItem = async (it: TodoItemV3View) => {
+    try {
+      const r = await api.todoV3Restore(it.id);
+      setItems(r.items);
+      setArchived((a) => a.filter((x) => x.id !== it.id));
+      setMsg({ kind: "ok", text: "↩ 已恢复到主列表" });
+    } catch (e) {
+      setMsg({ kind: "err", text: errMsg(e) });
+    }
+  };
+
   const done = items.filter((x) => x.done).length;
   const active = items.length - done;
   const blockedCount = items.filter((x) => !x.done && x.blocked).length;
@@ -237,6 +273,9 @@ export default function TodoV3Tool() {
                 </span>
               )}
               <button onClick={() => setSubText((s) => ({ ...s, [it.id]: s[it.id] ?? "" }))} title="添加子任务（分解）" style={{ flexShrink: 0, fontSize: "0.75rem", border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer", padding: "0.12rem 0.45rem", borderRadius: 6 }}>＋子</button>
+              {it.done && (
+                <button onClick={() => void archiveItem(it)} title="归档（closed todo）" style={{ flexShrink: 0, fontSize: "0.78rem", border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer", padding: "0.12rem 0.4rem", borderRadius: 6 }}>🗄</button>
+              )}
               <button onClick={() => void remove(it)} title="删除" style={{ flexShrink: 0, fontSize: "0.78rem", border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", padding: "0.1rem 0.3rem" }}>✕</button>
             </>
           )}
@@ -325,11 +364,19 @@ export default function TodoV3Tool() {
             共 <b>{items.length}</b> 项 · 待办 <b style={{ color: "#2563eb" }}>{active}</b> · 已完成 <b style={{ color: "#16a34a" }}>{done}</b>
             {blockedCount > 0 && <> · 等待前置 <b style={{ color: "#d97706" }}>🔒 {blockedCount}</b></>}
           </span>
-          {done > 0 && (
-            <button onClick={() => void clearDone()} style={{ marginLeft: "auto", padding: "0.25rem 0.7rem", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }}>
-              🧹 清空已完成
+          <div style={{ marginLeft: "auto", display: "flex", gap: "0.4rem" }}>
+            {done > 0 && (
+              <button onClick={() => void clearDone()} style={{ padding: "0.25rem 0.7rem", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", fontSize: "0.78rem", cursor: "pointer" }}>
+                🧹 清空已完成
+              </button>
+            )}
+            <button
+              onClick={() => { const next = !showArchived; setShowArchived(next); if (next) void loadArchived(); }}
+              style={{ padding: "0.25rem 0.7rem", borderRadius: 6, border: "1px solid " + (showArchived ? "#3b82f6" : "#e2e8f0"), background: showArchived ? "#eff6ff" : "#fff", color: showArchived ? "#2563eb" : "#64748b", fontSize: "0.78rem", cursor: "pointer" }}
+            >
+              🗄 归档{archived.length > 0 ? `（${archived.length}）` : ""}
             </button>
-          )}
+          </div>
         </div>
 
         {loading ? (
@@ -343,6 +390,30 @@ export default function TodoV3Tool() {
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {topItems.map((it) => renderItem(it, 0))}
           </ul>
+        )}
+
+        {/* 归档区（closed todo） */}
+        {showArchived && (
+          <div style={{ marginTop: "0.8rem", borderTop: "1px dashed #e2e8f0", paddingTop: "0.6rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem", fontSize: "0.8rem", color: "#64748b" }}>
+              <b>🗄 归档区（已完成并归档）</b>
+              <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>手动归档或超过 3 天保留期自动归档；可恢复</span>
+            </div>
+            {archived.length === 0 ? (
+              <div style={{ padding: "1rem", textAlign: "center", color: "#94a3b8", fontSize: "0.82rem" }}>暂无归档</div>
+            ) : (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {archived.map((x) => (
+                  <li key={x.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.45rem 0.6rem", borderRadius: 8, marginBottom: "0.25rem", background: "#f8fafc", border: "1px solid #eef2f7" }}>
+                    <span style={{ flex: 1, fontSize: "0.88rem", color: "#94a3b8", textDecoration: "line-through", wordBreak: "break-all" }}>{x.text}</span>
+                    {x.repeat && <span style={{ fontSize: "0.68rem", color: "#a78bfa" }}>{x.repeat === "daily" ? "每日" : x.repeat === "weekly" ? "每周" : "每月"}</span>}
+                    <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>{x.archivedAt ? x.archivedAt.slice(0, 10) : ""}</span>
+                    <button onClick={() => void restoreItem(x)} title="恢复到主列表" style={{ fontSize: "0.74rem", padding: "0.15rem 0.5rem", borderRadius: 6, border: "1px solid #3b82f6", background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>↩ 恢复</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
       {msg && (

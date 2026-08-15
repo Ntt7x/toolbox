@@ -134,5 +134,6 @@ test("回收站：软删/恢复/彻底删除 + 文件夹级联 + 移动环拒绝
   store.purgeItem(it.id);
   assert.ok(!store.listItems("all").some((x) => x.id === it.id), "彻底删除");
   store.purgeFolder(f1.id);
-  assert.ok(store.listFolders("all").length === 0, "彻底删除文件夹整树");
+  // 数据独立断言：只验证「本测试创建的文件夹树已彻底删除」（真实用户数据共存时 length 不为 0，2026-08-16 修正）
+  assert.ok(!store.listFolders("all").some((x) => x.id === f1.id || x.id === f2.id), "彻底删除文件夹整树");
 });

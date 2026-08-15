@@ -7,10 +7,8 @@
 // 退出码：tsc 失败 → 非 0。
 // ============================================================
 import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { ROOT as root } from "./_lib.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const args = process.argv.slice(2);
 const appIdx = args.indexOf("--app");
 const app = appIdx >= 0 ? args[appIdx + 1] : null;

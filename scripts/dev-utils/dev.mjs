@@ -16,27 +16,15 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+import { ROOT as root, tsxCli, viteCli as viteCliPnpm } from "./_lib.mjs";
+// tsx/vite CLI 动态路径由 _lib.mjs 统一提供（pnpm 升级版本不失效）
 const NODE = process.execPath;
 const STATE_FILE = path.join(root, ".file", "dev.pids.json");
 const STOP_FLAG = path.join(root, ".file", "dev.stop");
 const PORTS = [8787, 5173];
 const serverCwd = path.join(root, "apps", "server");
 const webCwd = path.join(root, "apps", "web");
-// tsx CLI 路径动态查找（pnpm 升级 tsx 版本后写死路径会失效；取最新 tsx@ 目录）
-const tsxCli = (() => {
-  const pnpmDir = path.join(root, "node_modules", ".pnpm");
-  try {
-    const dirs = fs.readdirSync(pnpmDir).filter((d) => d.startsWith("tsx@"));
-    if (dirs.length) {
-      dirs.sort().reverse(); // 版本号字符串排序近似最新
-      const p = path.join(pnpmDir, dirs[0], "node_modules", "tsx", "dist", "cli.mjs");
-      if (fs.existsSync(p)) return p;
-    }
-  } catch { /* ignore */ }
-  return path.join(pnpmDir, "tsx@4.23.5", "node_modules", "tsx", "dist", "cli.mjs");
-})();
-const viteCli = path.join(webCwd, "node_modules", "vite", "bin", "vite.js");
+const viteCli = viteCliPnpm;
 const LOG_DIR = path.join(root, ".file", "dev-logs");
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
@@ -44,7 +32,6 @@ function log(...a) {
   const msg = `[dev] ${a.join(" ")}`;
   console.log(msg);
   // supervisor 后台运行时 stdout 被丢弃，同步追加到 supervisor.log 便于排查重启原因
-  try { fs.appendFileSync(path.join(LOG_DIR, "supervisor.log"), msg + "\n"); } catch { /* ignore */ }
 }
 
 function pidOnPort(port) {
@@ -120,7 +107,6 @@ function spawnSupervisor() {
 function startServer() {
   const s = svc.server;
   s.spawnAt = Date.now();
-  if (s.logFd) { try { fs.closeSync(s.logFd); } catch { /* ignore */ } } // 防 fd 泄漏（重启多次累积）
   s.logFd = fs.openSync(path.join(LOG_DIR, "server.log"), "a");
   const child = spawn(NODE, [tsxCli, "watch", "src/index.ts"], { cwd: serverCwd, stdio: ["ignore", s.logFd, s.logFd] });
   s.child = child;
@@ -131,7 +117,6 @@ function startServer() {
 function startWeb() {
   const s = svc.web;
   s.spawnAt = Date.now();
-  if (s.logFd) { try { fs.closeSync(s.logFd); } catch { /* ignore */ } } // 防 fd 泄漏
   s.logFd = fs.openSync(path.join(LOG_DIR, "web.log"), "a");
   const child = spawn(NODE, [viteCli], { cwd: webCwd, stdio: ["ignore", s.logFd, s.logFd] });
   s.child = child;
@@ -230,7 +215,6 @@ function killOldSupervisor() {
 function cleanupSupervisorRecord() {
   const old = readSupervisorPid();
   if (old && old !== process.pid && !isAlivePid(old)) {
-    try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
     log(`清理残留 supervisor 记录 (PID ${old})`);
   }
 }
@@ -242,7 +226,6 @@ switch (cmd) {
   case "start":
     // 2026-08-14 根治：supervisor 以 detached 后台进程运行（脱离调用者进程组/生命周期），
     // 调用方（终端/工具进程）退出或被超时杀死都不再连带杀掉 tsx/vite 服务
-    try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
     killOldSupervisor();
     cleanupSupervisorRecord();
     cleanupPorts();
@@ -259,13 +242,11 @@ switch (cmd) {
   case "stop":
     killOldSupervisor(); // 杀旧 supervisor 进程树（级联杀其 tsx/vite 子进程）
     stopAll(); // 写 STOP_FLAG + 清端口（双保险）
-    try { fs.unlinkSync(STATE_FILE); } catch { /* ignore */ }
     break;
   case "restart":
     killOldSupervisor(); // 先杀旧 supervisor（STATE_FILE 此时仍记录旧 PID）
     stopAll();
     cleanupSupervisorRecord();
-    try { fs.unlinkSync(STOP_FLAG); } catch { /* ignore */ }
     cleanupPorts();
     spawnSupervisor();
     break;

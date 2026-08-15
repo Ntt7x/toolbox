@@ -66,6 +66,7 @@ const TAG_COLOR: Record<string, [string, string]> = {
   存量数据: ["#fef2f2", "#b91c1c"],
   运行状态: ["#f0f9ff", "#0369a1"],
   改进备忘录: ["#fffbeb", "#a16207"],
+  交易数据: ["#fef2f2", "#b91c1c"],
   未标记: ["#f1f5f9", "#475569"],
 };
 
@@ -74,7 +75,7 @@ function tagStyle(tag: string): CSSProperties {
   return chip(bg, fg);
 }
 
-const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "知识数据", "存量数据", "运行状态", "改进备忘录", "未标记"];
+const TAG_ORDER = ["设置数据", "自选数据", "分析缓存", "分析数据", "知识数据", "存量数据", "运行状态", "改进备忘录", "交易数据", "未标记"];
 
 const PAGE_SIZE = 50;
 

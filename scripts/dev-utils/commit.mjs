@@ -10,9 +10,8 @@
 import { spawnSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { ROOT as root } from "./_lib.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MSG = path.join(root, ".git", "COMMIT_MSG_TMP.txt");
 const args = process.argv.slice(2);
 const noAdd = args.includes("--no-add");

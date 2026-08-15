@@ -148,3 +148,75 @@ test("scheduler 服务：isDue 跨期判定（消费 store）", async () => {
   kvSet(TODO_V3_KEY, raw);
   assert.equal(ctx.todoV3Scheduler.isDue(ctx.todoV3Store.list().find((x) => x.id === a.id)!, now), false);  // 跨期待做
 });
+
+// ---------- closed todo 归档（手动 + 到期自动） ----------
+
+test("归档：仅已完成可手动归档 + 恢复 + 归档区列表", async () => {
+  const ctx = await makeCtx();
+  const store = ctx.todoV3Store;
+  const r1 = store.create("做完了的事");
+  assert.ok(r1.ok);
+  const a = r1.items.find((x) => x.text === "做完了的事")!;
+  // 未完成不可归档
+  const bad = store.archive(a.id);
+  assert.equal(bad && "ok" in bad && bad.ok, false);
+  // 完成 → 归档
+  store.update(a.id, { done: true });
+  const r2 = store.archive(a.id);
+  assert.ok(r2 && "ok" in r2 && r2.ok);
+  assert.ok(!store.list().some((x) => x.id === a.id), "主列表隐藏");
+  assert.ok(store.listArchived().some((x) => x.id === a.id), "归档区可见");
+  // 恢复
+  const r3 = store.restore(a.id);
+  assert.ok(r3 && r3.ok);
+  assert.ok(store.list().some((x) => x.id === a.id), "恢复回主列表");
+  assert.ok(!store.listArchived().some((x) => x.id === a.id), "归档区移除");
+});
+
+test("自动归档：非周期已完成超 3 天保留期 → 读时自动归档（幂等）；周期项不自动归档", async () => {
+  const ctx = await makeCtx();
+  const store = ctx.todoV3Store;
+  const r1 = store.create("三天前完成的事");
+  assert.ok(r1.ok);
+  const a = r1.items.find((x) => x.text === "三天前完成的事")!;
+  store.update(a.id, { done: true });
+  // 把 done 时间改成 4 天前（非周期项 lastDoneAt 无，用 updatedAt——直接把 KV 里该条 updatedAt 改旧）
+  const raw = kvGet<{ items: { id: string; updatedAt?: string; repeat?: string }[] }>(TODO_V3_KEY)!;
+  const it = raw.items.find((x) => x.id === a.id)!;
+  it.updatedAt = new Date(Date.now() - 4 * 86_400_000).toISOString();
+  kvSet(TODO_V3_KEY, raw);
+  // 读 → 自动归档
+  assert.ok(!store.list().some((x) => x.id === a.id), "已自动归档出主列表");
+  assert.ok(store.listArchived().some((x) => x.id === a.id), "进入归档区");
+  // 幂等：再读一次不重复归档
+  store.list();
+  assert.equal(store.listArchived().filter((x) => x.id === a.id).length, 1);
+  // 周期项不受自动归档影响
+  const r2 = store.create("每日任务", { repeat: "daily" });
+  assert.ok(r2.ok);
+  const b = r2.items.find((x) => x.text === "每日任务")!;
+  store.update(b.id, { done: true });
+  const raw2 = kvGet<{ items: { id: string; updatedAt?: string; repeat?: string }[] }>(TODO_V3_KEY)!;
+  const bit = raw2.items.find((x) => x.id === b.id)!;
+  bit.updatedAt = new Date(Date.now() - 4 * 86_400_000).toISOString();
+  kvSet(TODO_V3_KEY, raw2);
+  assert.ok(store.list().some((x) => x.id === b.id), "周期项保留在主列表（不自动归档）");
+});
+
+test("清空已完成：已归档的保留在归档区", async () => {
+  const ctx = await makeCtx();
+  const store = ctx.todoV3Store;
+  const r1 = store.create("归档的事");
+  assert.ok(r1.ok);
+  const a = r1.items.find((x) => x.text === "归档的事")!;
+  store.update(a.id, { done: true });
+  store.archive(a.id);
+  const r2 = store.create("直接清的事");
+  assert.ok(r2.ok);
+  const b = r2.items.find((x) => x.text === "直接清的事")!;
+  store.update(b.id, { done: true });
+  store.clearDone();
+  assert.ok(!store.list().some((x) => x.id === b.id), "未归档已完成被清掉");
+  assert.ok(store.listArchived().some((x) => x.id === a.id), "已归档保留");
+});
+

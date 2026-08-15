@@ -33,6 +33,29 @@ export function registerTodoV3Feature(app: Hono) {
     return c.json({ ok: true, items: ctx.todoV3Resolver.listView() });
   });
 
+  // 归档区列表（静态路由必须在 /:id 前注册）
+  app.get(`${API_PREFIX}/tools/todo-v3/archive`, async (c: HonoContext) => {
+    const ctx = await getTodoV3Ctx();
+    return c.json({ ok: true, items: ctx.todoV3Resolver.views(ctx.todoV3Store.listArchived()) });
+  });
+
+  // 手动归档（仅已完成）
+  app.post(`${API_PREFIX}/tools/todo-v3/:id/archive`, async (c: HonoContext) => {
+    const ctx = await getTodoV3Ctx();
+    const r = ctx.todoV3Store.archive(c.req.param("id")!);
+    if (r === null) return c.json({ ok: false, message: "待办不存在" }, 404);
+    if (!r.ok) return c.json({ ok: false, message: r.message }, 400);
+    return c.json({ ok: true, items: ctx.todoV3Resolver.views(r.items) });
+  });
+
+  // 恢复归档
+  app.post(`${API_PREFIX}/tools/todo-v3/:id/restore`, async (c: HonoContext) => {
+    const ctx = await getTodoV3Ctx();
+    const r = ctx.todoV3Store.restore(c.req.param("id")!);
+    if (r === null) return c.json({ ok: false, message: "待办不存在" }, 404);
+    return c.json({ ok: true, items: ctx.todoV3Resolver.views(r.items) });
+  });
+
   // 新增
   app.post(`${API_PREFIX}/tools/todo-v3`, async (c: HonoContext) => {
     const body = (await c.req.json().catch(() => null)) as { text?: unknown; dependencies?: unknown; repeat?: unknown; parentId?: unknown } | null;
