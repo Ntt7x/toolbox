@@ -331,6 +331,27 @@ export class DocFileService extends Service {
   deletePdf(id: string): void {
     try { fs.rmSync(path.join(this.fileDir(), `${id}.pdf`), { force: true }); } catch { /* ignore */ }
   }
+
+  /** 导出文档到 .file/docs-edit/（供「在 VSCode 中打开」唤起本地编辑器，memo msuxceh7） */
+  exportForEdit(item: DocItem): { ok: boolean; path?: string; message?: string } {
+    const dir = path.join(path.resolve(process.cwd()), ".file", "docs-edit");
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, message: (e as Error).message }; }
+    const safe = item.name.replace(/[\\/:*?"<>|]/g, "_");
+    const target = path.join(dir, safe);
+    try {
+      if (item.type === "md") {
+        const content = kvGet<string>(DOCS_CONTENT_PREFIX + item.id) ?? "";
+        fs.writeFileSync(target, content, "utf8");
+      } else {
+        const buf = this.readPdf(item.id);
+        if (!buf) return { ok: false, message: "pdf 文件不存在" };
+        fs.writeFileSync(target, buf);
+      }
+      return { ok: true, path: target };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+  }
 }
 
 // ============================================================

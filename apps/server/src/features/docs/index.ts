@@ -140,6 +140,14 @@ export function registerDocsFeature(app: Hono) {
     return c.json({ ok: true, items: ctx.docStore.listItems(), folders: ctx.docStore.listFolders(), tags: ctx.docIndex.listTags() });
   });
 
+  // 导出到本地文件（VSCode 唤起编辑，memo msuxceh7）——静态路由在 :id 之前
+  app.post(`${API_PREFIX}/tools/docs/:id/export-file`, async (c: Context) => {
+    const ctx = await getDocsCtx();
+    const it = ctx.docStore.getItem(c.req.param("id")!);
+    if (!it) return c.json({ ok: false, message: "文档不存在" }, 404);
+    return c.json(ctx.docFile.exportForEdit(it));
+  });
+
   // 更新文档（name/tags/folderId/content）
   app.put(`${API_PREFIX}/tools/docs/:id`, async (c: Context) => {
     const body = (await c.req.json().catch(() => null)) as { name?: unknown; tags?: unknown; folderId?: unknown; content?: unknown } | null;

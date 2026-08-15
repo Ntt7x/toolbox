@@ -40,9 +40,12 @@ export default function DocsTool() {
   // 筛选
   const [curFolder, setCurFolder] = useState<string | null>(null);   // null = 全部
   const [curTag, setCurTag] = useState<string | null>(null);
-  // 预览
-  const [preview, setPreview] = useState<{ item: DocItem; content?: string } | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
+  // 预览（vscode 风格多 tab + 内容缓存，memo msuxb24k/msuxe7hg）
+  //  - openTabs 保留会话内打开过的文档（含缓存内容）；activeTabId=null 时预览收起（遮罩/Esc）
+  //  - 关闭 tab 从列表移除但内容留在 contentCache，重新打开不重复请求
+  const [openTabs, setOpenTabs] = useState<{ item: DocItem; content?: string; busy?: boolean }[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const contentCache = useRef<Map<string, string>>(new Map());
   // 上传
   const [uploadTags, setUploadTags] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -93,6 +96,12 @@ export default function DocsTool() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadTrash(); }, [loadTrash]);
+  // Escape 收起预览（vscode 习惯；保留 openTabs 与缓存）
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setActiveTabId(null); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   // ---------- 文件夹树工具 ----------
   const childrenOf = useCallback((parentId: string | null) =>
@@ -133,18 +142,60 @@ export default function DocsTool() {
 
   // ---------- 预览 ----------
   const openPreview = async (it: DocItem) => {
-    setPreviewBusy(true);
-    setPreview({ item: it });
-    try {
-      if (it.type === "md") {
-        const r = await api.docsDetail(it.id);
-        setPreview({ item: it, content: r.content });
-      }
-    } catch (e) {
-      setMsg({ kind: "err", text: errMsg(e) });
-    } finally {
-      setPreviewBusy(false);
+    const exist = openTabs.find((t) => t.item.id === it.id);
+    if (exist) { setActiveTabId(it.id); return; }
+    // 内容缓存命中 → 直接展示不请求（memo msuxb24k）
+    const cached = contentCache.current.get(it.id);
+    if (cached !== undefined) {
+      setOpenTabs((p) => [...p, { item: it, content: cached }]);
+      setActiveTabId(it.id);
+      return;
     }
+    setOpenTabs((p) => [...p, { item: it, busy: it.type === "md" }]);
+    setActiveTabId(it.id);
+    if (it.type !== "md") return;
+    try {
+      const r = await api.docsDetail(it.id);
+      contentCache.current.set(it.id, r.content ?? "");
+      setOpenTabs((p) => p.map((t) => (t.item.id === it.id ? { item: it, content: r.content, busy: false } : t)));
+    } catch (e) {
+      setOpenTabs((p) => p.map((t) => (t.item.id === it.id ? { item: it, content: "❌ 加载失败：" + errMsg(e), busy: false } : t)));
+    }
+  };
+
+  const closeTab = (id: string) => {
+    setOpenTabs((p) => {
+      const idx = p.findIndex((t) => t.item.id === id);
+      const next = p.filter((t) => t.item.id !== id);
+      if (activeTabId === id) setActiveTabId(next[Math.min(idx, next.length - 1)]?.item.id ?? null);
+      return next;
+    });
+  };
+
+  // 收起预览（遮罩/Esc）：保留 openTabs 与缓存，方便继续打开新文档（vscode 式多 tab）
+  const collapsePreview = () => setActiveTabId(null);
+
+  const activeTab = openTabs.find((t) => t.item.id === activeTabId) ?? null;
+
+  // 复制当前文档内容（md 源码）
+  const copyActive = async () => {
+    if (!activeTab) return;
+    if (activeTab.item.type === "pdf") { setMsg({ kind: "err", text: "PDF 不支持复制内容，请在新窗口查看" }); return; }
+    try { await navigator.clipboard.writeText(activeTab.content ?? ""); setMsg({ kind: "ok", text: `✅ 已复制「${activeTab.item.name}」内容` }); }
+    catch (e) { setMsg({ kind: "err", text: "复制失败：" + errMsg(e) }); }
+  };
+
+  // 在 VSCode 中打开（导出到本地文件后唤起）
+  const openInVscode = async () => {
+    if (!activeTab) return;
+    try {
+      const r = await api.docsExportFile(activeTab.item.id);
+      if (r.ok && r.path) {
+        const vscodeUrl = "vscode://file/" + r.path.replace(/\\/g, "/");
+        window.open(vscodeUrl, "_blank");
+        setMsg({ kind: "ok", text: "✅ 已唤起 VSCode（如未打开，请确认已安装 VSCode 并允许 vscode:// 协议）" });
+      } else setMsg({ kind: "err", text: r.message ?? "导出失败" });
+    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
   // ---------- 操作（软删回收站） ----------
@@ -590,24 +641,58 @@ export default function DocsTool() {
         </div>
       )}
 
-      {/* 预览模态 */}
-      {preview && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }} onClick={() => setPreview(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, width: "min(960px, 95vw)", height: "min(720px, 90vh)", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.7rem 1rem", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
-              <span style={{ flex: 1, fontSize: "0.92rem", fontWeight: 600, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{preview.item.name}</span>
-              {preview.item.type === "pdf" && (
-                <a href={`/api/tools/docs/${preview.item.id}/file`} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "#2563eb", textDecoration: "none" }}>新窗口打开 ↗</a>
-              )}
-              <button onClick={() => setPreview(null)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: "#64748b" }}>✕</button>
+      {/* 预览模态（vscode 风格多 tab；遮罩/Esc 收起保留 tab，memo msuxe7hg） */}
+      {activeTabId !== null && openTabs.length > 0 && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }} onClick={collapsePreview}>
+          <div style={{ background: "#fff", borderRadius: 12, width: "min(1080px, 95vw)", height: "min(760px, 90vh)", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            {/* tab 栏 */}
+            <div style={{ display: "flex", alignItems: "stretch", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", flexShrink: 0 }}>
+              {openTabs.map((t) => (
+                <div
+                  key={t.item.id}
+                  onClick={() => setActiveTabId(t.item.id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6, padding: "0.45rem 0.9rem", cursor: "pointer",
+                    borderRight: "1px solid #e2e8f0", background: t.item.id === activeTabId ? "#fff" : "transparent",
+                    borderTop: t.item.id === activeTabId ? "2px solid #2563eb" : "2px solid transparent",
+                    fontSize: "0.8rem", color: t.item.id === activeTabId ? "#1e293b" : "#64748b", fontWeight: t.item.id === activeTabId ? 600 : 400,
+                    maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden",
+                  }}
+                  title={t.item.name}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.item.type === "pdf" ? "📕" : "📄"} {t.item.name}</span>
+                  <span
+                    role="button"
+                    onClick={(e) => { e.stopPropagation(); closeTab(t.item.id); }}
+                    style={{ color: "#94a3b8", fontSize: "0.75rem", padding: "0 2px", borderRadius: 4 }}
+                    title="关闭"
+                  >✕</span>
+                </div>
+              ))}
+              {/* 工具栏（右侧） */}
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", padding: "0 0.6rem" }}>
+                {activeTab?.item.type === "md" && (
+                  <>
+                    <button onClick={() => void copyActive()} title="复制内容" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
+                    <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 VSCode</button>
+                  </>
+                )}
+                {activeTab?.item.type === "pdf" && (
+                  <a href={`/api/tools/docs/${activeTab.item.id}/file`} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "#2563eb", textDecoration: "none", padding: "0.3rem 0.5rem" }}>新窗口打开 ↗</a>
+                )}
+                <button onClick={() => { setOpenTabs([]); setActiveTabId(null); }} title="关闭全部" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: "#64748b", padding: "0.3rem 0.5rem" }}>✕</button>
+              </div>
             </div>
-            <div style={{ flex: 1, overflow: "auto", padding: preview.item.type === "md" ? "1rem 1.25rem" : 0 }}>
-              {preview.item.type === "pdf" ? (
-                <iframe src={`/api/tools/docs/${preview.item.id}/file`} title={preview.item.name} style={{ width: "100%", height: "100%", border: "none" }} />
-              ) : previewBusy ? (
-                <div style={{ textAlign: "center", padding: "2rem", color: "#94a3b8" }}>加载中…</div>
+            {/* 内容区：md 居中阅读（maxWidth 800），pdf 全幅 */}
+            <div style={{ flex: 1, overflow: "auto", background: activeTab?.item.type === "pdf" ? "#525659" : "#fff" }}>
+              {activeTab?.item.type === "pdf" ? (
+                <iframe src={`/api/tools/docs/${activeTab.item.id}/file`} title={activeTab.item.name} style={{ width: "100%", height: "100%", border: "none" }} />
+              ) : activeTab?.busy ? (
+                <div style={{ textAlign: "center", padding: "3rem", color: "#94a3b8" }}>加载中…</div>
               ) : (
-                <MarkdownView>{preview.content ?? ""}</MarkdownView>
+                <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
+                  <MarkdownView>{activeTab?.content ?? ""}</MarkdownView>
+                </div>
               )}
             </div>
           </div>

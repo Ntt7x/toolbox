@@ -307,6 +307,9 @@ export const api = {
   /** DeepSeek Chat Share 导入为 md 文档 */
   docsDeepseekImport: (url: string, folderId?: string, tags: string[] = []) =>
     request<DocsMutateResult & { message?: string; created?: { name: string; type: string }[]; tags: { name: string; count: number }[] }>("/tools/docs/deepseek-import", jsonInit("POST", { url, folderId, tags })),
+  /** 导出文档到本地文件（供 VSCode 唤起编辑） */
+  docsExportFile: (id: string) =>
+    request<{ ok: boolean; path?: string; message?: string }>(`/tools/docs/${encodeURIComponent(id)}/export-file`, jsonInit("POST", {})),
   // 书籍下载（zlib）
   booksSearch: (q: string, page = 1, limit = 20) =>
     request<BookSearchResult>(`/tools/books/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`),
