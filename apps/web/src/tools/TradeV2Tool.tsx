@@ -749,8 +749,8 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
             {sortableHead("市值", "marketValue", "text-right")}
             {groupView && sortableHead("占总仓位", "weightPct", "text-right")}
             {sortableHead("已实现", "realizedPnl", "text-right")}
-            {sortableHead("未实现", "unrealizedPnl", "text-right")}
-            {sortableHead("未实现%", "unrealizedPnl", "text-right")}
+            {groupView && sortableHead("未实现", "unrealizedPnl", "text-right")}
+            {groupView && sortableHead("未实现%", "unrealizedPnl", "text-right")}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -763,8 +763,8 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
               <TableCell className="text-right" style={{ fontWeight: 600 }}>{cny2(p.marketValue)}</TableCell>
               {groupView && <TableCell className="text-right">{p.weightPct !== undefined ? pct(p.weightPct) : "—"}</TableCell>}
               <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl) }}>{pnlText(p.realizedPnl)}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{pnlText(p.unrealizedPnl)}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>
+              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{pnlText(p.unrealizedPnl)}</TableCell>}
+              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl) }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>}
             </TableRow>
           ))}
         </TableBody>
