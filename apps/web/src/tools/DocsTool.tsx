@@ -50,8 +50,9 @@ export default function DocsTool() {
   // 阅读字号 / PDF 缩放（memo 6：类似编辑器字号 + PDF 阅读器缩放）
   const [fontScale, setFontScale] = useState(1);
   const [pdfScale, setPdfScale] = useState(1);
-  // 侧边栏宽度（拖拽拉伸，memo msuyy4dx-2）
-  const [sidebarW, setSidebarW] = useState(240);
+  // 侧边栏宽度（拖拽拉伸，memo msuyy4dx-2；localStorage 记忆，2026-08-16）
+  const [sidebarW, setSidebarW] = useState(() => { try { return Number(localStorage.getItem("docsSidebarW")) || 240; } catch { return 240; } });
+  useEffect(() => { try { localStorage.setItem("docsSidebarW", String(sidebarW)); } catch { /* 忽略 */ } }, [sidebarW]);
   const sidebarDrag = useRef(false);
   const startSidebarDrag = (e: React.MouseEvent) => {
     e.preventDefault();
