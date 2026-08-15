@@ -416,12 +416,15 @@ export class DocImportService extends Service {
         }
         const buf = Buffer.from(await f.arrayBuffer());
         const isPdf = ext === ".pdf";
+        // 非 LLM 标题提取：md 内容有 # 标题时用标题作文档名（memo msuz05fu-3），否则用文件名
+        const content = buf.toString("utf8");
+        const mdTitle = isPdf ? null : extractMdTitle(content);
         const item = store.createItem({
-          name: fileName,
+          name: isPdf ? fileName : mdTitle ? mdTitle + ".md" : fileName,
           type: isPdf ? "pdf" : "md",
           folderId: cur,
           tags: opts.tags,
-          ...(isPdf ? { size: buf.length } : { content: buf.toString("utf8"), size: buf.length }),
+          ...(isPdf ? { size: buf.length } : { content, size: buf.length }),
         });
         if (!item) { errors.push(`${fileName}: 文档数已达上限`); continue; }
         if (isPdf) file.writePdf(item.id, buf);
@@ -533,4 +536,11 @@ declare module "@deepseek-ai/cordis" {
     docIndex: DocIndexService;
     docImport: DocImportService;
   }
+}
+
+/** 非 LLM 提取 markdown 标题：首个 # / ## / ### 行（清理 markdown 符号，截断 60 字） */
+export function extractMdTitle(content: string): string | null {
+  const m = content.match(/^#{1,3}\s+(.+?)\s*$/m);
+  if (!m) return null;
+  return m[1].replace(/[*_`]/g, "").trim().slice(0, 60);
 }

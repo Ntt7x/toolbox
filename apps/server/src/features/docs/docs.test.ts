@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { kvGet, kvSet } from "../../core/kvStore.js";
-import { chatToMarkdown } from "./services.js";
+import { chatToMarkdown, extractMdTitle } from "./services.js";
 import {
   DOCS_CONTENT_PREFIX, DOCS_FOLDERS_KEY, DOCS_META_KEY, DOCS_FILE_DIR,
   DocStoreService, DocFileService, DocIndexService, DocImportService,
@@ -52,8 +52,8 @@ test("Cordis 服务注册：docStore/docFile/docIndex/docImport 可访问 + DocF
   // DocFile 构造 effect 初始化目录
   const dir = ctx.docFile.fileDir();
   assert.ok(fs.existsSync(dir), "pdf 目录已初始化");
-  // 服务间依赖：index 消费 store
-  assert.deepEqual(ctx.docIndex.listTags(), []);
+  // 服务间依赖：index 消费 store（数据独立：不假设列表为空——用户数据共存，2026-08-16 修正）
+  assert.ok(Array.isArray(ctx.docIndex.listTags()), "listTags 返回数组");
 });
 
 test("文档 CRUD：文件夹树 + md 内容 + tag 聚合", async () => {
@@ -69,8 +69,7 @@ test("文档 CRUD：文件夹树 + md 内容 + tag 聚合", async () => {
   assert.equal(store.getContent(item.id), "# 标题");
   // tag 聚合
   const tags = ctx.docIndex.listTags();
-  assert.equal(tags.length, 1);
-  assert.equal(tags[0].name, "测试");
+  assert.ok(tags.some((t) => t.name === "测试"), "包含本次创建的 tag");
   // 过滤
   const filtered = ctx.docIndex.filter(store.listItems(), { folderId: f1.id });
   assert.equal(filtered.length, 1);
@@ -98,7 +97,7 @@ test("DocImportService：multipart 上传解析（md 进 KV）", async () => {
   const r = await ctx.docImport.uploadParse(form, { tags: ["导入"] });
   assert.equal(r.created.length, 1);
   assert.equal(r.errors.length, 0);
-  const item = ctx.docStore.listItems().find((x) => x.name === "导入.md");
+  const item = ctx.docStore.listItems().find((x) => x.name === "导入内容.md");   // 非 LLM 标题提取：文档名 = 内容首个 # 标题
   assert.ok(item && item.tags.includes("导入"));
   assert.equal(ctx.docStore.getContent(item.id), "# 导入内容");
 });
@@ -139,8 +138,7 @@ test("回收站：软删/恢复/彻底删除 + 文件夹级联 + 移动环拒绝
   assert.ok(!store.listFolders("all").some((x) => x.id === f1.id || x.id === f2.id), "彻底删除文件夹整树");
 });
 
-test("chatToMarkdown：对话 → md（标题 + 来源 + 消息 + 思考折叠）", () => {
-  const md = chatToMarkdown("测试对话", "https://chat.deepseek.com/share/abc", [
+test("chatToMarkdown：对话 → md（标题 + 来源 + 消息 + 思考折叠）", () => {  const md = chatToMarkdown("测试对话", "https://chat.deepseek.com/share/abc", [
     { id: 1, role: "user", content: "你好" },
     { id: 2, role: "assistant", content: "你好！有什么可以帮你？", thinking: "用户问好，礼貌回应" },
   ]);
@@ -149,4 +147,12 @@ test("chatToMarkdown：对话 → md（标题 + 来源 + 消息 + 思考折叠�
   assert.ok(md.includes("## 🧑 用户") && md.includes("## 🤖 助手"), "角色徽标");
   assert.ok(md.includes("<details>") && md.includes("🧠 思考过程"), "思考折叠");
   assert.ok(md.includes("你好！有什么可以帮你？"), "正文保留");
+});
+
+test("extractMdTitle：非 LLM 提取首个 markdown 标题（memo msuz05fu-3）", () => {
+  assert.equal(extractMdTitle("# 主标题\n\n正文"), "主标题", "首个 # 标题");
+  assert.equal(extractMdTitle("前言\n\n## 二级标题\n\n正文"), "二级标题", "无 # 时取 ##");
+  assert.equal(extractMdTitle("**加粗** `代码` 标题"), null, "无标题行返回 null");
+  assert.equal(extractMdTitle(""), null, "空内容返回 null");
+  assert.equal(extractMdTitle("# 带 *斜体* 的标题"), "带 斜体 的标题", "清理 markdown 符号");
 });

@@ -50,6 +50,18 @@ export default function DocsTool() {
   // 阅读字号 / PDF 缩放（memo 6：类似编辑器字号 + PDF 阅读器缩放）
   const [fontScale, setFontScale] = useState(1);
   const [pdfScale, setPdfScale] = useState(1);
+  // 侧边栏宽度（拖拽拉伸，memo msuyy4dx-2）
+  const [sidebarW, setSidebarW] = useState(240);
+  const sidebarDrag = useRef(false);
+  const startSidebarDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    sidebarDrag.current = true;
+    const startX = e.clientX, startW = sidebarW;
+    const move = (ev: MouseEvent) => { if (!sidebarDrag.current) return; setSidebarW(Math.min(420, Math.max(180, startW + ev.clientX - startX))); };
+    const up = () => { sidebarDrag.current = false; document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
   // 搜索（文件名/tag 即时过滤；搜索结果视图覆盖树）
   const [search, setSearch] = useState("");
   const searchResults = useMemo(() => {
@@ -211,25 +223,6 @@ export default function DocsTool() {
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
-  // 编辑模式（tab 内切换 浏览/编辑，保存后更新缓存）
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
-  const toggleEdit = () => {
-    if (!activeTab || activeTab.item.type !== "md") return;
-    if (editingId === activeTab.item.id) { void saveEdit(); }
-    else { setEditText(activeTab.content ?? ""); setEditingId(activeTab.item.id); }
-  };
-  const saveEdit = async () => {
-    if (!activeTab) return;
-    try {
-      const r = await api.docsUpdate(activeTab.item.id, { content: editText });
-      contentCache.current.set(activeTab.item.id, editText);
-      setOpenTabs((p) => p.map((t) => (t.item.id === activeTab.item.id ? { ...t, content: editText, busy: false } : t)));
-      setItems(r.items);
-      setEditingId(null);
-      setMsg({ kind: "ok", text: "✅ 已保存" });
-    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
-  };
 
   // ---------- 操作（软删回收站） ----------
   const removeItem = async (it: DocItem) => {
@@ -396,6 +389,8 @@ export default function DocsTool() {
       if (menu.id === "__root__") {
         return [
           { label: "新建文件夹", icon: "📁", onClick: () => { setCurFolder(null); setNewFolderName(""); setTimeout(() => document.getElementById("new-folder-input")?.focus(), 50); } },
+          { label: "上传文件…", icon: "📄", onClick: () => { setCurFolder(null); fileInput.current?.click(); } },
+          { label: "上传文件夹…", icon: "📁", onClick: () => { setCurFolder(null); dirInput.current?.click(); } },
           { label: "导入知乎结果…", icon: "🤖", onClick: () => { setCurFolder(null); void loadZhihu(); setZhihuOpen(true); } },
           { label: "导入 Chat 对话…", icon: "🔗", onClick: () => { setCurFolder(null); setChatUrl(""); setChatOpen(true); } },
         ];
@@ -406,6 +401,7 @@ export default function DocsTool() {
         { label: "设为当前", icon: "📍", onClick: () => { setCurFolder(f.id); setTrashView(false); } },
         { label: "新建子文件夹", icon: "📁", onClick: () => { setCurFolder(f.id); setNewFolderName(""); setTimeout(() => document.getElementById("new-folder-input")?.focus(), 50); } },
         { label: "重命名", icon: "✎", onClick: () => { setEditingFolder(f.id); setEditFolderName(f.name); } },
+        { label: "上传文件…", icon: "📄", onClick: () => { setCurFolder(f.id); fileInput.current?.click(); } },
         { label: "sep-1", divider: true },
         { label: "导入知乎结果…", icon: "🤖", onClick: () => { setCurFolder(f.id); void loadZhihu(); setZhihuOpen(true); } },
         { label: "导入 Chat 对话…", icon: "🔗", onClick: () => { setCurFolder(f.id); setChatUrl(""); setChatOpen(true); } },
@@ -544,20 +540,6 @@ export default function DocsTool() {
             style={{ display: "none" }}
             onChange={(e) => void doUpload([...(e.target.files ?? [])])}
           />
-          <button onClick={() => fileInput.current?.click()} disabled={uploading} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "none", background: "#3b82f6", color: "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: "pointer", opacity: uploading ? 0.6 : 1 }}>
-            {uploading ? "上传中…" : "📄 上传文件"}
-          </button>
-          <button onClick={() => dirInput.current?.click()} disabled={uploading} style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", fontSize: "0.88rem", cursor: "pointer" }}>
-            📁 上传文件夹
-          </button>
-          <input
-            value={uploadTags}
-            onChange={(e) => setUploadTags(e.target.value)}
-            placeholder="上传标签（逗号分隔）"
-            style={{ flex: 1, minWidth: 160, padding: "0.5rem 0.7rem", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
-          />
-          
-          
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
           <button onClick={() => { setCurFolder(null); setTrashView(false); }} style={{ padding: "0.3rem 0.7rem", borderRadius: 999, border: "1px solid " + (!trashView && curFolder === null ? "#3b82f6" : "#e2e8f0"), background: !trashView && curFolder === null ? "#eff6ff" : "#fff", color: !trashView && curFolder === null ? "#2563eb" : "#64748b", fontSize: "0.76rem", cursor: "pointer" }}>
@@ -573,11 +555,15 @@ export default function DocsTool() {
       </div>
 
       <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-        {/* 左栏：文件夹树 */}
-        <div style={{ ...card, width: 240, flexShrink: 0 }}>
+        {/* 左栏：文件夹树（可拖拽拉伸） */}
+        <div style={{ ...card, width: sidebarW, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
             <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#334155", flex: 1 }}>文件夹</span>
-            <button onClick={() => void createFolder()} disabled={!newFolderName.trim()} title="在当前选中文件夹下新建" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#3b82f6" }}>＋</button>
+            <span
+              style={{ fontSize: "0.7rem", color: "#94a3b8", cursor: "context-menu", padding: "0 0.3rem" }}
+              title="右键此处 = 根目录操作（新建/上传/导入）"
+              onContextMenu={(e) => openMenu(e, "folder", "__root__")}
+            >⋯</span>
           </div>
           <input
             value={search}
@@ -586,17 +572,7 @@ export default function DocsTool() {
             placeholder="🔍 搜索文档 / 标签…"
             style={{ width: "100%", boxSizing: "border-box", marginBottom: "0.5rem", padding: "0.35rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem", outline: "none" }}
           />
-          <div
-            onClick={() => { setCurFolder(null); setTrashView(false); }}
-            onDragOver={(e) => { e.preventDefault(); setDragOver("__root__"); }}
-            onDragLeave={() => setDragOver((d) => (d === "__root__" ? null : d))}
-            onDrop={(e) => void onDropToFolder(e, null)}
-            onContextMenu={(e) => openMenu(e, "folder", "__root__")}
-            style={{ cursor: "pointer", padding: "0.3rem 0.45rem", borderRadius: 6, background: dragOver === "__root__" ? "#dbeafe" : curFolder === null && !trashView ? "#eff6ff" : "transparent", fontSize: "0.86rem", color: curFolder === null && !trashView ? "#2563eb" : "#334155", outline: dragOver === "__root__" ? "1px dashed #3b82f6" : "none" }}
-            title="拖文档到此处 = 移到根目录"
-          >
-            🗂️ 根目录
-          </div>
+          
           {search.trim() ? (
             // 搜索结果视图（覆盖树，类似 vscode 搜索）
             <div style={{ marginTop: "0.2rem" }}>
@@ -638,6 +614,15 @@ export default function DocsTool() {
             )}
           </div>
         </div>
+
+        {/* 拖拽 handle（拉伸左栏宽度） */}
+        <div
+          onMouseDown={startSidebarDrag}
+          style={{ width: 6, cursor: "col-resize", flexShrink: 0, alignSelf: "stretch", background: "transparent", transition: "background 0.15s" }}
+          title="拖拽调整侧边栏宽度"
+          onMouseEnter={(e) => { e.currentTarget.style.background = "#e2e8f0"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        />
 
         {/* 右栏：编辑器区（vscode 风格：tab 栏 + 内容，非弹窗；memo msuxq76n） */}
         <div style={{ ...card, flex: 1, display: "flex", flexDirection: "column", minWidth: 0, padding: 0, overflow: "hidden" }}>
@@ -689,9 +674,9 @@ export default function DocsTool() {
                   <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, padding: "0 0.6rem", flexShrink: 0 }}>
                     {activeTab?.item.type === "md" && (
                       <>
-                        <button onClick={toggleEdit} title="编辑/保存" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: editingId === activeTab.item.id ? "#16a34a" : "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>{editingId === activeTab.item.id ? "💾 保存" : "✏️ 编辑"}</button>
-                        <button onClick={() => void copyActive()} title="复制内容" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
-                        <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 VSCode</button>
+                        
+                        <button onClick={() => void copyActive()} title="复制文档的 markdown 源码文本（非文件）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
+                        <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑（推荐：编辑体验更佳）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 去 VSCode 编辑</button>
                         <span style={{ display: "flex", alignItems: "center", gap: 2, borderLeft: "1px solid #e2e8f0", marginLeft: "0.3rem", paddingLeft: "0.3rem" }}>
                           <button onClick={() => setFontScale((s) => Math.max(0.7, Math.round((s - 0.1) * 100) / 100))} title="减小字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.72rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A−</button>
                           <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 34, textAlign: "center" }}>{Math.round(fontScale * 100)}%</span>
@@ -720,10 +705,6 @@ export default function DocsTool() {
                   </div>
                 ) : activeTab.busy ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
-                ) : editingId === activeTab.item.id ? (
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                    <textarea value={editText} onChange={(e) => setEditText(e.target.value)} spellCheck={false} style={{ flex: 1, width: "100%", boxSizing: "border-box", border: "none", outline: "none", padding: "1rem 1.25rem", fontFamily: "'Cascadia Code', Consolas, monospace", fontSize: "0.85rem", lineHeight: 1.7, resize: "none", background: "#fff", color: "#334155" }} />
-                  </div>
                 ) : (
                   <div style={{ flex: 1, overflow: "auto" }}>
                     <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
