@@ -1546,7 +1546,11 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
 export default function TradeV2Tool() {
   const [groups, setGroups] = useState<TradeV2GroupSummary[]>([]);
   const [entries, setEntries] = useState<TradeV2Entry[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("all");
+  // 分组选择：localStorage 记忆上次选中；无记忆时默认第一分组（有分组），无分组才 all
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
+    return saved ?? "all";
+  });
   const [detail, setDetail] = useState<{ group: TradeV2Group; analysis: TradeV2GroupAnalysis } | null>(null);
   const [global, setGlobal] = useState<TradeV2GlobalAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1571,8 +1575,10 @@ export default function TradeV2Tool() {
       const r = await api.tradeV2Overview();
       setGroups(r.groups);
       setEntries(r.entries);
+      return r.groups; // init 用（state 更新前闭包拿不到新值）
     } catch (e) {
       setMsg("❌ 数据加载失败：" + errMsg(e));
+      return [];
     }
   }, []);
 
@@ -1598,11 +1604,19 @@ export default function TradeV2Tool() {
     await loadAnalysis(selectedId);
   }, [loadOverview, loadAnalysis, selectedId]);
 
+  // 初始化一次：loadOverview 填充 groups → 恢复记忆/默认选中分组
+  const initRef = useRef(false);
   useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
     setLoading(true);
     void (async () => {
-      await loadOverview();
-      await loadAnalysis("all");
+      const loaded = (await loadOverview()) ?? []; // 填充 groups 并取回
+      // 默认选中：localStorage 记忆（若仍存在）否则第一个分组（有分组时）；全空才 all
+      const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
+      const initialId = saved && loaded.some((g) => g.id === saved) ? saved : loaded.length > 0 ? loaded[0]!.id : "all";
+      setSelectedId(initialId);
+      await loadAnalysis(initialId);
       setLoading(false);
     })();
   }, [loadOverview, loadAnalysis]);
@@ -1891,13 +1905,13 @@ export default function TradeV2Tool() {
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: "0.8rem", fontWeight: 700, color: C.sub }}>分组</span>
-            <button onClick={() => setSelectedId("all")} style={groupTabStyle(selectedId === "all")}>
+            <button onClick={() => { setSelectedId("all"); try { localStorage.setItem("tradeV2:selectedGroup", "all"); } catch {} }} style={groupTabStyle(selectedId === "all")}>
               全部组合（{groups.length}）
             </button>
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
-                <button key={g.id} onClick={() => setSelectedId(g.id)} style={groupTabStyle(sel)}>
+                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} style={groupTabStyle(sel)}>
                   {g.name}
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
@@ -1955,7 +1969,7 @@ export default function TradeV2Tool() {
 
           {/* 全部视图：分组贡献明细（点击行跳转该组） */}
           {!isGroupView && global && (
-            <GroupContributionTable groups={groups} globalMv={global.totalMv} onSelect={(id) => setSelectedId(id)} />
+            <GroupContributionTable groups={groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
           )}
 
           {!isGroupView && (
