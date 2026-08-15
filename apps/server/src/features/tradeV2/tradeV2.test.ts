@@ -1,5 +1,5 @@
-// 仓位管理 v2 单测：账本重放（均价/已实现）、复盘配对、分组约束校验、存储 CRUD、V1 导入
-// 数据安全（cordis.md §5）：store 测试 beforeEach 备份 / afterEach 恢复 tradeV2: 与 tradePlan: 全部 KV
+// 仓位管理 v2 单测：账本重放（均价/已实现）、复盘配对、分组约束校验、存储 CRUD
+// 数据安全（cordis.md §5）：store 测试 beforeEach 备份 / afterEach 恢复 tradeV2: 全部 KV
 import assert from "node:assert/strict";
 import { test, beforeEach, afterEach } from "node:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -292,16 +292,14 @@ test("parseStockLimits：去重 + 越界丢弃 + 空 code 丢弃", () => {
 let backups: { key: string; value: string }[] = [];
 
 beforeEach(() => {
-  // 备份 tradeV2:（本模块）与 tradePlan:（V1 导入测试读取/写入）
+  // 备份 tradeV2:（本模块 KV）
   backups = [
     ...kvListRaw("tradeV2:", 10000).map((r) => ({ key: r.key, value: r.value })),
-    ...kvListRaw("tradePlan:", 10000).map((r) => ({ key: r.key, value: r.value })),
   ];
 });
 afterEach(() => {
   for (const { key } of kvListRaw("tradeV2:", 10000)) kvDelete(key);
-  for (const { key } of kvListRaw("tradePlan:", 10000)) kvDelete(key);
-  for (const b of backups) kvSet(b.key, JSON.parse(b.value));
+    for (const b of backups) kvSet(b.key, JSON.parse(b.value));
 });
 
 /** 挂载 tradeV2 插件（Group/Ledger/Analysis/Import 四服务） */
@@ -311,15 +309,6 @@ async function makeV2Ctx(): Promise<Context> {
   return ctx;
 }
 
-/** 向 KV 种一个 V1 策略（含 tradePlan:strategies:list） */
-function seedV1Strategy(id: string, data: Record<string, unknown>): void {
-  kvSet("tradePlan:strategy:" + id, data);
-  const list = kvGet<string[]>("tradePlan:strategies:list") ?? [];
-  if (!list.includes(id)) {
-    list.push(id);
-    kvSet("tradePlan:strategies:list", list);
-  }
-}
 
 test("store：分组 CRUD（创建/列表/改名/改限制/删除级联交易）", () => {
   const g1 = createGroup("策略A");
@@ -359,148 +348,6 @@ test("store：交易 CRUD + 组内排序（日期升序）", () => {
   assert.equal(getEntry(e1.id), null);
   assert.equal(listEntriesByGroup(g.id).length, 1);
 });
-// ---------- V1 导入 ----------
-
-test("V1 导入：策略 → 分组 + 期初建仓（价格=均价，initial=true，日期可指定）", async () => {
-  seedV1Strategy("v1-a", {
-    id: "v1-a",
-    name: "V1策略A",
-    totalCapital: 100000,
-    dailyAddLimit: 20000,
-    stocks: [{ code: "600519", name: "贵州茅台", maxWeightPct: 40 }, { code: "300750", maxWeightPct: 30 }],
-    positions: [
-      { code: "600519", name: "贵州茅台", quantity: 20, avgCost: 1400 },
-      { code: "300750", name: "宁德时代", quantity: 100, avgCost: 250.5 },
-      { code: "000001", name: "空仓标的", quantity: 0, avgCost: 10 }, // 零持仓跳过
-    ],
-  });
-  const ctx = await makeV2Ctx();
-  // 预览（按 id 定位——与真实 V1 数据共存，不依赖列表顺序/长度）
-  const preview = ctx.tradeV2Import.v1Preview();
-  const p = preview.find((x) => x.id === "v1-a")!;
-  assert.ok(p);
-  assert.equal(p.name, "V1策略A");
-  assert.equal(p.positionCount, 2); // 零持仓（qty=0）在归一化时剔除
-  assert.equal(p.importableCount, 2);
-  assert.equal(p.conflict, false);
-  // 执行导入（显式 strategyIds，隔离真实数据）
-  const r = ctx.tradeV2Import.importV1({ date: "2026-08-01", strategyIds: ["v1-a"] });
-  assert.equal(r.created.length, 1);
-  assert.equal(r.skipped.length, 0);
-  assert.equal(r.created[0]!.entryCount, 2);
-  const g = ctx.tradeV2Group.get(r.created[0]!.groupId)!;
-  assert.equal(g.name, "V1策略A");
-  assert.equal(g.totalCapital, 100000);
-  assert.equal(g.dailyAddLimit, 20000);
-  assert.equal(g.stockLimits.length, 2);
-  assert.equal(g.stockLimits.find((x) => x.code === "600519")!.maxWeightPct, 40);
-  const entries = ctx.tradeV2Ledger.listByGroup(g.id);
-  assert.equal(entries.length, 2);
-  const m = entries.find((e) => e.code === "600519")!;
-  assert.equal(m.initial, true);
-  assert.equal(m.action, "buy");
-  assert.equal(m.quantity, 20);
-  assert.equal(m.price, 1400);
-  assert.equal(m.date, "2026-08-01");
-  assert.equal(m.note, "V1 导入期初建仓");
-  const d = entries.find((e) => e.code === "300750")!;
-  assert.equal(d.quantity, 100);
-  assert.equal(d.price, 250.5);
-  // 导入后仓位派生正确
-  const analysis = ctx.tradeV2Analysis.groupAnalysis(g.id);
-  assert.equal((await analysis)!.analysis.positions.length, 2);
-});
-
-test("V1 导入：同名冲突跳过（幂等）+ 负成本持仓以负价期初建仓导入", async () => {
-  // V2 已有同名分组
-  const ctx = await makeV2Ctx();
-  createGroup("V1策略B");
-  seedV1Strategy("v1-b", {
-    id: "v1-b",
-    name: "V1策略B",
-    totalCapital: 50000,
-    dailyAddLimit: 5000,
-    stocks: [],
-    positions: [{ code: "600519", quantity: 10, avgCost: 100 }],
-  });
-  // 负成本 + 无成本价
-  seedV1Strategy("v1-c", {
-    id: "v1-c",
-    name: "V1策略C",
-    totalCapital: 50000,
-    dailyAddLimit: 5000,
-    stocks: [],
-    positions: [
-      { code: "600519", quantity: 10, avgCost: -55.425 }, // 负成本
-      { code: "300750", quantity: 10, avgCost: 0 },       // 无有效成本
-      { code: "000001", quantity: 5, avgCost: 100 },      // 正常
-    ],
-  });
-  const r = ctx.tradeV2Import.importV1({ date: "2026-08-02", strategyIds: ["v1-b", "v1-c"] });
-  // B 冲突跳过；C 负成本/零成本持仓全部导入为负价期初建仓（统一模型）
-  assert.ok(r.skipped.some((s) => s.name === "V1策略B" && s.reason.includes("同名分组")));
-  const c = r.created.find((x) => x.name === "V1策略C")!;
-  assert.ok(c);
-  assert.equal(c.entryCount, 3);
-  assert.equal(r.skippedPositions.length, 0);
-  const g = ctx.tradeV2Group.list().find((x) => x.name === "V1策略C")!;
-  const entries = ctx.tradeV2Ledger.listByGroup(g.id);
-  const neg = entries.find((e) => e.code === "600519")!;
-  assert.equal(neg.price, -55.425);
-  assert.equal(neg.initial, true);
-  const zero = entries.find((e) => e.code === "300750")!;
-  assert.equal(zero.price, 0);
-  // 再次导入 → 全部跳过（幂等）
-  const r2 = ctx.tradeV2Import.importV1({ date: "2026-08-02", strategyIds: ["v1-b", "v1-c"] });
-  assert.equal(r2.created.length, 0);
-  assert.equal(r2.skipped.length, 2);
-});
-
-test("V1 导入：旧数据兼容（initialPositions / stocks 内联 initShares+initCost）", async () => {
-  seedV1Strategy("v1-legacy-a", {
-    id: "v1-legacy-a",
-    name: "旧格式A",
-    totalCapital: 1000,
-    dailyAddLimit: 100,
-    stocks: [{ code: "600519" }],
-    // 无 positions → 回落 initialPositions
-    initialPositions: [{ code: "600519", name: "贵州茅台", quantity: 5, avgCost: 100 }],
-  });
-  seedV1Strategy("v1-legacy-b", {
-    id: "v1-legacy-b",
-    name: "旧格式B",
-    totalCapital: 1000,
-    dailyAddLimit: 100,
-    // 无 positions/initialPositions → 回落 stocks 内联 initShares/initCost
-    stocks: [{ code: "300750", name: "宁德时代", initShares: 10, initCost: 200 }],
-  });
-  const ctx = await makeV2Ctx();
-  const r = ctx.tradeV2Import.importV1({ date: "2026-08-03", strategyIds: ["v1-legacy-a", "v1-legacy-b"] });
-  assert.equal(r.created.length, 2);
-  const ga = ctx.tradeV2Group.list().find((x) => x.name === "旧格式A")!;
-  const ea = ctx.tradeV2Ledger.listByGroup(ga.id);
-  assert.equal(ea.length, 1);
-  assert.equal(ea[0]!.code, "600519");
-  assert.equal(ea[0]!.quantity, 5);
-  assert.equal(ea[0]!.price, 100);
-  const gb = ctx.tradeV2Group.list().find((x) => x.name === "旧格式B")!;
-  const eb = ctx.tradeV2Ledger.listByGroup(gb.id);
-  assert.equal(eb.length, 1);
-  assert.equal(eb[0]!.code, "300750");
-  assert.equal(eb[0]!.quantity, 10);
-  assert.equal(eb[0]!.price, 200);
-});
-
-test("V1 导入：strategyIds 过滤只导选中项", async () => {
-  seedV1Strategy("v1-x", { id: "v1-x", name: "选A", totalCapital: 1, dailyAddLimit: 1, stocks: [], positions: [] });
-  seedV1Strategy("v1-y", { id: "v1-y", name: "选B", totalCapital: 1, dailyAddLimit: 1, stocks: [], positions: [] });
-  const ctx = await makeV2Ctx();
-  const r = ctx.tradeV2Import.importV1({ date: "2026-08-04", strategyIds: ["v1-x"] });
-  assert.equal(r.created.length, 1);
-  assert.equal(r.created[0]!.name, "选A");
-});
-// ---------- 收益时间性/空间/每日动态 ----------
-
 test("每日动态：逐日买入/卖出/当日已实现/收盘市值（成本口径）", () => {
   const entries = [
     mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),

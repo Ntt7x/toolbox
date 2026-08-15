@@ -15,7 +15,6 @@ import TreasuryFxTool from "./tools/TreasuryFxTool";
 import ReverseRepoTool from "./tools/ReverseRepoTool";
 import WatchlistTool from "./tools/WatchlistTool";
 import KnowledgeHubTool from "./tools/KnowledgeHubTool";
-import TradePlanTool from "./tools/TradePlanTool";
 import NewsCenterTool from "./tools/NewsCenterTool";
 import TodoV3Tool from "./tools/TodoV3Tool";
 import DocsTool from "./tools/DocsTool";
@@ -38,7 +37,6 @@ const toolPages: Record<string, ComponentType> = {
   "treasury-fx": TreasuryFxTool,
   "reverse-repo": ReverseRepoTool,
   "watchlist": WatchlistTool,
-  "trade-plan": TradePlanTool,
   "knowledge-hub": KnowledgeHubTool,
   "news-center": NewsCenterTool,
   "todo-v3": TodoV3Tool,
@@ -66,7 +64,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
     ],
   },
-  { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-plan", "trade-v2"] },
+  { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-v2"] },
   { label: "工具", toolIds: ["todo-v3", "docs", "news-center", "deepseek-share", "zhihu-crawler"] },
   {
     // 默认收起的不常用分组（memo msqb197d）：架构图/本地数据/知识库中心/书籍下载

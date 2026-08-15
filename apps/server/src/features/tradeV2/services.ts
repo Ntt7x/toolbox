@@ -4,7 +4,6 @@
 //   - TradeV2LedgerService   交易账本 CRUD（增量；组内条目 = filter(groupId)）
 //   - TradeV2AnalysisService 分析/校验（存量派生 + 复盘 + 约束校验 + 行情附加），
 //                            消费 Group + Ledger，行情走 core/quote（KV 缓存）
-//   - TradeV2ImportService   V1（trade-plan）导入：读 trade-plan KV 直迁分组 + 期初建仓
 //                            （不跨 feature import，保持 features→core 单向依赖）
 // 存储：tradeV2:group:<id> / tradeV2:trade:<id> + 列表键（KV）
 // ============================================================
@@ -15,8 +14,6 @@ import type {
   TradeV2EntryDraft,
   TradeV2GlobalAnalysis,
   TradeV2Group,
-  TradeV2ImportV1Result,
-  TradeV2V1StrategyPreview,
 } from "@toolbox/shared";
 import { kvGet } from "../../core/kvStore.js";
 import { fetchKlinesForCodes } from "../../core/kline.js";
@@ -295,173 +292,6 @@ export class TradeV2AnalysisService extends Service {
 }
 
 // ============================================================
-// 服务 4：TradeV2ImportService（V1 trade-plan 导入）
-// 读 V1 KV（tradePlan:strategy:<id> + tradePlan:strategies:list）直迁：
-//   每个策略 → 一个同名 V2 分组（总仓位/日限/单标的上限迁移）；
-//   每个当前持仓（quantity>0 且均价>0）→ 一笔 initial 期初建仓（日期可指定，默认今天）。
-// 负成本/无有效成本持仓无法作为期初建仓（V2 要求价格>0）→ 跳过并报告。
-// ============================================================
-
-/** V1 键（不 import tradePlan feature，直读 KV） */
-const V1_STRATEGY_LIST = "tradePlan:strategies:list";
-const V1_STRATEGY_PREFIX = "tradePlan:strategy:";
-
-interface V1StrategyNormalized {
-  id: string;
-  name: string;
-  totalCapital: number;
-  dailyAddLimit: number;
-  stocks: { code: string; name?: string; maxWeightPct?: number }[];
-  positions: { code: string; name?: string; quantity: number; avgCost: number }[];
-}
-
-/** 归一化 V1 策略（兼容旧数据：positions 缺失 → initialPositions → stocks 内联 initShares/initCost） */
-function normalizeV1Strategy(raw: unknown): V1StrategyNormalized | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const s = raw as Record<string, unknown>;
-  if (typeof s.id !== "string" || typeof s.name !== "string") return null;
-  const stocks: V1StrategyNormalized["stocks"] = [];
-  if (Array.isArray(s.stocks)) {
-    for (const x of s.stocks) {
-      if (typeof x !== "object" || x === null) continue;
-      const stk = x as Record<string, unknown>;
-      const code = typeof stk.code === "string" ? stk.code.trim() : "";
-      if (!code) continue;
-      const mw = Number(stk.maxWeightPct);
-      stocks.push({
-        code,
-        ...(typeof stk.name === "string" && stk.name.trim() ? { name: stk.name.trim() } : {}),
-        ...(Number.isFinite(mw) && mw > 0 && mw <= 100 ? { maxWeightPct: Math.round(mw * 10) / 10 } : {}),
-      });
-    }
-  }
-  const normPos = (p: unknown): { code: string; name?: string; quantity: number; avgCost: number } | null => {
-    if (typeof p !== "object" || p === null) return null;
-    const pos = p as Record<string, unknown>;
-    const code = typeof pos.code === "string" ? pos.code.trim() : "";
-    if (!code) return null;
-    const quantity = Number(pos.quantity ?? (pos as Record<string, unknown>).shares ?? 0);
-    const avgCost = Number(pos.avgCost ?? (pos as Record<string, unknown>).cost ?? 0);
-    if (!Number.isFinite(quantity) || quantity <= 0) return null;
-    if (!Number.isFinite(avgCost)) return null;
-    return {
-      code,
-      ...(typeof pos.name === "string" && pos.name.trim() ? { name: pos.name.trim() } : {}),
-      quantity,
-      avgCost,
-    };
-  };
-  let positions: V1StrategyNormalized["positions"] = [];
-  if (Array.isArray(s.positions)) positions = s.positions.map(normPos).filter((x): x is NonNullable<typeof x> => x !== null);
-  if (positions.length === 0 && Array.isArray(s.initialPositions)) {
-    positions = s.initialPositions.map(normPos).filter((x): x is NonNullable<typeof x> => x !== null);
-  }
-  // 最旧格式：stocks 内联 initShares/initCost——必须从「原始 stocks」读取（归一化会剥离内联字段）
-  if (positions.length === 0 && Array.isArray(s.stocks)) {
-    for (const x of s.stocks) {
-      if (typeof x !== "object" || x === null) continue;
-      const sc = x as Record<string, unknown>;
-      const code = typeof sc.code === "string" ? sc.code.trim() : "";
-      const shares = Number(sc.initShares);
-      const cost = Number(sc.initCost);
-      if (!code) continue;
-      if (Number.isFinite(shares) && shares > 0 && Number.isFinite(cost) && cost > 0) {
-        positions.push({
-          code,
-          ...(typeof sc.name === "string" && sc.name.trim() ? { name: sc.name.trim() } : {}),
-          quantity: shares,
-          avgCost: cost,
-        });
-      }
-    }
-  }
-  return {
-    id: s.id as string,
-    name: (s.name as string).trim().slice(0, 30),
-    totalCapital: Number(s.totalCapital) || 0,
-    dailyAddLimit: Number(s.dailyAddLimit) || 0,
-    stocks,
-    positions,
-  };
-}
-
-export class TradeV2ImportService extends Service {
-  constructor(ctx: Context) {
-    super(ctx, "tradeV2Import");
-  }
-
-  /** V1 策略预览（含同名冲突标记） */
-  v1Preview(): TradeV2V1StrategyPreview[] {
-    const list = kvGet<string[]>(V1_STRATEGY_LIST) ?? [];
-    const existing = new Set(this.ctx.tradeV2Group.list().map((g) => g.name));
-    const out: TradeV2V1StrategyPreview[] = [];
-    for (const id of list) {
-      const s = normalizeV1Strategy(kvGet(V1_STRATEGY_PREFIX + id));
-      if (!s) continue;
-      out.push({
-        id: s.id,
-        name: s.name,
-        totalCapital: s.totalCapital,
-        dailyAddLimit: s.dailyAddLimit,
-        stockCount: s.stocks.length,
-        positionCount: s.positions.length,
-        importableCount: s.positions.filter((p) => p.quantity > 0 && p.avgCost > 0).length,
-        conflict: existing.has(s.name),
-      });
-    }
-    return out;
-  }
-
-  /** 执行导入：每个策略 → 分组 + 期初建仓（同名冲突跳过，幂等） */
-  importV1(opts: { date: string; strategyIds?: string[] }): TradeV2ImportV1Result {
-    const { date, strategyIds } = opts;
-    const list = kvGet<string[]>(V1_STRATEGY_LIST) ?? [];
-    const existing = new Set(this.ctx.tradeV2Group.list().map((g) => g.name));
-    const created: TradeV2ImportV1Result["created"] = [];
-    const skipped: TradeV2ImportV1Result["skipped"] = [];
-    const skippedPositions: TradeV2ImportV1Result["skippedPositions"] = [];
-    const ids = strategyIds && strategyIds.length > 0 ? list.filter((id) => strategyIds.includes(id)) : list;
-
-    for (const id of ids) {
-      const s = normalizeV1Strategy(kvGet(V1_STRATEGY_PREFIX + id));
-      if (!s) {
-        skipped.push({ name: id, reason: "V1 策略数据缺失" });
-        continue;
-      }
-      if (existing.has(s.name)) {
-        skipped.push({ name: s.name, reason: "V2 已有同名分组，已跳过（幂等保护）" });
-        continue;
-      }
-      const group = createGroup(s.name);
-      updateGroup(group.id, {
-        totalCapital: s.totalCapital,
-        dailyAddLimit: s.dailyAddLimit,
-        stockLimits: s.stocks.map((x) => ({ code: x.code, ...(x.name ? { name: x.name } : {}), ...(x.maxWeightPct !== undefined ? { maxWeightPct: x.maxWeightPct } : {}) })),
-      });
-      existing.add(s.name);
-      let entryCount = 0;
-      for (const p of s.positions) {
-        if (p.quantity <= 0) continue;
-        // 负成本/零成本持仓：以均价为期初建仓价格（可为负——统一模型支持负成本基点）
-        createEntry({
-          groupId: group.id,
-          date,
-          code: p.code,
-          ...(p.name ? { name: p.name } : {}),
-          action: "buy",
-          quantity: p.quantity,
-          price: Math.round(p.avgCost * 1e6) / 1e6,
-          initial: true,
-          note: "V1 导入期初建仓",
-        });
-        entryCount++;
-      }
-      created.push({ groupId: group.id, name: s.name, entryCount });
-    }
-    return { ok: true, created, skipped, skippedPositions, date };
-  }
-}
-
 // ============================================================
 // declare module：四个服务加入 Context 接口（编译时类型安全）
 // ============================================================
@@ -471,7 +301,6 @@ declare module "@deepseek-ai/cordis" {
     tradeV2Group: TradeV2GroupService;
     tradeV2Ledger: TradeV2LedgerService;
     tradeV2Analysis: TradeV2AnalysisService;
-    tradeV2Import: TradeV2ImportService;
   }
 }
 

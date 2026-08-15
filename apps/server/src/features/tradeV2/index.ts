@@ -33,23 +33,6 @@ export function registerTradeV2Feature(app: Hono) {
     description: "仓位管理 v2：分组（tradeV2:group:）与逐笔交易（tradeV2:trade:）",
   });
 
-  // ---------- V1（trade-plan）导入 ----------
-
-  // 预览：列出 V1 策略（含同名冲突标记）——静态路由，注册在参数路由之前
-  app.get(`${API_PREFIX}/tools/trade-v2/import/v1-preview`, async (c: Context) => {
-    const ctx = await getTradeV2Ctx();
-    return c.json({ ok: true, strategies: ctx.tradeV2Import.v1Preview() });
-  });
-
-  // 执行导入：每个策略 → 分组 + 期初建仓（同名冲突跳过，幂等）
-  app.post(`${API_PREFIX}/tools/trade-v2/import/v1`, async (c: Context) => {
-    const raw = (await c.req.json().catch(() => null)) as { date?: unknown; strategyIds?: unknown } | null;
-    const date = typeof raw?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : todayStr();
-    const strategyIds = Array.isArray(raw?.strategyIds) ? raw.strategyIds.filter((x): x is string => typeof x === "string") : undefined;
-    const ctx = await getTradeV2Ctx();
-    return c.json(ctx.tradeV2Import.importV1({ date, strategyIds }));
-  });
-
   // ---------- 总览：分组摘要 + 全部交易 ----------
 
   app.get(`${API_PREFIX}/tools/trade-v2`, async (c: Context) => {

@@ -5,15 +5,6 @@ import {
   type CbRateResponse,
   type FundSnapshot,
   type GridPlanRequest,
-  type TradePlanCalendarResult,
-  type TradePlanCheckResponse,
-  type TradePlanDayListResult,
-  type TradePlanDeleteResult,
-  type TradePlanItem,
-  type TradePlanStrategy,
-  type TradePlanStrategyDeleteResult,
-  type TradePlanStrategyListResult,
-  type TradePlanStrategyResult,
   type GridPlanResult,
   type GridPlanHistoryDeleteResult,
   type GridPlanHistoryDetailResult,
@@ -98,8 +89,6 @@ import {
   type TradeV2EntryResult,
   type TradeV2CheckResponse,
   type TradeV2GlobalResult,
-  type TradeV2V1StrategyPreview,
-  type TradeV2ImportV1Result,
   type TradeV2BatchResult,
 } from "@toolbox/shared";
 
@@ -219,17 +208,6 @@ export const api = {
   watchlistQuotes: (codes: string[]) =>
     request<{ ok: boolean; quotes: (QuoteSnapshot | FundSnapshot)[] }>(`/tools/watchlist/quotes?codes=${encodeURIComponent(codes.join(","))}`),
     /** DeepSeek Chat 自动填入（服务端 playwright 打开浏览器并填提示词；未登录会弹窗登录一次） */
-  /** 交易规划：多策略 */
-  tradePlanStrategies: () =>
-    request<TradePlanStrategyListResult>("/tools/trade-plan/strategies"),
-  tradePlanStrategy: (id: string) =>
-    request<TradePlanStrategyResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id)),
-  tradePlanCreateStrategy: (name: string) =>
-    request<TradePlanStrategyResult>("/tools/trade-plan/strategies", jsonInit("POST", { name })),
-  tradePlanSaveStrategy: (id: string, strategy: Partial<TradePlanStrategy>) =>
-    request<TradePlanStrategyResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("PUT", strategy)),
-  tradePlanDeleteStrategy: (id: string) =>
-    request<TradePlanStrategyDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(id), jsonInit("DELETE", {})),
   /** 仓位管理 v2：逐笔交易账本 + 仓位明细（自动派生）+ 分组约束 */
   tradeV2Overview: () => request<TradeV2OverviewResult>("/tools/trade-v2"),
   tradeV2Group: (id: string) => request<TradeV2GroupDetailResult>("/tools/trade-v2/groups/" + encodeURIComponent(id)),
@@ -245,23 +223,7 @@ export const api = {
   tradeV2BatchEntries: (items: TradeV2EntryDraft[], preview = false) =>
     request<TradeV2BatchResult>("/tools/trade-v2/entries/batch", jsonInit("POST", { items, ...(preview ? { preview: true } : {}) })),
   tradeV2Analysis: () => request<TradeV2GlobalResult>("/tools/trade-v2/analysis"),
-  /** V1（trade-plan）导入 */
-  tradeV2ImportV1Preview: () => request<{ ok: boolean; strategies: TradeV2V1StrategyPreview[] }>("/tools/trade-v2/import/v1-preview"),
-  tradeV2ImportV1: (date: string, strategyIds?: string[]) =>
-    request<TradeV2ImportV1Result>("/tools/trade-v2/import/v1", jsonInit("POST", { date, ...(strategyIds && strategyIds.length ? { strategyIds } : {}) })),
-  /** 交易规划：校验与日度计划（按策略） */
-  tradePlanCheck: (strategyId: string, items: TradePlanItem[]) =>
-    request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/check", jsonInit("POST", { items })),
-  tradePlanCreateDay: (strategyId: string, date: string, items: TradePlanItem[]) =>
-    request<TradePlanCheckResponse>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day", jsonInit("POST", { date, items })),
-  tradePlanDays: (strategyId: string) =>
-    request<TradePlanDayListResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/days"),
-  /** 日历总计划（跨策略按月聚合） */
-  tradePlanCalendar: (month: string) =>
-    request<TradePlanCalendarResult>("/tools/trade-plan/calendar?month=" + encodeURIComponent(month)),
-    tradePlanDeleteDay: (strategyId: string, dayId: string) =>
-    request<TradePlanDeleteResult>("/tools/trade-plan/strategies/" + encodeURIComponent(strategyId) + "/day/" + encodeURIComponent(dayId), jsonInit("DELETE", {})),
-    chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
+  chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   watchlistFundamental: (id: string, code: string, force = false) =>
     request<AsyncTaskResult<WatchlistFundamentalResult>>(

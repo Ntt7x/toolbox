@@ -18,11 +18,9 @@ import type {
   TradeV2Group,
   TradeV2GroupAnalysis,
   TradeV2GroupSummary,
-  TradeV2ImportV1Result,
   TradeV2MonthlyPoint,
   TradeV2PnlAttribution,
   TradeV2Position,
-  TradeV2V1StrategyPreview,
 } from "@toolbox/shared";
 import { api, errMsg } from "../api";
 import { Button } from "@/components/ui/button";
@@ -549,137 +547,6 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
 
 // ---------- V1 导入弹窗 ----------
 
-function ImportV1Dialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const [strategies, setStrategies] = useState<TradeV2V1StrategyPreview[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [date, setDate] = useState(nextTradingDay());
-  const [loading, setLoading] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<TradeV2ImportV1Result | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setResult(null);
-    setMsg(null);
-    setLoading(true);
-    setDate(nextTradingDay());
-    void (async () => {
-      try {
-        const r = await api.tradeV2ImportV1Preview();
-        setStrategies(r.strategies);
-        setSelected(new Set(r.strategies.filter((s) => !s.conflict).map((s) => s.id)));
-      } catch (e) {
-        setMsg("❌ 预览加载失败：" + errMsg(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [open]);
-
-  const importable = strategies.filter((s) => !s.conflict);
-  const conflicts = strategies.filter((s) => s.conflict);
-  const picked = strategies.filter((s) => selected.has(s.id) && !s.conflict);
-  const totalEntries = picked.reduce((a, s) => a + s.importableCount, 0);
-  const totalNeg = picked.reduce((a, s) => a + (s.positionCount - s.importableCount), 0);
-
-  const toggle = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const doImport = async () => {
-    setImporting(true);
-    setMsg(null);
-    try {
-      const r = await api.tradeV2ImportV1(date, [...selected]);
-      setResult(r);
-    } catch (e) {
-      setMsg("❌ " + errMsg(e));
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>📥 从 V1 导入仓位</DialogTitle>
-          <DialogDescription>
-            把「策略仓位管理（v1）」的每个策略导入为一个分组，当前持仓导入为期初建仓（日期可选）。
-            同名分组将自动跳过（可重复导入，幂等安全）。
-          </DialogDescription>
-        </DialogHeader>
-
-        {loading ? (
-          <div style={{ padding: "1rem", textAlign: "center", color: C.muted }}>加载中…</div>
-        ) : strategies.length === 0 ? (
-          <div style={{ padding: "1rem", color: C.sub, fontSize: "0.85rem" }}>V1 中没有可导入的策略。</div>
-        ) : (
-          <>
-            <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-              {importable.map((s) => (
-                <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0.4rem 0.5rem", borderRadius: 8, border: "1px solid #e2e8f0", cursor: "pointer" }}>
-                  <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} />
-                  <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{s.name}</span>
-                  <span style={{ color: C.sub, fontSize: "0.75rem" }}>
-                    总仓位 {cny(s.totalCapital)} · 日限 {cny(s.dailyAddLimit)} · {s.stockCount} 标的 · 可导入 {s.importableCount} 笔
-                  </span>
-                </label>
-              ))}
-              {conflicts.map((s) => (
-                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0.4rem 0.5rem", borderRadius: 8, border: "1px dashed #e2e8f0", background: C.panel, color: C.muted, fontSize: "0.82rem" }}>
-                  <input type="checkbox" disabled />
-                  <span style={{ textDecoration: "line-through" }}>{s.name}</span>
-                  <Badge style={{ background: "#f1f5f9", color: C.sub }}>V2 已有同名分组，跳过</Badge>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <label className="text-[0.8rem] font-semibold text-slate-600">期初建仓日期</label>
-              <Input type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
-              <span style={{ color: C.muted, fontSize: "0.75rem" }}>作为期初建仓的成交日期</span>
-            </div>
-            <div style={{ fontSize: "0.8rem", color: C.sub }}>
-              将创建 <b>{picked.length}</b> 个分组 + <b>{totalEntries}</b> 笔期初建仓
-              {totalNeg > 0 ? `（其中 ${totalNeg} 个为负成本/零成本，将以负价/零价期初建仓导入）` : ""}
-            </div>
-          </>
-        )}
-        {msg && <div style={{ color: C.gain, fontSize: "0.85rem" }}>{msg}</div>}
-
-        {result && (
-          <div style={{ background: C.lossBg, border: "1px solid #a7f3d0", borderRadius: 10, padding: "0.6rem 0.8rem", fontSize: "0.82rem", color: "#065f46", maxHeight: 180, overflowY: "auto" }}>
-            <b>✅ 导入完成：</b>
-            {result.created.map((c) => <div key={c.groupId}>· 分组「{c.name}」创建（{c.entryCount} 笔期初建仓）</div>)}
-            {result.skipped.map((s, i) => <div key={i} style={{ color: "#b45309" }}>· 跳过「{s.name}」：{s.reason}</div>)}
-            {result.skippedPositions.map((p, i) => <div key={i} style={{ color: "#b45309" }}>· 跳过 {p.groupName} {p.code}：{p.reason}</div>)}
-          </div>
-        )}
-
-        <DialogFooter>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {result ? (
-              <Button onClick={() => { onSaved(); onClose(); }}>完成</Button>
-            ) : (
-              <>
-                <Button variant="outline" onClick={onClose}>取消</Button>
-                <Button onClick={() => void doImport()} disabled={importing || picked.length === 0}>
-                  {importing ? "导入中…" : `导入 ${picked.length} 个策略`}
-                </Button>
-              </>
-            )}
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 // ---------- 统计分组盒（逻辑相关数据合并展示） ----------
 
@@ -1566,8 +1433,7 @@ export default function TradeV2Tool() {
   const [editingEntry, setEditingEntry] = useState<TradeV2Entry | null>(null);
   const [groupEditorOpen, setGroupEditorOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<TradeV2Group | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [stockDlg, setStockDlg] = useState<{ code: string; name?: string } | null>(null);
+    const [stockDlg, setStockDlg] = useState<{ code: string; name?: string } | null>(null);
 
   const [fGroup, setFGroup] = useState<string>("all");
   const [fAction, setFAction] = useState<string>("all");
@@ -1930,8 +1796,7 @@ export default function TradeV2Tool() {
               <Button size="sm" variant="outline" onClick={() => { setEditingGroup(selectedGroup); setGroupEditorOpen(true); }}>⚙️ 分组设置</Button>
             )}
             <Button size="sm" variant="outline" onClick={() => { setEditingGroup(null); setGroupEditorOpen(true); }}>🗂️ 新建分组</Button>
-            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>📥 从 V1 导入</Button>
-          </div>
+                      </div>
 
           {/* 功能区横向分段控件（通栏等宽）——置于具体功能区上方 */}
           <Tabs value={activeTab} onValueChange={setTab}>
@@ -2173,8 +2038,7 @@ export default function TradeV2Tool() {
 
       <EntryEditor open={entryEditorOpen} onClose={() => setEntryEditorOpen(false)} groups={groups} initial={editingEntry} onSaved={() => void reloadAll()} />
       <GroupEditor open={groupEditorOpen} onClose={() => setGroupEditorOpen(false)} groups={groups} initial={editingGroup} onSaved={() => void reloadAll()} />
-      <ImportV1Dialog open={importOpen} onClose={() => setImportOpen(false)} onSaved={() => void reloadAll()} />
-      <StockHistoryDialog
+            <StockHistoryDialog
         open={!!stockDlg}
         onClose={() => setStockDlg(null)}
         code={stockDlg?.code ?? ""}
