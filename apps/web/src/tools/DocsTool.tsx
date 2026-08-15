@@ -7,6 +7,7 @@
 //   - 回收站：软删除可恢复（文档/文件夹），支持整树恢复/彻底删除/清空
 // ============================================================
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, errMsg } from "../api";
 import { PageHeader } from "../ui";
 import { MarkdownView } from "../MarkdownView";
@@ -383,6 +384,14 @@ export default function DocsTool() {
     setMenu({ x: e.clientX, y: e.clientY, kind, id });
   };
 
+  // Escape 关闭右键菜单（memo msuzjelj 配套修复——此前 Escape 无效导致遮罩残留）
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
+
   const menuItems = (): MenuItem[] => {
     if (!menu) return [];
     if (menu.kind === "folder") {
@@ -724,8 +733,8 @@ export default function DocsTool() {
           )}        </div>
       </div>
 
-      {/* 右键菜单（防溢出 + divider + danger 高亮） */}
-      {menu && (
+      {/* 右键菜单（portal 到 body——fixed 视口定位不受任何容器干扰；防溢出 + divider + danger 高亮） */}
+      {menu && createPortal(
         <div
           style={{ position: "fixed", inset: 0, zIndex: 90 }}
           onClick={() => setMenu(null)}
@@ -765,7 +774,8 @@ export default function DocsTool() {
               )
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 文档详情弹窗 */}
