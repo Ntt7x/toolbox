@@ -170,7 +170,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
 - **L1 单测**：服务端逻辑改动必跑相关模块单测（`node scripts/dev-utils/test.mjs <模块>`，自动定位 .test.ts；空参数=全量串行）
 - **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
-- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，18 页 playwright，含页面内容断言）：仅以下场景必跑
+- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，19 页 playwright，含页面内容断言）：仅以下场景必跑
 
 **影响面判定（2026-08-10 起，先判影响面再选级别——核心原则）**：
 > **按「哪些页面实际受影响」定级，不是按「改了多少文件」定级。** 多文件改动若只影响单个页面，仍属定向冒烟范围。
@@ -217,7 +217,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**涉及页面加载逻辑时必须跑浏览器级冒烟**
 - 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
-- **冒烟必须断言页面内容（2026-08-09 教训）**：旧版 smoke-pages 只查 API 状态与 JS 崩溃——`/admin/deps`（不存在路由）404 占位页因无 API 错误而 PASS，**静默放行**；现已升级为**每页 expect 标志词 + 「页面不存在」反断言**（18 页）。新增页面必须同步 smoke-pages 的 PAGES（含 expect 词），改页面标题时同步更新 expect。
+- **冒烟必须断言页面内容（2026-08-09 教训）**：旧版 smoke-pages 只查 API 状态与 JS 崩溃——`/admin/deps`（不存在路由）404 占位页因无 API 错误而 PASS，**静默放行**；现已升级为**每页 expect 标志词 + 「页面不存在」反断言**（19 页）。新增页面必须同步 smoke-pages 的 PAGES（含 expect 词），改页面标题时同步更新 expect。
 
 ### 5.2 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
 
@@ -271,7 +271,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   - **Slider**：值是**数组**（`value={[n]}` + `onValueChange={(v) => set(v[0])}`），与原生 `<input type=range>` 不同
   - **Button**：variant（default/secondary/outline/ghost/destructive）+ size（default/sm/lg/icon）；小按钮用 `size="icon"` + className 微调
   - **Input 半受控**（数字输入）：shadcn Input 的 onChange 正常转发，半受控模式（本地 text 态 + blur 提交）可用——**但注意**：受控组件 onChange 立即回写会吞中间态（"1."），数字输入必须半受控（见 §6.8 前 TradePlanTool StepInput 教训）
-  - **tailwind preflight 无破坏**：现有页面内联样式自给自足，preflight 重置被显式样式覆盖——18 页冒烟确认无回归
+  - **tailwind preflight 无破坏**：现有页面内联样式自给自足，preflight 重置被显式样式覆盖——19 页冒烟确认无回归
   - **@theme inline 映射必配（大坑）**：tailwind v4 的 `bg-primary`/`bg-secondary` 等类依赖
     `@theme inline { --color-primary: var(--primary); ... }` 映射（shadcn init 标准产物）。
     若只写 `:root { --primary: 217 91% 60% }`（HSL 三段式）且无映射 → `bg-primary` 输出无效颜色，
