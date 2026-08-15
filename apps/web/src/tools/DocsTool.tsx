@@ -50,6 +50,15 @@ export default function DocsTool() {
   // 阅读字号 / PDF 缩放（memo 6：类似编辑器字号 + PDF 阅读器缩放）
   const [fontScale, setFontScale] = useState(1);
   const [pdfScale, setPdfScale] = useState(1);
+  // 搜索（文件名/tag 即时过滤；搜索结果视图覆盖树）
+  const [search, setSearch] = useState("");
+  const searchResults = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return items.filter((i) => i.name.toLowerCase().includes(q) || i.tags.some((t) => t.toLowerCase().includes(q)));
+  }, [items, search]);
+  // 文档详情弹窗
+  const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
   // 上传
   const [uploadTags, setUploadTags] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -251,17 +260,21 @@ export default function DocsTool() {
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
-  const addTagToItem = async (it: DocItem, tag: string) => {
-    if (!tag.trim()) return;
-    try {
-      const r = await api.docsUpdate(it.id, { tags: [...new Set([...it.tags, tag.trim()])] });
-      setItems(r.items); setFolders(r.folders); setTags(r.tags);
-    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
-  };
+  const formatSize = (n: number) => { if (n < 1024) return n + " B"; if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"; return (n / 1024 / 1024).toFixed(1) + " MB"; };
 
   const removeTagFromItem = async (it: DocItem, tag: string) => {
     try {
       const r = await api.docsUpdate(it.id, { tags: it.tags.filter((t) => t !== tag) });
+      setItems(r.items); setFolders(r.folders); setTags(r.tags);
+      setDetailDoc((d) => (d && d.id === it.id ? { ...d, tags: d.tags.filter((t) => t !== tag) } : d));
+      setMsg({ kind: "ok", text: `已移除标签「${tag}」` });
+    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
+  };
+
+  const addTagToItem = async (it: DocItem, tag: string) => {
+    if (!tag.trim()) return;
+    try {
+      const r = await api.docsUpdate(it.id, { tags: [...new Set([...it.tags, tag.trim()])] });
       setItems(r.items); setFolders(r.folders); setTags(r.tags);
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
@@ -404,6 +417,7 @@ export default function DocsTool() {
     if (!it) return [];
     return [
       { label: "预览", icon: "👁️", onClick: () => void openPreview(it) },
+      { label: "详情", icon: "ℹ️", onClick: () => setDetailDoc(it) },
       { label: "添加标签", icon: "#", onClick: () => { const t = prompt("添加标签", ""); if (t) void addTagToItem(it, t); } },
       { label: "移到回收站", icon: "🗑️", danger: true, onClick: () => void removeItem(it) },
     ];
@@ -450,6 +464,9 @@ export default function DocsTool() {
     >
       <span style={{ width: 14, textAlign: "center", flexShrink: 0 }}>{it.type === "pdf" ? "📕" : "📄"}</span>
       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+      {it.tags.slice(0, 2).map((tg) => (
+        <span key={tg} style={{ fontSize: "0.6rem", background: "#eef2ff", color: "#4f46e5", borderRadius: 4, padding: "0.05rem 0.3rem", flexShrink: 0 }}>{tg}</span>
+      ))}
       {it.source?.kind === "answer" || it.source?.kind === "article" ? (
         <span style={{ fontSize: "0.62rem", color: "#94a3b8" }}>{it.source.kind === "answer" ? "答" : "文"}</span>
       ) : null}
@@ -562,6 +579,13 @@ export default function DocsTool() {
             <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#334155", flex: 1 }}>文件夹</span>
             <button onClick={() => void createFolder()} disabled={!newFolderName.trim()} title="在当前选中文件夹下新建" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#3b82f6" }}>＋</button>
           </div>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setSearch(""); }}
+            placeholder="🔍 搜索文档 / 标签…"
+            style={{ width: "100%", boxSizing: "border-box", marginBottom: "0.5rem", padding: "0.35rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem", outline: "none" }}
+          />
           <div
             onClick={() => { setCurFolder(null); setTrashView(false); }}
             onDragOver={(e) => { e.preventDefault(); setDragOver("__root__"); }}
@@ -573,8 +597,20 @@ export default function DocsTool() {
           >
             🗂️ 根目录
           </div>
-          {folderDocs(null).map((it) => renderDocLeaf(it, 0))}
-          {rootFolders.map((f) => renderFolder(f, 0))}
+          {search.trim() ? (
+            // 搜索结果视图（覆盖树，类似 vscode 搜索）
+            <div style={{ marginTop: "0.2rem" }}>
+              <div style={{ fontSize: "0.72rem", color: "#94a3b8", padding: "0.2rem 0.45rem", marginBottom: "0.2rem" }}>🔍 搜索结果（{searchResults.length}）</div>
+              {searchResults.length > 0 ? searchResults.map((it) => renderDocLeaf(it, 0)) : (
+                <div style={{ fontSize: "0.78rem", color: "#94a3b8", padding: "0.4rem 0.45rem" }}>无匹配文档，试试其他关键词</div>
+              )}
+            </div>
+          ) : (
+            <>
+              {folderDocs(null).map((it) => renderDocLeaf(it, 0))}
+              {rootFolders.map((f) => renderFolder(f, 0))}
+            </>
+          )}
           <input
             id="new-folder-input"
             value={newFolderName}
@@ -645,7 +681,7 @@ export default function DocsTool() {
               {openTabs.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", flexShrink: 0, overflowX: "auto" }}>
                   {openTabs.map((t) => (
-                    <div key={t.item.id} onClick={() => setActiveTabId(t.item.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.45rem 0.9rem", cursor: "pointer", borderRight: "1px solid #e2e8f0", background: t.item.id === activeTabId ? "#fff" : "transparent", borderTop: t.item.id === activeTabId ? "2px solid #2563eb" : "2px solid transparent", fontSize: "0.8rem", color: t.item.id === activeTabId ? "#1e293b" : "#64748b", fontWeight: t.item.id === activeTabId ? 600 : 400, maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", flexShrink: 0 }} title={t.item.name}>
+                    <div key={t.item.id} onClick={() => setActiveTabId(t.item.id)} onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(t.item.id); } }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.45rem 0.9rem", cursor: "pointer", borderRight: "1px solid #e2e8f0", background: t.item.id === activeTabId ? "#fff" : "transparent", borderTop: t.item.id === activeTabId ? "2px solid #2563eb" : "2px solid transparent", fontSize: "0.8rem", color: t.item.id === activeTabId ? "#1e293b" : "#64748b", fontWeight: t.item.id === activeTabId ? 600 : 400, maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", flexShrink: 0 }} title={t.item.name}>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.item.type === "pdf" ? "📕" : "📄"} {t.item.name}</span>
                       <span role="button" onClick={(e) => { e.stopPropagation(); closeTab(t.item.id); }} style={{ color: "#94a3b8", fontSize: "0.75rem", padding: "0 2px", borderRadius: 4, flexShrink: 0 }} title="关闭">✕</span>
                     </div>
@@ -745,6 +781,45 @@ export default function DocsTool() {
                 </button>
               )
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 文档详情弹窗 */}
+      {detailDoc && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDetailDoc(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, width: "min(420px, 92vw)", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", padding: "0.7rem 1rem", borderBottom: "1px solid #e2e8f0" }}>
+              <span style={{ flex: 1, fontSize: "0.92rem", fontWeight: 600, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detailDoc.type === "pdf" ? "📕" : "📄"} {detailDoc.name}</span>
+              <button onClick={() => setDetailDoc(null)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: "#64748b" }}>✕</button>
+            </div>
+            <div style={{ padding: "1rem 1.1rem", display: "flex", flexDirection: "column", gap: "0.5rem", fontSize: "0.84rem", color: "#475569" }}>
+              <div><span style={{ color: "#94a3b8", width: 64, display: "inline-block" }}>类型</span>{detailDoc.type === "pdf" ? "PDF 文档" : "Markdown 文档"}</div>
+              <div><span style={{ color: "#94a3b8", width: 64, display: "inline-block" }}>大小</span>{formatSize(detailDoc.size)}</div>
+              <div><span style={{ color: "#94a3b8", width: 64, display: "inline-block" }}>创建</span>{new Date(detailDoc.createdAt).toLocaleString()}</div>
+              <div><span style={{ color: "#94a3b8", width: 64, display: "inline-block" }}>更新</span>{new Date(detailDoc.updatedAt).toLocaleString()}</div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "0.4rem" }}>
+                <span style={{ color: "#94a3b8", width: 64, flexShrink: 0 }}>标签</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", flex: 1 }}>
+                  {detailDoc.tags.length === 0 && <span style={{ color: "#cbd5e1", fontSize: "0.8rem" }}>无标签</span>}
+                  {detailDoc.tags.map((tg) => (
+                    <span key={tg} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.76rem", background: "#eef2ff", color: "#4f46e5", borderRadius: 999, padding: "0.15rem 0.6rem" }}>
+                      {tg}
+                      <button onClick={() => void removeTagFromItem(detailDoc, tg)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.7rem", color: "#818cf8", padding: 0 }}>✕</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: "0.7rem 1.1rem 1rem", borderTop: "1px solid #f1f5f9", display: "flex", gap: "0.5rem" }}>
+              <input
+                id="detail-tag-input"
+                placeholder="添加标签"
+                style={{ flex: 1, padding: "0.4rem 0.6rem", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) { void addTagToItem(detailDoc, (e.target as HTMLInputElement).value.trim()); (e.target as HTMLInputElement).value = ""; } }}
+              />
+              <button onClick={() => setDetailDoc(null)} style={{ padding: "0.4rem 1rem", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "0.82rem", cursor: "pointer" }}>关闭</button>
+            </div>
           </div>
         </div>
       )}
