@@ -899,6 +899,7 @@ function DealsTable({ deals }: { deals: TradeV2Deal[] }) {
         {winRate !== undefined && <span>胜率 <b style={{ color: pnlColor(winRate) }}>{winRate.toFixed(1)}%</b></span>}
         <span>已实现 <b style={{ color: pnlColor(realized) }}>{pnlText(realized)}</b></span>
       </div>
+      <div style={{ maxHeight: 480, overflow: "auto" }}>
       <Table>
         <TableHeader>
           <TableRow>
@@ -933,6 +934,7 @@ function DealsTable({ deals }: { deals: TradeV2Deal[] }) {
           ))}
         </TableBody>
       </Table>
+      </div>
     </CardContent></Card>
   );
 }
@@ -944,6 +946,8 @@ function AttributionTable({ attribution, onRowClick }: { attribution: TradeV2Pnl
   return (
     <Card><CardContent>
       <SectionTitle icon="🏆" color={C.accent}>收益归因（按标的：已实现 + 未实现 贡献，点击行看交易历史）</SectionTitle>
+      {/* 归因表滚动容器（长表不撑爆页面） */}
+      <div style={{ maxHeight: 420, overflow: "auto" }}>
       <Table>
         <TableHeader>
           <TableRow>
@@ -966,6 +970,7 @@ function AttributionTable({ attribution, onRowClick }: { attribution: TradeV2Pnl
           ))}
         </TableBody>
       </Table>
+      </div>
     </CardContent></Card>
   );
 }
