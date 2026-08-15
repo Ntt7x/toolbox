@@ -19,7 +19,8 @@
 - **分层**：`features → core` 单向依赖；公共能力进 `core/`，业务编排进 `features/`
 - **契约驱动**：先改 `packages/shared` 类型，再实现 server 与 web
 - **验证底线**（按影响面分级）：L0 `toolbox typecheck` → L1 `toolbox test` → L2 `toolbox api` + `toolbox smoke --page` → L3 全量 `toolbox smoke`
-- **git**：改前建分支；分支内不自动提交，用户确认后才提交+推送（dev.md §4）
+- **git**：改前建分支；分支内不自动提交，用户确认后才提交+推送；**默认合并为一个 commit（§0.5 省 Token）**（dev.md §4）
+- **省 Token**：少往返、一次到位——合并提交、要点式报告、验证分级最小化、先沉淀脚本再重复手写（dev.md §0.5）
 - **成本**：LLM 调用只由用户操作触发；system 固定、动态内容进 user（dev.md §6）
 - **数据**：运行时数据一律进本地数据管理（KV/表）并注册数据源，禁止代码硬编码（dev.md §6.5）
 
