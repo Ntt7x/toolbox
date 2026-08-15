@@ -35,7 +35,6 @@ const PAGES = [
   { path: "/tools/treasury-fx", expect: "国债汇率分析" },
   { path: "/tools/reverse-repo", expect: "逆回购" },
   { path: "/tools/watchlist", expect: "专题自选股" },
-  { path: "/tools/trade-plan", expect: "策略仓位管理" },
   { path: "/tools/trade-v2", expect: "仓位管理 v2" },
   { path: "/tools/deepseek-share", expect: "提取历史" },
   { path: "/tools/zhihu-crawler", expect: "知乎爬虫" },

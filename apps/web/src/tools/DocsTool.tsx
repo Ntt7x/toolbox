@@ -528,10 +528,10 @@ export default function DocsTool() {
   const trashCount = trash.items.length + trash.folders.length;
 
   return (
-    <div>
+    <div style={{ height: "calc(100vh - 20px)", display: "flex", flexDirection: "column" }}>
       <PageHeader title="文档中心" desc="markdown / pdf 管理与浏览 · 文件夹 + tag · 右键/拖拽 · 回收站" />
       {/* 工具栏 */}
-      <div style={card}>
+      <div style={{ ...card, flexShrink: 0 }}>
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <input type="file" ref={fileInput} multiple accept=".md,.markdown,.pdf" style={{ display: "none" }} onChange={(e) => void doUpload([...(e.target.files ?? [])])} />
           <input
@@ -555,9 +555,9 @@ export default function DocsTool() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", gap: "1rem", flex: 1, minHeight: 0, alignItems: "stretch" }}>
         {/* 左栏：文件夹树（可拖拽拉伸） */}
-        <div style={{ ...card, width: sidebarW, flexShrink: 0 }}>
+        <div style={{ ...card, width: sidebarW, flexShrink: 0, overflow: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
             <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#334155", flex: 1 }}>文件夹</span>
             <span
@@ -626,7 +626,7 @@ export default function DocsTool() {
         />
 
         {/* 右栏：编辑器区（vscode 风格：tab 栏 + 内容，非弹窗；memo msuxq76n） */}
-        <div style={{ ...card, flex: 1, display: "flex", flexDirection: "column", minWidth: 0, padding: 0, overflow: "hidden" }}>
+        <div style={{ ...card, flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, padding: 0, overflow: "hidden" }}>
           {trashView ? (
             <div style={{ padding: "1rem 1.25rem", overflow: "auto", flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.6rem", fontSize: "0.85rem", color: "#334155" }}>
@@ -672,28 +672,30 @@ export default function DocsTool() {
                       <span role="button" onClick={(e) => { e.stopPropagation(); closeTab(t.item.id); }} style={{ color: "#94a3b8", fontSize: "0.75rem", padding: "0 2px", borderRadius: 4, flexShrink: 0 }} title="关闭">✕</span>
                     </div>
                   ))}
-                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, padding: "0 0.6rem", flexShrink: 0 }}>
-                    {activeTab?.item.type === "md" && (
-                      <>
-                        
-                        <button onClick={() => void copyActive()} title="复制文档的 markdown 源码文本（非文件）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
-                        <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑（推荐：编辑体验更佳）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 去 VSCode 编辑</button>
-                        <span style={{ display: "flex", alignItems: "center", gap: 2, borderLeft: "1px solid #e2e8f0", marginLeft: "0.3rem", paddingLeft: "0.3rem" }}>
-                          <button onClick={() => setFontScale((s) => Math.max(0.7, Math.round((s - 0.1) * 100) / 100))} title="减小字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.72rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A−</button>
-                          <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 34, textAlign: "center" }}>{Math.round(fontScale * 100)}%</span>
-                          <button onClick={() => setFontScale((s) => Math.min(1.8, Math.round((s + 0.1) * 100) / 100))} title="增大字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A+</button>
-                        </span>
-                      </>
-                    )}
-                    {activeTab?.item.type === "pdf" && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                        <button onClick={() => setPdfScale((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100))} title="缩小" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>−</button>
-                        <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 42, textAlign: "center" }}>{Math.round(pdfScale * 100)}%</span>
-                        <button onClick={() => setPdfScale((s) => Math.min(2.5, Math.round((s + 0.25) * 100) / 100))} title="放大" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>＋</button>
-                        <button onClick={() => setPdfScale(1)} title="适应页面" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.7rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>适应</button>
+                </div>
+              )}
+              {/* 内容区工具条（memo msuzl4ff：复制/vscode/字号不占 tab 栏，独立一行靠右） */}
+              {activeTab && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "0.25rem 0.8rem", borderBottom: "1px solid #eef2f7", background: "#f8fafc", flexShrink: 0 }}>
+                  {activeTab.item.type === "md" && (
+                    <>
+                      <button onClick={() => void copyActive()} title="复制文档的 markdown 源码文本（非文件）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>📋 复制</button>
+                      <button onClick={() => void openInVscode()} title="在 VSCode 中打开编辑（推荐：编辑体验更佳）" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#475569", padding: "0.3rem 0.5rem", borderRadius: 6 }}>💻 去 VSCode 编辑</button>
+                      <span style={{ display: "flex", alignItems: "center", gap: 2, borderLeft: "1px solid #e2e8f0", marginLeft: "0.3rem", paddingLeft: "0.3rem" }}>
+                        <button onClick={() => setFontScale((s) => Math.max(0.7, Math.round((s - 0.1) * 100) / 100))} title="减小字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.72rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A−</button>
+                        <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 34, textAlign: "center" }}>{Math.round(fontScale * 100)}%</span>
+                        <button onClick={() => setFontScale((s) => Math.min(1.8, Math.round((s + 0.1) * 100) / 100))} title="增大字号" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>A+</button>
                       </span>
-                    )}
-                  </div>
+                    </>
+                  )}
+                  {activeTab.item.type === "pdf" && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <button onClick={() => setPdfScale((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100))} title="缩小" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>−</button>
+                      <span style={{ fontSize: "0.7rem", color: "#94a3b8", minWidth: 42, textAlign: "center" }}>{Math.round(pdfScale * 100)}%</span>
+                      <button onClick={() => setPdfScale((s) => Math.min(2.5, Math.round((s + 0.25) * 100) / 100))} title="放大" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>＋</button>
+                      <button onClick={() => setPdfScale(1)} title="适应页面" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.7rem", color: "#64748b", padding: "0.2rem 0.4rem", borderRadius: 4 }}>适应</button>
+                    </span>
+                  )}
                 </div>
               )}
               {/* 内容区：md 居中阅读 / pdf 缩放 / 编辑模式 */}
@@ -707,10 +709,8 @@ export default function DocsTool() {
                 ) : activeTab.busy ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: "0.9rem" }}>加载中…</div>
                 ) : (
-                  <div style={{ flex: 1, overflow: "auto" }}>
-                    <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.25rem 1.5rem 3rem" }}>
-                      <MarkdownView fontScale={fontScale}>{activeTab.content ?? ""}</MarkdownView>
-                    </div>
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <MarkdownView showToc showMinimap fontScale={fontScale}>{activeTab.content ?? ""}</MarkdownView>
                   </div>
                 )
               ) : (
@@ -734,8 +734,9 @@ export default function DocsTool() {
           <div
             style={{
               position: "fixed",
-              left: Math.min(menu.x, (typeof window !== "undefined" ? window.innerWidth : 1000) - 200),
-              top: Math.min(menu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - menuItems().length * 36 - 16),
+              // 标准右键菜单行为：从鼠标点右下方展开；空间不足则翻转到左上方（memo msuzjelj 修复——不再“压”到屏幕边缘导致离鼠标远）
+              left: (() => { const x = menu.x + 4; return x + 200 > (typeof window !== "undefined" ? window.innerWidth : 1000) ? Math.max(4, menu.x - 196) : x; })(),
+              top: (() => { const y = menu.y + 4; const h = menuItems().length * 36 + 14; return y + h > (typeof window !== "undefined" ? window.innerHeight : 800) ? Math.max(4, menu.y - h) : y; })(),
               zIndex: 95,
               background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 12px 32px rgba(15,23,42,0.16)",
               padding: "0.35rem", minWidth: 180, maxHeight: "70vh", overflowY: "auto",
