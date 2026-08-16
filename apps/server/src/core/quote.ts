@@ -287,6 +287,31 @@ async function fetchTencent(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
  * 外汇快照（腾讯 wh 接口）：EURJPY / USDJPY / EURUSD。
  * 字段：3=最新价 6=昨收 13=涨跌%。
  */
+/** 日 K 收盘序列（腾讯 qfqday；from/to 格式 YYYY-MM-DD）。返回 [{date, close}] 升序；失败返回空数组。 */
+export async function fetchDailyCloses(codeInput: string, from: string, to: string, max = 500): Promise<{ date: string; close: number }[]> {
+  try {
+    const parsed = parseSecCode(codeInput);
+    if (!parsed) return [];
+    const r = await fetch(
+      `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${parsed.market}${parsed.code},day,${from},${to},${max},qfq`,
+      { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(12000) },
+    );
+    const j = (await r.json()) as Record<string, any>;
+    const data = j?.data?.[`${parsed.market}${parsed.code}`];
+    const kline = data?.qfqday ?? data?.day ?? [];
+    if (!Array.isArray(kline)) return [];
+    const out: { date: string; close: number }[] = [];
+    for (const row of kline) {
+      const d = String(row?.[0] ?? "");
+      const close = Number(row?.[2]);
+      if (d && isFinite(close)) out.push({ date: d, close });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchFx(code: "EURJPY" | "USDJPY" | "EURUSD"): Promise<{ price: number; prevClose: number; changePct: number } | null> {
   try {
     const r = await fetch(`https://qt.gtimg.cn/q=wh${code}`, { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(8000) });

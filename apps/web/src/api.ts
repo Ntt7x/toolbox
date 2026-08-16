@@ -418,6 +418,12 @@ export const api = {
   experimentBmpiSaveSupplement: (data: Record<string, unknown>) => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/bmpi/supplement", jsonInit("PUT", data)),
   experimentEcSupplement: () => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/ec/supplement"),
   experimentEcSaveSupplement: (data: Record<string, unknown>) => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/ec/supplement", jsonInit("PUT", data)),
+  // 实验 · 数据工程（历史/回测/提示词预览）
+  experimentBmpiHistory: () => request<{ ok: boolean; history: { asOf: string; indices: Record<string, number | { w1: number; w2: number; w3: number }>; bmpi?: number; status: string; summary: string }[] }>("/tools/experiment/bmpi/history"),
+  experimentBmpiBacktest: (force = false) => request<{ ok: boolean; backtest: { from: string; to: string; series: { date: string; bmpi: number | null; s1: number | null; s2: number | null; s3: number | null }[]; generatedAt: string } | null; fromCache?: boolean }>("/tools/experiment/bmpi/backtest", jsonInit("POST", { force })),
+  experimentBmpiPrompt: () => request<{ ok: boolean; prompt: string }>("/tools/experiment/bmpi/prompt"),
+  experimentEcHistory: () => request<{ ok: boolean; history: { asOf: string; indices: Record<string, number>; status: string; summary: string }[] }>("/tools/experiment/ec/history"),
+  experimentEcPrompt: () => request<{ ok: boolean; prompt: string }>("/tools/experiment/ec/prompt"),
   // 知乎爬虫
   zhihuCookie: () => request<{ ok: boolean; configured: boolean }>("/tools/zhihu-crawler/cookie"),
   zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),

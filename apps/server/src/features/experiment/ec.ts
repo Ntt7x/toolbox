@@ -13,6 +13,7 @@ import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { fetchFx } from "../../core/quote.js";
 import { ecB, ecOmega, ecCvas, ecCcv, ecStatus } from "./indicators.js";
+import { refreshWindow, saveDailyResult, listHistory } from "./datahub.js";
 
 registerDataSource({
   kind: "kv",
@@ -50,18 +51,11 @@ function today(): string {
 }
 const num = (v: unknown): number | undefined => (typeof v === "number" && isFinite(v) ? v : undefined);
 
-/** ① 数据采集：外汇真实接口 + 用户补全合并（无 LLM） */
+/** ① 数据采集：外汇真实接口（窗口持久化）+ 用户补全合并（无 LLM） */
 async function collectData(): Promise<{ fx: ExperimentEcData["fx"]; supp: EcSupplement }> {
   const supp = (kvGet<EcSupplement>(SUPP_KEY) ?? {}) as EcSupplement;
-  const [eurjpy, usdjpy, eurusd] = await Promise.all([fetchFx("EURJPY"), fetchFx("USDJPY"), fetchFx("EURUSD")]);
-  return {
-    fx: {
-      eurjpy: eurjpy?.price,
-      usdjpy: usdjpy?.price,
-      eurusd: eurusd?.price,
-    },
-    supp,
-  };
+  const w = await refreshWindow("ec");
+  return { fx: w.fx ?? {}, supp };
 }
 
 /** ② 指标计算（公式固化） */
@@ -129,6 +123,19 @@ async function runEc(opts: ExperimentEcRequest, signal: AbortSignal): Promise<Ex
   const { fx, supp } = await collectData();
   const d = compute(fx, supp);
   const result = await analyze(d, supp, signal);
+  // 每日结果持久化
+  saveDailyResult("ec", {
+    asOf: result.asOf,
+    indices: {
+      b: typeof result.indicators.b === "number" ? result.indicators.b : NaN,
+      omega: typeof result.indicators.omega === "number" ? result.indicators.omega : NaN,
+      cvas: typeof result.indicators.cvas === "number" ? result.indicators.cvas : NaN,
+      ccv: typeof result.indicators.ccv === "number" ? result.indicators.ccv : NaN,
+    },
+    status: result.status,
+    summary: result.summary,
+    createdAt: new Date().toISOString(),
+  });
   kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
   return result;
 }
@@ -145,6 +152,20 @@ export function registerExperimentEc(app: Hono): void {
     const task = getTask<ExperimentEcResponse>(c.req.param("taskId"));
     if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
     return c.json(task, 200);
+  });
+
+  // 历史结果（每日快照）
+  app.get(`${API_PREFIX}/tools/experiment/ec/history`, (c) => c.json({ ok: true, history: listHistory("ec", 90) }));
+
+  // 研判提示词预览
+  app.get(`${API_PREFIX}/tools/experiment/ec/prompt`, async (c) => {
+    const { fx, supp } = await collectData();
+    const d = compute(fx, supp);
+    const tpl = getPromptTemplate("experiment.ec");
+    const prompt = tpl
+      .replace(/\{date\}/g, today())
+      .replace(/\{data\}/g, JSON.stringify({ data: d.data, computed: d.indicators, quickStatus: d.quick, supplement: supp, asOf: today() }, null, 2));
+    return c.json({ ok: true, prompt });
   });
 
   // 用户补全数据读写

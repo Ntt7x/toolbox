@@ -14,6 +14,7 @@ import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
 import { bmpiWeights, bmpiComposite, bmpiStatus, bmpiS1, bmpiS2, bmpiS3, pctile } from "./indicators.js";
+import { refreshWindow, saveDailyResult, listHistory, runBmpiBacktest, loadBacktest } from "./datahub.js";
 
 registerDataSource({
   kind: "kv",
@@ -79,21 +80,11 @@ const S3_STOCKS = [
   { code: "600900", endPb: 3.2 },   // 长江电力
 ];
 
-/** ① 数据采集：成分股 quote 真实行情 + 用户补全合并（无 LLM） */
+/** ① 数据采集：成分股 quote 真实行情（窗口持久化）+ 用户补全合并（无 LLM） */
 async function collectData(): Promise<{ stocks: Record<string, { price?: number; pb?: number }>; supp: BmpiSupplement }> {
   const supp = (kvGet<BmpiSupplement>(SUPP_KEY) ?? {}) as BmpiSupplement;
-  const stocks: Record<string, { price?: number; pb?: number }> = {};
-  const codes = [...S1_STOCKS, ...S2_STOCKS, ...S3_STOCKS].map((s) => s.code);
-  // 批量行情（≤40 上限内）——逐代码失败降级
-  await Promise.all(codes.map(async (code) => {
-    try {
-      const q = await getQuoteSnapshot(code, {});
-      if (q && typeof q.price === "number") {
-        stocks[code] = { price: q.price, ...(typeof q.pb === "number" ? { pb: q.pb } : {}) };
-      }
-    } catch { /* 单只失败跳过 */ }
-  }));
-  return { stocks, supp };
+  const w = await refreshWindow("bmpi");
+  return { stocks: w.stocks ?? {}, supp };
 }
 
 /** ② 指标计算（公式固化）：S1/S2/S3 + R/SL + 权重 + BMPI */
@@ -166,6 +157,15 @@ async function runBmpi(opts: ExperimentBmpiRequest, signal: AbortSignal): Promis
   const { stocks, supp } = await collectData();
   const c = await compute(stocks, supp);
   const result = await analyze(c, supp, stocks, signal);
+  // 每日结果持久化（数据工程：保留历史供回溯）
+  saveDailyResult("bmpi", {
+    asOf: result.asOf,
+    indices: result.indices,
+    bmpi: result.bmpi,
+    status: result.status,
+    summary: result.summary,
+    createdAt: new Date().toISOString(),
+  });
   kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
   return result;
 }
@@ -182,6 +182,33 @@ export function registerExperimentBmpi(app: Hono): void {
     const task = getTask<ExperimentBmpiResponse>(c.req.param("taskId"));
     if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
     return c.json(task, 200);
+  });
+
+  // 历史结果（每日快照）
+  app.get(`${API_PREFIX}/tools/experiment/bmpi/history`, (c) => c.json({ ok: true, history: listHistory("bmpi", 90) }));
+
+  // 回测（今年起日序列）
+  app.post(`${API_PREFIX}/tools/experiment/bmpi/backtest`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { force?: boolean } | null;
+    const existing = loadBacktest();
+    if (!raw?.force && existing && existing.series.length > 0) return c.json({ ok: true, backtest: existing, fromCache: true });
+    const backtest = await runBmpiBacktest("2026-01-01");
+    return c.json({ ok: true, backtest, fromCache: false });
+  });
+  app.get(`${API_PREFIX}/tools/experiment/bmpi/backtest`, (c) => {
+    const b = loadBacktest();
+    return b ? c.json({ ok: true, backtest: b }) : c.json({ ok: true, backtest: null });
+  });
+
+  // 研判提示词预览（模板 + 注入数据示例）
+  app.get(`${API_PREFIX}/tools/experiment/bmpi/prompt`, async (c) => {
+    const { stocks, supp } = await collectData();
+    const computed = await compute(stocks, supp);
+    const tpl = getPromptTemplate("experiment.bmpi");
+    const prompt = tpl
+      .replace(/\{date\}/g, today())
+      .replace(/\{data\}/g, JSON.stringify({ computed: computed.indices, bmpi: computed.bmpi, weights: computed.indices.weights, missing: computed.missing, stocks, supplement: supp, asOf: today() }, null, 2));
+    return c.json({ ok: true, prompt });
   });
 
   // 用户补全数据读写（无 API 字段：国债/逆回购/S 宏观）
