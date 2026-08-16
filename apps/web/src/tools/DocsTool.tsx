@@ -98,6 +98,14 @@ const [editingItemName, setEditingItemName] = useState("");
   const [dragOver, setDragOver] = useState<string | null>(null);   // 高亮目标文件夹
   // 折叠
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());   // 已折叠的文件夹 id
+  // 默认打开一级：首次加载后收起所有含子文件夹的非根文件夹（memo msvp225j）
+  const collapseInited = useRef(false);
+  useEffect(() => {
+    if (collapseInited.current || folders.length === 0) return;
+    collapseInited.current = true;
+    const withSub = folders.filter((f) => f.parentId && folders.some((c) => c.parentId === f.id));
+    setCollapsed(new Set(withSub.map((f) => f.id)));
+  }, [folders]);
   const [trashView, setTrashView] = useState(false);
   const [trash, setTrash] = useState<{ items: DocItem[]; folders: DocFolder[] }>({ items: [], folders: [] });
 

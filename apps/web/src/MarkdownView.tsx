@@ -62,6 +62,22 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
   const jumpAt = useRef(0);                       // 点击跳转时间戳（onScroll 短暂不覆盖高亮）
 
   const toc = useMemo(() => extractToc(String(props.children ?? "")), [props.children]);
+  const [tocCollapsed, setTocCollapsed] = useState<Set<number>>(new Set());  // 一级标题折叠（memo msvp46y5）
+  // 每个一级标题的子标题区间（[start, end) 不含一级本身）
+  const tocGroups = useMemo(() => {
+    const gs: { level1Idx: number; start: number; end: number }[] = [];
+    let cur: { level1Idx: number; start: number; end: number } | null = null;
+    toc.forEach((t, i) => {
+      if (t.level === 1) {
+        if (cur) { cur.end = i; gs.push(cur); }
+        cur = { level1Idx: i, start: i + 1, end: toc.length };
+      }
+    });
+    if (cur) gs.push(cur);
+    return gs;
+  }, [toc]);
+  const isTocHidden = (i: number) => tocGroups.some((g) => g.level1Idx !== i && g.start <= i && i < g.end && tocCollapsed.has(g.level1Idx));
+  const toggleTocGroup = (level1Idx: number) => setTocCollapsed((p) => { const n = new Set(p); if (n.has(level1Idx)) n.delete(level1Idx); else n.add(level1Idx); return n; });
 
   // 渲染后给标题加锚点 id（md-h-{i}），供 TOC 点击定位
   useEffect(() => {
@@ -160,22 +176,38 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
           </div>
           <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             {toc.length === 0 && <div style={{ fontSize: "0.75rem", color: "#cbd5e1", padding: "0.3rem 0.5rem" }}>无标题</div>}
-            {toc.map((t, i) => (
-              <div
-                key={i}
-                onClick={() => scrollTo(i)}
-                title={t.text}
-                style={{
-                  padding: "0.22rem 0.5rem", paddingLeft: `${0.5 + (t.level - 1) * 0.75}rem`, cursor: "pointer", borderRadius: 5,
-                  fontSize: t.level === 1 ? "0.8rem" : "0.75rem", fontWeight: t.level === 1 ? 600 : 400,
-                  color: i === activeIdx ? "#2563eb" : "#64748b",
-                  background: i === activeIdx ? "#eff6ff" : "transparent",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}
-              >
-                {t.text}
-              </div>
-            ))}
+            {toc.map((t, i) => {
+              if (isTocHidden(i)) return null;
+              const isL1 = t.level === 1;
+              const hasSub = tocGroups.some((g) => g.level1Idx === i && g.start < g.end);
+              const collapsedHere = isL1 && tocCollapsed.has(i);
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  {isL1 && hasSub ? (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); toggleTocGroup(i); }}
+                      title={collapsedHere ? "展开" : "收起"}
+                      style={{ fontSize: "0.55rem", color: "#94a3b8", width: 12, textAlign: "center", cursor: "pointer", flexShrink: 0 }}
+                    >{collapsedHere ? "▶" : "▼"}</span>
+                  ) : (
+                    <span style={{ width: 12, flexShrink: 0 }} />
+                  )}
+                  <div
+                    onClick={() => scrollTo(i)}
+                    title={t.text}
+                    style={{
+                      flex: 1, padding: "0.22rem 0.3rem", paddingLeft: `${(t.level - 1) * 0.75}rem`, cursor: "pointer", borderRadius: 5,
+                      fontSize: isL1 ? "0.8rem" : "0.75rem", fontWeight: isL1 ? 600 : 400,
+                      color: i === activeIdx ? "#2563eb" : "#64748b",
+                      background: i === activeIdx ? "#eff6ff" : "transparent",
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}
+                  >
+                    {t.text}
+                  </div>
+                </div>
+              );
+            })}
           </ScrollArea>
         </div>
       ) : (

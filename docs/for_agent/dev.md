@@ -326,6 +326,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
    - 点击跳转用**瞬间 scrollIntoView（block: start）**+ `jumpAt` 时间戳——跳转后 600ms 内 onScroll 不覆盖高亮（否则 smooth 途中 onScroll 把点击项覆盖成中间标题）
 5. **右键菜单**：当前文档中心保留 portal 版（定位/翻转/Escape 已修）；后续新菜单优先 shadcn `DropdownMenu`（Base UI Menu，支持 `openOnContextMenu` 与虚拟 anchor 定位）
 
+**文件浏览器树（资源管理器）组件化评估（2026-08-16，memo msvp4nao）**：
+- **shadcn 无 Tree 组件**（registry 404，`npx shadcn add tree` 报 not found）
+- **Base UI 有 Tree**（`@base-ui/react/tree`）但是**选择树**（nested selection/checkbox），**不支持**右键菜单/拖拽移动/内联重命名/多级图标——文档中心树的核心功能会丢
+- **结论**：现无成熟组件能完整覆盖"文件浏览器树"（右键+拖拽+内联编辑+选中高亮）——文档中心树保留手写（vscode 资源管理器范式），用成熟交互模式改善（折叠/默认收起/缩进占位对齐）
+- 树的体验改善优先做：**默认收起子级**（默认打开一级）、折叠箭头、缩进对齐、右键菜单、拖拽——逐项按 memo 修，不整体重写
+
 
 
 ## 6. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
