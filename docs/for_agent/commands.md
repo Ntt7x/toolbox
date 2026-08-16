@@ -20,7 +20,7 @@
 | `toolbox test` | L1 | 全量单测；`toolbox test <模块>` 定向；自动探测（能 spawn 走 tsx，受限自动回退 resolve hook） |
 | `toolbox api GET /health` | L2 | API 断言（自动加 /api 前缀；POST/PUT/DELETE 带 JSON body） |
 | `toolbox smoke --page /tools/x` | L2 | 目标页定向冒烟（页面加载逻辑改动必跑） |
-| `toolbox smoke` | L3 | 全量 19 页冒烟（页面级/全局改动、收尾自检） |
+| `toolbox smoke` | L3 | 全量 18 页冒烟（页面级/全局改动、收尾自检） |
 | `toolbox check` | — | 改动健康检查（文件数/行数/触及分层 → 建议验证级别；提交前跑） |
 | `toolbox probe <url> --check "选择器"` | — | 浏览器探针（元素状态诊断） |
 | `toolbox browser <script.mjs> [url]` | — | 浏览器冒烟运行器（playwright 模板固化：TMP/日志/Chrome 自动；脚本内用 page/log） |

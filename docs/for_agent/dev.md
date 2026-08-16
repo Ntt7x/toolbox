@@ -30,7 +30,7 @@
 5. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
 6. **验证→报告→等确认后提交**：L0 typecheck → 按 §5.1 分级验证 → **报告给用户（不自动提交）** → 用户确认分支处理正确后 → `toolbox commit "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
 
-**常用命令（统一入口 `node scripts/dev-utils/toolbox.mjs <cmd>`，底层脚本可直调；完整速查见 `docs/for_agent/commands.md` + scripts/README.md）**：
+**常用命令（统一入口 `node scripts/dev-utils/toolbox.mjs <cmd>`——**一律走 toolbox，勿直调底层脚本**；完整速查见 `docs/for_agent/commands.md` + scripts/README.md）**：
 | 用途 | 命令 |
 |---|---|
 | 类型检查（L0） | `toolbox typecheck`（全仓）/ `toolbox typecheck --app server|web` |
@@ -188,7 +188,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **L0 typecheck**：每次改动必跑（`pnpm typecheck`，server+web tsc --noEmit）
 - **L1 单测**：服务端逻辑改动必跑相关模块单测（`node scripts/dev-utils/test.mjs <模块>`，自动定位 .test.ts；空参数=全量串行）
 - **L2 定向验证**：小改动用（typecheck + 相关单测 + curl 相关 API 打 400/200 + **目标页定向冒烟 `smoke-pages.mjs --page /tools/x`** 或打开 200）——**不跑全量冒烟**
-- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，19 页 playwright，含页面内容断言）：仅以下场景必跑
+- **L3 全量冒烟**（`node scripts/dev-utils/smoke-pages.mjs`，18 页 playwright，含页面内容断言）：仅以下场景必跑
 
 **影响面判定（2026-08-10 起，先判影响面再选级别——核心原则）**：
 > **按「哪些页面实际受影响」定级，不是按「改了多少文件」定级。** 多文件改动若只影响单个页面，仍属定向冒烟范围。
@@ -423,12 +423,15 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 | 领域 | 文档 | 何时看 |
 |---|---|---|
+| 前端全量经验（设计/组件/UI/工程化/踩坑） | `domains/frontend-experience.md` | **前端页面开发/改造前必读**（§5.4 铁律展开） |
+| LLM 调用细节（用量切面/三模式/决策清单） | `domains/llm.md` | 改动 LLM 调用 / 新增 LLM 业务（§6 配套） |
 | Reasonix ACP（协议/会话/进程/MCP/托管/引导词去重） | `domains/reasonix.md` | 涉足 Reasonix 会话/知识库会话复用 |
 | shadcn/ui 组件（Base UI 底层/API 差异/主题映射） | `domains/shadcn.md` | 涉足前端组件/页面 UI（新增组件、组件库维护） |
 | 浏览器自动化（DeepSeek 网页版 Chat） | `domains/features.md` | 改 browserChat / 网页自动化 |
 | 策略仓位管理（trade-plan / trade-v2） | `domains/features.md` | 改 trade-plan / trade-v2（仓位管理 v2） |
 | 数据可信度（cbRate 结构化输出） | `domains/features.md` | 改 LLM 结构化输出业务 |
 | 外部数据源（知乎/知识库中心/行情/分享/快讯） | `domains/data-sources.md` | 涉足外部数据源 |
+| Cordis 框架（@deepseek-ai/cordis） | `domains/cordis.md` | 涉足 Cordis 服务化（todoV3/docs 同模式） |
 
 ### 7.1 Reasonix ACP
 - **专业领域文档**：Reasonix ACP 全部细节（协议要点 / 会话生命周期 / 进程管理 / MCP 配置 / 对话托管 / 引导词去重 / 会话复用）**见 `docs/for_agent/domains/reasonix.md`**——涉足 Reasonix 时按需加载。
