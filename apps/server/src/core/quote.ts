@@ -450,3 +450,32 @@ export async function getQuoteSnapshots(codes: string[], opts: { force?: boolean
   }
   return out;
 }
+// ============================================================
+// 行情数据源注册（血缘/目录：统一数据工程层）
+// tencent.quote：A/H 股快照（腾讯主源 → 东财 → 新浪 failover）
+// tencent.fx：外汇快照（腾讯 wh 接口）
+// ============================================================
+import { registerDataSource as registerDs } from "./datasource.js";
+
+registerDs({
+  id: "tencent.quote",
+  kind: "api",
+  name: "腾讯行情（A/H 股快照）",
+  ttlMs: 5 * 60_000,
+  fetch: async (params: Record<string, unknown>) => {
+    const code = String(params.code ?? "");
+    const q = await getQuoteSnapshot(code, {});
+    return q;
+  },
+});
+
+registerDs({
+  id: "tencent.fx",
+  kind: "api",
+  name: "腾讯外汇（wh 接口）",
+  ttlMs: 60_000,
+  fetch: async (params: Record<string, unknown>) => {
+    const code = String(params.code ?? "EURJPY") as "EURJPY" | "USDJPY" | "EURUSD";
+    return fetchFx(code);
+  },
+});

@@ -15,6 +15,8 @@ interface DataSourceMeta {
   page: string;
   tag: string;
   description: string;
+  /** 数据血缘：上游依赖链（如 ["tencent.quote", "user.supplement"] → 采集 → 指标 → 页面） */
+  deps?: string[];
 }
 
 export type { DataSourceMeta };
@@ -41,6 +43,7 @@ export function listDataSources(): LocalDataSource[] {
       tag: m.tag,
       description: m.description,
       count: kvCount(m.name),
+      ...(m.deps ? { deps: m.deps } : {}),
     });
   }
   // 未标记 KV：存在的 key 前缀不在注册表（逐 key 判定，子前缀源不重复计数）

@@ -12,6 +12,7 @@ import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { fetchFx } from "../../core/quote.js";
+import { cachedFetch } from "../../core/cache.js";
 import { ecB, ecOmega, ecCvas, ecCcv, ecStatus } from "./indicators.js";
 import { refreshWindow, saveDailyResult, listHistory } from "./datahub.js";
 
@@ -20,7 +21,8 @@ registerDataSource({
   name: "experiment:ec:",
   page: "实验·ec 泡沫预警",
   tag: "分析缓存",
-  description: "ec 预警结果缓存（TTL 6h）+ 用户补全数据（experiment:ec:supplement，无 API 的 VIX/利差/CFTC 字段）",
+  description: "ec 预警结果缓存（TTL 6h）+ 用户补全数据（experiment:ec:supplement）",
+  deps: ["tencent.fx", "user.supplement"],
 });
 
 const CACHE_KEY = "experiment:ec:v2";          // v2：数据源直采版（旧 LLM 采集缓存失效）
@@ -116,28 +118,30 @@ async function analyze(d: Awaited<ReturnType<typeof compute>>, supp: EcSupplemen
 }
 
 async function runEc(opts: ExperimentEcRequest, signal: AbortSignal): Promise<ExperimentEcResponse> {
-  const cached = kvGet<ExperimentEcResponse & { cachedAt?: string }>(CACHE_KEY);
-  const cachedAtMs = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
-  const fresh = cached && typeof cached === "object" && cached.ok && Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_TTL_MS;
-  if (!opts.force && fresh) return { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() };
-  const { fx, supp } = await collectData();
-  const d = compute(fx, supp);
-  const result = await analyze(d, supp, signal);
-  // 每日结果持久化
-  saveDailyResult("ec", {
-    asOf: result.asOf,
-    indices: {
-      b: typeof result.indicators.b === "number" ? result.indicators.b : NaN,
-      omega: typeof result.indicators.omega === "number" ? result.indicators.omega : NaN,
-      cvas: typeof result.indicators.cvas === "number" ? result.indicators.cvas : NaN,
-      ccv: typeof result.indicators.ccv === "number" ? result.indicators.ccv : NaN,
+  const cached = await cachedFetch<ExperimentEcResponse & { cachedAt?: string }>(
+    CACHE_KEY, CACHE_TTL_MS,
+    async () => {
+      const { fx, supp } = await collectData();
+      const d = compute(fx, supp);
+      const result = await analyze(d, supp, signal);
+      // 每日结果持久化
+      saveDailyResult("ec", {
+        asOf: result.asOf,
+        indices: {
+          b: typeof result.indicators.b === "number" ? result.indicators.b : NaN,
+          omega: typeof result.indicators.omega === "number" ? result.indicators.omega : NaN,
+          cvas: typeof result.indicators.cvas === "number" ? result.indicators.cvas : NaN,
+          ccv: typeof result.indicators.ccv === "number" ? result.indicators.ccv : NaN,
+        },
+        status: result.status,
+        summary: result.summary,
+        createdAt: new Date().toISOString(),
+      });
+      return { ...result, fromCache: false, cachedAt: new Date().toISOString() };
     },
-    status: result.status,
-    summary: result.summary,
-    createdAt: new Date().toISOString(),
-  });
-  kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
-  return result;
+    { force: opts.force },
+  );
+  return { ...cached.data, fromCache: cached.fromCache } as ExperimentEcResponse & { cachedAt?: string };
 }
 
 export function registerExperimentEc(app: Hono): void {

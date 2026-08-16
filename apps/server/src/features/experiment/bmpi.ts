@@ -13,6 +13,7 @@ import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
+import { cachedFetch } from "../../core/cache.js";
 import { bmpiWeights, bmpiComposite, bmpiStatus, bmpiS1, bmpiS2, bmpiS3, pctile } from "./indicators.js";
 import { refreshWindow, saveDailyResult, listHistory, runBmpiBacktest, loadBacktest } from "./datahub.js";
 
@@ -21,7 +22,8 @@ registerDataSource({
   name: "experiment:bmpi:",
   page: "实验·BMPI 化债牛市",
   tag: "分析缓存",
-  description: "BMPI 结果缓存（TTL 7 天）+ 用户补全数据（experiment:bmpi:supplement，无 API 的宏观/利率字段）",
+  description: "BMPI 结果缓存（TTL 7 天）+ 用户补全数据（experiment:bmpi:supplement）",
+  deps: ["tencent.quote", "user.supplement"],
 });
 
 const CACHE_KEY = "experiment:bmpi:v2";          // v2：数据源直采版（旧 LLM 采集缓存失效）
@@ -150,24 +152,27 @@ async function analyze(c: Awaited<ReturnType<typeof compute>>, supp: BmpiSupplem
 }
 
 async function runBmpi(opts: ExperimentBmpiRequest, signal: AbortSignal): Promise<ExperimentBmpiResponse> {
-  const cached = kvGet<ExperimentBmpiResponse & { cachedAt?: string }>(CACHE_KEY);
-  const cachedAtMs = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
-  const fresh = cached && typeof cached === "object" && cached.ok && Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_TTL_MS;
-  if (!opts.force && fresh) return { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() };
-  const { stocks, supp } = await collectData();
-  const c = await compute(stocks, supp);
-  const result = await analyze(c, supp, stocks, signal);
-  // 每日结果持久化（数据工程：保留历史供回溯）
-  saveDailyResult("bmpi", {
-    asOf: result.asOf,
-    indices: result.indices,
-    bmpi: result.bmpi,
-    status: result.status,
-    summary: result.summary,
-    createdAt: new Date().toISOString(),
-  });
-  kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
-  return result;
+  const cached = await cachedFetch<ExperimentBmpiResponse & { cachedAt?: string }>(
+    CACHE_KEY, CACHE_TTL_MS,
+    async () => {
+      const { stocks, supp } = await collectData();
+      const c = await compute(stocks, supp);
+      const result = await analyze(c, supp, stocks, signal);
+      // 每日结果持久化（数据工程：保留历史供回溯）
+      saveDailyResult("bmpi", {
+        asOf: result.asOf,
+        indices: result.indices,
+        bmpi: result.bmpi,
+        status: result.status,
+        summary: result.summary,
+        createdAt: new Date().toISOString(),
+      });
+      return { ...result, fromCache: false, cachedAt: new Date().toISOString() };
+    },
+    { force: opts.force },
+  );
+  // cachedFetch 命中缓存时返回缓存值（含 cachedAt）；未命中时 fetcher 返回的就是新结果
+  return { ...cached.data, fromCache: cached.fromCache } as ExperimentBmpiResponse & { cachedAt?: string };
 }
 
 export function registerExperimentBmpi(app: Hono): void {

@@ -417,6 +417,17 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **控制效率算账（2026-08-09 起，启发自 Agent Loop Engineering）**：任何新增的过滤/监控/控制机制，先估 `η = 被拦截的坏改动的修复成本 / 控制器自身成本`——**只有 η > 1 才值得做**。判断标准：被拦截的错误是否高频且修复贵（如 PowerShell 引号/CRLF/残留文件），控制器是否廉价（脚本化极廉、人工审查贵）。**提示型检查（如 check-change.mjs）成本近零、永远值得；拦截型控制（自动拒绝/概率接受）须算清账再上**——对高通过率场景，控制可能是净亏损。**提交前跑一次 `node scripts/dev-utils/check-change.mjs`（改动健康检查：文件数/行数/触及分层 → 建议验证级别）。**
 
+## 6.5 数据工程（统一数据层——新分析页必读）
+
+> 完整架构见 `docs/for_agent/domains/data-engineering.md`（medallion 分层/DataSource 抽象/RFC 5861 缓存/血缘/质量）。
+
+- **统一缓存**：用 `core/cache.ts` 的 `cachedFetch(key, TTL 档位, fetcher, {force, staleIfError})`——**禁止再手写 kvGet+Date.now 缓存逻辑**；TTL 必须选 `TTL` 分级常量（REALTIME/MARKET/DAILY/WEEKLY/ANALYSIS/STATIC），禁止随意魔数；force 参数统一命名 `force`。
+- **统一数据源**：外部 API 必须注册 `DataSource`（`core/datasource.ts`：id/kind/name/ttlMs/fetch/normalize/fallback）——**禁止裸 fetch 散落 feature**；取数走 `fetchWithMeta`（带血缘 meta：source/kind/fetchedAt/degraded）。已注册：`tencent.quote`、`tencent.fx`。
+- **数据管道**：采集→规范化→指标纯函数→存储（窗口/缓存/历史）→服务；新分析页照 `features/experiment/datahub.ts` 模板（窗口 `experiment:window:*` + 每日结果 `experiment:<page>:history:<date>` + 可选回测）。
+- **血缘**：`dataRegistry.registerDataSource` 加 `deps: string[]`（源→采集→指标→页面 四层链）；本地数据管理页展示。
+- **质量标注**：每条数据带 `meta.source`（api/llm/user/kv）；用户补全=kind:user，API 直采=kind:api；降级标注 degraded 而非删数据；缺失=null + caveats。
+- **红线**：不引入编排器/队列/物化 gold 层；不做 LRU；不引入 OpenMetadata/DataHub。
+
 ## 7. 领域经验索引（按需加载）
 
 > 各业务/技术领域细节在 `docs/for_agent/domains/`，仅涉足时加载（AGENTS.md 只强制加载本文件）。
