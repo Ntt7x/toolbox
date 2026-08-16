@@ -121,38 +121,38 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
       remarkPlugins={[[remarkMath, { singleDollarTextMath: false }], remarkGfm]}
       rehypePlugins={[[rehypeKatex, { errorColor: "#dc2626" }]]}
       components={{
-        h1: (p) => <h1 style={{ fontSize: `${1.15 * fontScale}rem`, margin: "0.8rem 0 0.4rem", color: "#0f172a" }} {...p} />,
-        h2: (p) => <h2 style={{ fontSize: `${1.05 * fontScale}rem`, margin: "0.7rem 0 0.35rem", color: "#0f172a", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.2rem" }} {...p} />,
-        h3: (p) => <h3 style={{ fontSize: `${0.95 * fontScale}rem`, margin: "0.6rem 0 0.3rem", color: "#1e293b" }} {...p} />,
-        h4: (p) => <h4 style={{ fontSize: `${0.88 * fontScale}rem`, margin: "0.5rem 0 0.25rem", color: "#334155" }} {...p} />,
+        h1: (p) => <h1 style={{ fontSize: `${1.15 * fontScale}rem`, margin: "0.8rem 0 0.4rem", color: "#1e293b" }} {...p} />,
+        h2: (p) => <h2 style={{ fontSize: `${1.05 * fontScale}rem`, margin: "0.7rem 0 0.35rem", color: "#334155", borderBottom: "1px solid #eef2f7", paddingBottom: "0.2rem" }} {...p} />,
+        h3: (p) => <h3 style={{ fontSize: `${0.95 * fontScale}rem`, margin: "0.6rem 0 0.3rem", color: "#334155" }} {...p} />,
+        h4: (p) => <h4 style={{ fontSize: `${0.88 * fontScale}rem`, margin: "0.5rem 0 0.25rem", color: "#475569" }} {...p} />,
         p: (p) => <p style={{ margin: "0.4rem 0" }} {...p} />,
         ul: (p) => <ul style={{ margin: "0.4rem 0", paddingLeft: "1.3rem" }} {...p} />,
         ol: (p) => <ol style={{ margin: "0.4rem 0", paddingLeft: "1.3rem" }} {...p} />,
         li: (p) => <li style={{ margin: "0.15rem 0" }} {...p} />,
         blockquote: (p) => (
           <blockquote
-            style={{ margin: "0.5rem 0", padding: "0.3rem 0.8rem", borderLeft: "3px solid #3b82f6", background: "#f1f5f9", borderRadius: 6, color: "#475569" }}
+            style={{ margin: "0.5rem 0", padding: "0.35rem 0.9rem", borderLeft: "3px solid #93c5fd", background: "#f8fafc", borderRadius: 6, color: "#64748b" }}
             {...p}
           />
         ),
         code: (p) => (
-          <code style={{ background: "#eef2f7", padding: "0.1rem 0.35rem", borderRadius: 4, fontSize: "0.78em", color: "#be123c" }} {...p} />
+          <code style={{ background: "#f1f5f9", padding: "0.1rem 0.35rem", borderRadius: 4, fontSize: "0.78em", color: "#9f1239" }} {...p} />
         ),
         pre: (p) => (
           <pre
-            style={{ background: "#0f172a", color: "#e2e8f0", padding: "0.7rem 0.9rem", borderRadius: 8, overflowX: "auto", fontSize: "0.78rem", lineHeight: 1.6 }}
+            style={{ background: "#f8fafc", color: "#334155", border: "1px solid #eef2f7", padding: "0.7rem 0.9rem", borderRadius: 8, overflowX: "auto", fontSize: "0.78rem", lineHeight: 1.6 }}
             {...p}
           />
         ),
-        a: (p) => <a style={{ color: "#2563eb" }} target="_blank" rel="noreferrer" {...p} />,
+        a: (p) => <a style={{ color: "#3b82f6" }} target="_blank" rel="noreferrer" {...p} />,
         table: (p) => <table style={tableStyle} {...p} />,
-        thead: (p) => <thead style={{ background: "#f1f5f9" }} {...p} />,
-        th: (p) => <th style={{ border: "1px solid #e2e8f0", padding: "0.4rem 0.6rem", textAlign: "left", fontWeight: 600, color: "#0f172a" }} {...p} />,
-        td: (p) => <td style={{ border: "1px solid #e2e8f0", padding: "0.4rem 0.6rem", verticalAlign: "top" }} {...p} />,
+        thead: (p) => <thead style={{ background: "#f8fafc" }} {...p} />,
+        th: (p) => <th style={{ border: "1px solid #eef2f7", padding: "0.4rem 0.6rem", textAlign: "left", fontWeight: 600, color: "#1e293b" }} {...p} />,
+        td: (p) => <td style={{ border: "1px solid #eef2f7", padding: "0.4rem 0.6rem", verticalAlign: "top" }} {...p} />,
         tr: (p) => <tr style={{ background: "transparent" }} {...p} />,
-        hr: (p) => <hr style={{ border: "none", borderTop: "1px solid #e2e8f0", margin: "0.8rem 0" }} {...p} />,
-        strong: (p) => <strong style={{ color: "#0f172a" }} {...p} />,
-        em: (p) => <em style={{ color: "#475569" }} {...p} />,
+        hr: (p) => <hr style={{ border: "none", borderTop: "1px solid #eef2f7", margin: "0.8rem 0" }} {...p} />,
+        strong: (p) => <strong style={{ color: "#1e293b" }} {...p} />,
+        em: (p) => <em style={{ color: "#64748b" }} {...p} />,
       }}
       {...props}
     />

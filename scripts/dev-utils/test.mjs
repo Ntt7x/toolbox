@@ -13,10 +13,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { ROOT as root, tsxCli as TSX } from "./_lib.mjs";
 
 const SERVER_TESTS = path.join(root, "apps", "server", "src");
+const WEB_TESTS = path.join(root, "apps", "web", "src"); // web 纯函数单测（tradeV2Parse 等，无 React 依赖）
 
 function findTests(arg) {
   if (!arg) {
-    // 全部 server 单测
+    // 全部单测（server + web 纯函数）
     const out = [];
     const walk = (d) => {
       for (const f of readdirSync(d, { withFileTypes: true })) {
@@ -26,6 +27,7 @@ function findTests(arg) {
       }
     };
     walk(SERVER_TESTS);
+    if (existsSync(WEB_TESTS)) walk(WEB_TESTS);
     return out;
   }
   // 参数 → 定位测试文件
@@ -36,6 +38,8 @@ function findTests(arg) {
     path.join(SERVER_TESTS, arg + ".test.ts"),
     path.join(SERVER_TESTS, "features", arg + ".test.ts"),
     path.join(SERVER_TESTS, "core", arg + ".test.ts"),
+    path.join(WEB_TESTS, arg + ".test.ts"),
+    path.join(WEB_TESTS, arg),
   ];
   // 目录 → 目录内全部 .test.ts
   for (const c of cands) {
@@ -48,6 +52,20 @@ function findTests(arg) {
   // features/模块/模块.test.ts 模式
   const featTest = path.join(SERVER_TESTS, "features", arg, arg + ".test.ts");
   if (existsSync(featTest)) return [featTest];
+  // web 纯函数测试：递归按文件名匹配（tools/settings/components 等子目录）
+  const webHit = (() => {
+    if (!existsSync(WEB_TESTS)) return null;
+    const walk = (d) => {
+      for (const f of readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, f.name);
+        if (f.isDirectory()) { const r = walk(p); if (r) return r; }
+        else if (f.name === arg + ".test.ts") return p;
+      }
+      return null;
+    };
+    return walk(WEB_TESTS);
+  })();
+  if (webHit) return [webHit];
   return null;
 }
 

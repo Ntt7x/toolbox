@@ -23,6 +23,7 @@ import type {
   TradeV2Position,
 } from "@toolbox/shared";
 import { api, errMsg } from "../api";
+import { numInput, parseBatchText, type OrderRow } from "./tradeV2Parse";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -107,8 +108,6 @@ function nextTradingDay(): string {
   else if (d === 6) n.setDate(n.getDate() + 2);
   return localDateStr(n);
 }
-const numInput = (v: string) => Number(v.replace(/[,，\s]/g, "")) || 0;
-
 /** 导出 CSV（UTF-8 BOM，Excel 中文兼容） */
 function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const esc = (v: string | number) => {
@@ -156,6 +155,53 @@ function EChart({ option, height = 280, style }: { option: echarts.EChartsOption
     };
   }, [option]);
   return <div ref={ref} style={{ width: "100%", height, ...style }} />;
+}
+
+/** 组合净值曲线（现金+市值口径）：净值 = 期初本金 + (市值−累计净投入)；双 y 轴（左金额 + 右累计收益率%）；支持自定义日期范围（memo msvvmbl0） */
+function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
+  const option = useMemo<echarts.EChartsOption>(() => {
+    if (filtered.length === 0) return {};
+    let cum = 0;
+    const cumRealized = filtered.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
+    let inv = 0;
+    const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
+    const p0 = investedSeries[0] ?? 0;
+    const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
+    const base = navSeries[0] || 1;
+    const pctSeries = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
+    return {
+      tooltip: { trigger: "axis" },
+      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "累计收益率%"], top: 0, textStyle: { fontSize: 11 } },
+      grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
+      xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
+      yAxis: [
+        { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
+        { type: "value", axisLabel: { fontSize: 10, formatter: "{value}%" }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
+        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: "#94a3b8", width: 1.5, type: "dashed" } },
+        { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
+        { name: "累计收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
+      ],
+    };
+  }, [filtered]);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.75rem", color: C.muted }}>区间</span>
+        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
+        <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
+        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
+        {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
+        <span style={{ fontSize: "0.7rem", color: C.muted, marginLeft: "auto" }}>收益率以区间起点净值为 100% 基准</span>
+      </div>
+      <EChart option={option} height={height} />
+    </div>
+  );
 }
 
 // ---------- 标的搜索输入 ----------
@@ -928,18 +974,10 @@ function MonthlyTable({ monthlySeries }: { monthlySeries: TradeV2MonthlyPoint[] 
 
 // ---------- 每日交易单（批量录入体验） ----------
 
-interface OrderRow {
-  key: number;
-  code: string;
-  name?: string;
-  action: "buy" | "sell";
-  quantity: number;
-  price: number;
-  fee?: number;
-  note?: string;
-}
 type RowField = "code" | "qty" | "price" | "fee" | "note";
 const FIELD_ORDER: RowField[] = ["code", "qty", "price", "fee", "note"];
+
+/** 📥 粘贴批量解析（纯函数，memo msvvn2v4）：每行「[买/卖] 代码 数量 价格 [手续费] [备注]」，空格/tab/逗号分隔；nextKey 生成行 key */
 
 function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onSubmitted, onEditEntry, onDeleteEntry }: {
   initialGroup: TradeV2Group;
@@ -961,6 +999,8 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
   const [busy, setBusy] = useState<"check" | "submit" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [copiedMsg, setCopiedMsg] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   const refs = useRef(new Map<number, Record<RowField, HTMLInputElement | null>>());
 
   const setRow = (key: number, patch: Partial<OrderRow>) => setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -1037,6 +1077,18 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
   };
   const clear = () => { setRows([newRow()]); setResult(null); setSummary(null); setCopiedMsg(null); setMsg(null); };
 
+  // 📥 粘贴批量导入：每行「[买/卖] 代码 数量 价格 [手续费] [备注]」，空格/tab/逗号分隔（memo msvvn2v4）
+  const applyPaste = () => {
+    const parsed = parseBatchText(pasteText, (r) => ++keySeq.current);
+    if (parsed.length === 0) { setMsg("未解析到有效行（格式：代码 数量 价格，每行一笔）"); return; }
+    setRows(parsed);
+    setResult(null);
+    setSummary(null);
+    setPasteOpen(false);
+    setPasteText("");
+    setCopiedMsg(`已从粘贴导入 ${parsed.length} 笔，可修改后提交`);
+  };
+
   // 实时净归并预览（客户端；已实现需服务端校验补）
   const liveNet = useMemo(() => {
     const byCode = new Map<string, { name?: string; netQty: number; netAmount: number }>();
@@ -1100,6 +1152,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
   };
 
   return (
+    <>
     <Card><CardContent>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
         <Select value={groupId} onValueChange={(v: string | null) => setGroupId(v ?? groupId)}>
@@ -1110,6 +1163,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
         </Select>
         <Input type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
         <Button variant="outline" size="sm" onClick={copyPrevDay}>📋 复制上一交易日</Button>
+        <Button variant="outline" size="sm" onClick={() => { setPasteOpen(true); setPasteText(""); }}>📥 粘贴批量</Button>
         <Button variant="ghost" size="sm" onClick={clear}>🧹 清空</Button>
         <div style={{ flex: 1 }} />
         <Button variant="outline" size="sm" onClick={() => setRows((p) => [...p, newRow()])}>＋ 添加一行</Button>
@@ -1262,6 +1316,30 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
         <Button onClick={() => void submit()} disabled={busy !== null || valid.length === 0 || (result !== null && !result.ok)}>{busy === "submit" ? "提交中…" : "📤 提交交易单（整批入库）"}</Button>
       </div>
     </CardContent></Card>
+      {/* 📥 粘贴批量导入对话框（memo msvvn2v4） */}
+      <Dialog open={pasteOpen} onOpenChange={(v: boolean) => setPasteOpen(v)}>
+        <DialogContent style={{ maxWidth: 540 }}>
+          <DialogHeader>
+            <DialogTitle>📥 粘贴批量导入交易</DialogTitle>
+            <DialogDescription>
+              每行一笔：<code>[买/卖] 代码 数量 价格 [手续费] [备注]</code>，空格 / tab / 逗号分隔。
+              <br />示例：<code>买 600519 100 1500</code>、<code>卖,00700,200,380,5,减仓</code>、<code>000831 300 12.5</code>
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            autoFocus
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={"买 600519 100 1500\n卖 00700 200 380 5 减仓\n000831 300 12.5"}
+            style={{ width: "100%", minHeight: 150, fontSize: "0.85rem", fontFamily: "monospace", padding: "0.6rem", borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+          />
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setPasteOpen(false)}>取消</Button>
+            <Button size="sm" onClick={applyPaste}>✅ 导入 {pasteText.split(/\r?\n/).filter((l) => l.trim()).length} 行</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1615,29 +1693,6 @@ export default function TradeV2Tool() {
   }), [global]);
 
   // 组合净值曲线（现金+市值口径）：净值 = 期初本金 P0 + (市值 − 累计净投入)
-  // 恒等：净值 = P0 + 已实现累计 + 未实现（卖出回款落袋为现金计入净值；追加投入不改变净值）
-  const globalScaleOption = useMemo<echarts.EChartsOption>(() => {
-    const daily = global?.dailySeries ?? [];
-    let cum = 0;
-    const cumRealized = daily.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
-    let inv = 0;
-    const investedSeries = daily.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
-    const p0 = investedSeries[0] ?? 0;
-    const navSeries = daily.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
-    return {
-      tooltip: { trigger: "axis" },
-      legend: { data: ["组合净值(现金+市值)", "持仓市值(成本)", "累计已实现"], top: 0, textStyle: { fontSize: 11 } },
-      grid: { left: 8, right: 8, bottom: 0, top: 28, containLabel: true },
-      xAxis: { type: "category", data: daily.map((d) => d.date), axisLabel: { fontSize: 10 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
-      series: [
-        { name: "组合净值(现金+市值)", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
-        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: daily.map((d) => Math.round(d.marketValue)), lineStyle: { color: "#94a3b8", width: 1.5, type: "dashed" } },
-        { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
-      ],
-    };
-  }, [global]);
-
   const donutOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
     const data = [
@@ -1871,7 +1926,7 @@ export default function TradeV2Tool() {
               </CardContent></Card>
               <Card style={{ gridColumn: "1 / -1" }}><CardContent>
                 <SectionTitle icon="📊" color={C.indigo}>组合净值曲线（现金+市值口径 · 历史价：期初本金 + 已实现 + 未实现）</SectionTitle>
-                <EChart option={globalScaleOption} height={220} />
+                <NetValueChart daily={global?.dailySeries ?? []} />
               </CardContent></Card>
             </div>
           )}
@@ -1902,7 +1957,7 @@ export default function TradeV2Tool() {
                     </CardContent></Card>
                     <Card style={{ gridColumn: "1 / -1" }}><CardContent>
                       <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 历史价时间性）</SectionTitle>
-                      <EChart option={scaleOption} height={220} />
+                      <NetValueChart daily={analysis!.dailySeries} />
                     </CardContent></Card>
                     <Card style={{ gridColumn: "1 / -1" }}><CardContent>
                       <SectionTitle icon="🗓️" color={C.accent}>月度买入/卖出/已实现（时间性）</SectionTitle>
