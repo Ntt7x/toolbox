@@ -1,5 +1,5 @@
-// 实验·页面3：欧元/日元泡沫预警（ec）——B/Ω/CVAS/CCV 指标仪表盘 + 研判
-import { useState } from "react";
+// 实验·页面3：欧元/日元泡沫预警（ec）——B/Ω/CVAS/CCV 指标仪表盘 + 研判（数据源直采版）
+import { useEffect, useState } from "react";
 import type { ExperimentEcResponse } from "@toolbox/shared";
 import { useAsyncTask } from "../hooks/useAsyncTask";
 import { api, errMsg } from "../api";
@@ -20,9 +20,87 @@ function StatCard({ label, value, tone = "#334155", sub }: { label: string; valu
   );
 }
 
+/** 无 API 字段的用户补全表单（VIX/利差/CFTC/估值/z 分数）——保存 KV 后服务端采集时合并 */
+const EC_SUPP_FIELDS: { key: string; label: string; hint?: string }[] = [
+  { key: "vix", label: "VIX 指数", hint: "如 14.2" },
+  { key: "vixPrev", label: "上一交易日 VIX", hint: "如 13.8" },
+  { key: "lowVolWeeks", label: "VIX<20 连续周数", hint: "如 12" },
+  { key: "de10y", label: "德国 10Y 收益率 %", hint: "如 2.6" },
+  { key: "jp10y", label: "日本 10Y 收益率 %", hint: "如 1.2" },
+  { key: "spreadDiff", label: "德日 10Y 利差（百分点）", hint: "如 1.4" },
+  { key: "cftcNetShortK", label: "CFTC 日元净空头（千手）" },
+  { key: "cftcZ", label: "空头 z 分数", hint: "如 2.3" },
+  { key: "buffettIndicator", label: "巴菲特指标（美股总市值/GDP）", hint: "如 1.85" },
+  { key: "zFx", label: "欧元/日元汇率 z 分数" },
+  { key: "zSpread", label: "利差 z 分数" },
+  { key: "zValuation", label: "估值 z 分数" },
+  { key: "fxChangePct", label: "EUR/JPY 周度变动 %", hint: "如 1.2" },
+  { key: "spreadChangePct", label: "利差周度变动（百分点）", hint: "如 0.3" },
+];
+
+function EcSupplementPanel({ onSaved }: { onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    api.experimentEcSupplement().then((r) => {
+      const s: Record<string, unknown> = r.supplement ?? {};
+      const next: Record<string, string> = {};
+      for (const f of EC_SUPP_FIELDS) if (typeof s[f.key] === "number") next[f.key] = String(s[f.key]);
+      setVals(next);
+    }).catch(() => setMsg("⚠️ 加载补全数据失败"));
+  }, [open]);
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    const data: Record<string, unknown> = {};
+    for (const f of EC_SUPP_FIELDS) {
+      const v = vals[f.key]?.trim();
+      if (v !== undefined && v !== "") data[f.key] = Number(v);
+    }
+    try {
+      await api.experimentEcSaveSupplement(data);
+      setMsg("✅ 已保存（下次预警自动合并）");
+      onSaved();
+    } catch (e) { setMsg(`❌ ${errMsg(e)}`); }
+    setSaving(false);
+  };
+  return (
+    <Card><CardContent>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }} onClick={() => setOpen(!open)}>
+        <span style={{ fontSize: "0.82rem", color: open ? C.accent : C.muted }}>{open ? "▾" : "▸"}</span>
+        <span style={{ fontSize: "0.88rem", fontWeight: 600, color: C.text }}>📝 数据补全（无免费 API 字段）</span>
+        <span style={{ fontSize: "0.72rem", color: C.muted, marginLeft: "auto" }}>VIX / 利差 / CFTC / z 分数——缺失指标按已有字段折算</span>
+      </div>
+      {open && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8, marginTop: 10 }}>
+          {EC_SUPP_FIELDS.map((f) => (
+            <label key={f.key} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: "0.75rem", color: C.sub }}>
+              {f.label}
+              <input
+                inputMode="decimal"
+                value={vals[f.key] ?? ""}
+                placeholder={f.hint}
+                onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}
+                style={{ padding: "0.4rem 0.5rem", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", width: "100%", boxSizing: "border-box" }}
+              />
+            </label>
+          ))}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+            <Button size="sm" onClick={() => void save()} disabled={saving} style={{ whiteSpace: "nowrap" }}>{saving ? "保存中…" : "💾 保存补全"}</Button>
+            {msg && <span style={{ fontSize: "0.75rem", color: C.sub }}>{msg}</span>}
+          </div>
+        </div>
+      )}
+    </CardContent></Card>
+  );
+}
+
 export default function ExperimentEcTool() {
   const [force, setForce] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
+  const [suppRev, setSuppRev] = useState(0);
   const task = useAsyncTask<ExperimentEcResponse>("expEcTaskId", api.experimentEcTask);
 
   const run = async () => {
@@ -57,6 +135,8 @@ export default function ExperimentEcTool() {
         {localErr && <div style={{ color: C.red, fontSize: "0.82rem", marginTop: 6 }}>{localErr}</div>}
         {task.running && <div style={{ color: C.sub, fontSize: "0.8rem", marginTop: 6 }}>⏳ 正在采集汇率/利差/VIX/CFTC 数据并计算指标（约 1-3 分钟）…</div>}
       </CardContent></Card>
+
+      <EcSupplementPanel onSaved={() => setSuppRev((n) => n + 1)} />
 
       {r && (
         <>

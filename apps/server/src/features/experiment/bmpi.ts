@@ -1,7 +1,8 @@
 // ============================================================
-// 实验·页面2：化债牛市进度指数（BMPI v4.0）
-// ①LLM 联网采集（国债收益率/逆回购/成分股/宏观）→ ②R/SL 服务端公式固化 + S1/S2/S3 LLM 打分
-//         → ③BMPI 合成服务端计算 → LLM 综合研判 → 缓存 7 天（force 绕过）
+// 实验·页面2：化债牛市进度指数（BMPI v4.0）——数据源直采版（2026-08-16 重构）
+// ①成分股股价/PB 走 quote 真实行情（腾讯）②宏观/利率/流动性走用户补全 KV（无免费 API）
+// ③S1/S2/S3 + R/SL + 三段权重 + BMPI 合成全部服务端公式固化（indicators.ts）
+// ④LLM 仅做综合研判（summary/依据/观察节点）——不再用 LLM 采集数据（省成本、数据更硬）
 // ============================================================
 import { Hono } from "hono";
 import { API_PREFIX, type AsyncTaskResult, type ExperimentBmpiRequest, type ExperimentBmpiResponse } from "@toolbox/shared";
@@ -11,87 +12,149 @@ import { chat } from "../../core/llm.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
-import { bmpiR, bmpiSL, bmpiComposite, bmpiStatus } from "./indicators.js";
+import { getQuoteSnapshot } from "../../core/quote.js";
+import { bmpiWeights, bmpiComposite, bmpiStatus, bmpiS1, bmpiS2, bmpiS3, pctile } from "./indicators.js";
 
 registerDataSource({
   kind: "kv",
   name: "experiment:bmpi:",
   page: "实验·BMPI 化债牛市",
   tag: "分析缓存",
-  description: "BMPI 化债牛市进度指数结果缓存（Key-结构化 Value，TTL 7 天）",
+  description: "BMPI 结果缓存（TTL 7 天）+ 用户补全数据（experiment:bmpi:supplement，无 API 的宏观/利率字段）",
 });
 
-const CACHE_KEY = "experiment:bmpi:v1";
+const CACHE_KEY = "experiment:bmpi:v2";          // v2：数据源直采版（旧 LLM 采集缓存失效）
+const SUPP_KEY = "experiment:bmpi:supplement";   // 用户补全（无 API 字段）
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 用户补全数据结构（页面输入区保存；服务端读取合并） */
+export interface BmpiSupplement {
+  y10?: number;            // 中国 10Y 国债收益率 %
+  y1?: number;             // 中国 1Y 国债收益率 %
+  netInjection?: number;   // 央行周度净投放（亿元，负=净回笼）
+  // S1 宏观（发行进度/PMI/基建）
+  progressPct?: number; s1Pmi?: number; infraYoY?: number;
+  // S2 宏观（城投利差 bp/贷款同比/CPI/应收天数）
+  spreadBp?: number; loanYoY?: number; cpi?: number; receivableDays?: number;
+  // S3 宏观（房价同比/国企 PB/政府债占比）
+  housePriceYoY?: number; soePb?: number; govDebtPct?: number;
+  updatedAt?: string;
+}
 
 function today(): string {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
+const num = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : null);
 
-/** ① 数据采集：LLM 联网搜索（国债/逆回购/成分股股价/PB/宏观指标） */
-async function collectData(signal: AbortSignal): Promise<Record<string, any>> {
-  const prompt = getPromptTemplate("experiment.bmpi.collect").replace(/\{date\}/g, today());
-  const r = await chat([{ role: "user", content: prompt }], { search: true, json: true, signal, module: "experiment.bmpi.collect" });
-  if (!r.ok) throw new Error(r.message);
-  const parsed = robustJsonParse(r.content);
-  if (!parsed || typeof parsed !== "object") throw new Error("数据采集输出无法解析为结构化数据");
-  return parsed as Record<string, any>;
+/** S₁ 建筑股（框架 §4）：代码/起点/终点 */
+const S1_STOCKS = [
+  { code: "600502", start: 3.82, end: 8.5 },   // 安徽建工
+  { code: "601868", start: 1.84, end: 4.5 },   // 中国能建
+  { code: "601390", start: 4.63, end: 7.5 },   // 中国中铁
+  { code: "601800", start: 6.53, end: 9.8 },   // 中国交建
+  { code: "600039", start: 5.09, end: 10.5 },  // 四川路桥
+];
+/** S₂ 信用边际股（框架 §5） */
+const S2_STOCKS = [
+  { code: "601006", start: 5.42, end: 6.1 },   // 大秦铁路
+  { code: "01052", start: 3.11, end: 4.65 },   // 越秀交通（港）
+  { code: "601818", start: 2.74, end: 5.1 },   // 光大银行
+  { code: "600350", start: 8.06, end: 11.5 },  // 山东高速
+  { code: "01359", start: 0.55, end: 1.25 },   // 中国信达（港）
+  { code: "00152", start: 5.27, end: 8.5 },    // 深圳国际（港）
+];
+/** S₃ 核心资产（框架 §6）：PB 终点（起点 ≈ 终点×0.9，框架 2024.09 起点×0.9 近似，可校准） */
+const S3_STOCKS = [
+  { code: "601939", endPb: 0.85 },  // 建设银行
+  { code: "601398", endPb: 0.8 },   // 工商银行
+  { code: "601088", endPb: 2.1 },   // 中国神华
+  { code: "601857", endPb: 1.35 },  // 中国石油
+  { code: "600048", endPb: 0.7 },   // 保利发展
+  { code: "600019", endPb: 0.85 },  // 宝钢股份
+  { code: "002142", endPb: 1.1 },   // 宁波银行
+  { code: "001979", endPb: 0.95 },  // 招商蛇口
+  { code: "601169", endPb: 0.55 },  // 北京银行
+  { code: "00788", endPb: 1.25 },   // 中国铁塔（港）
+  { code: "600900", endPb: 3.2 },   // 长江电力
+];
+
+/** ① 数据采集：成分股 quote 真实行情 + 用户补全合并（无 LLM） */
+async function collectData(): Promise<{ stocks: Record<string, { price?: number; pb?: number }>; supp: BmpiSupplement }> {
+  const supp = (kvGet<BmpiSupplement>(SUPP_KEY) ?? {}) as BmpiSupplement;
+  const stocks: Record<string, { price?: number; pb?: number }> = {};
+  const codes = [...S1_STOCKS, ...S2_STOCKS, ...S3_STOCKS].map((s) => s.code);
+  // 批量行情（≤40 上限内）——逐代码失败降级
+  await Promise.all(codes.map(async (code) => {
+    try {
+      const q = await getQuoteSnapshot(code, {});
+      if (q && typeof q.price === "number") {
+        stocks[code] = { price: q.price, ...(typeof q.pb === "number" ? { pb: q.pb } : {}) };
+      }
+    } catch { /* 单只失败跳过 */ }
+  }));
+  return { stocks, supp };
 }
 
-/** ②③ 打分 + 综合研判（LLM），R/SL/BMPI 合成服务端固化 */
-async function analyze(parsed: Record<string, any>, signal: AbortSignal): Promise<ExperimentBmpiResponse> {
-  const num = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : null);
+/** ② 指标计算（公式固化）：S1/S2/S3 + R/SL + 权重 + BMPI */
+async function compute(stocks: Record<string, { price?: number; pb?: number }>, supp: BmpiSupplement) {
+  const s1Pct = S1_STOCKS.map((s) => { const p = stocks[s.code]?.price; return p !== undefined ? pctile(p, s.start, s.end) : null; }).filter((v): v is number => v !== null);
+  const s2Pct = S2_STOCKS.map((s) => { const p = stocks[s.code]?.price; return p !== undefined ? pctile(p, s.start, s.end) : null; }).filter((v): v is number => v !== null);
+  const s3Pb = S3_STOCKS.map((s) => { const pb = stocks[s.code]?.pb; return pb !== undefined ? pctile(pb, s.endPb * 0.9, s.endPb) : null; }).filter((v): v is number => v !== null);
 
-  // R / SL 服务端固化（需 10Y 收益率 + 周度净投放）
-  const r = bmpiR(num(parsed.y10) ?? num(parsed.cn10y));
-  const sl = bmpiSL(num(parsed.netInjectionYi) ?? num(parsed.netInjection));
+  const s1 = bmpiS1(s1Pct, { progressPct: num(supp.progressPct), pmi: num(supp.s1Pmi), infraYoY: num(supp.infraYoY) });
+  const s2 = bmpiS2(s2Pct, { spreadBp: num(supp.spreadBp), loanYoY: num(supp.loanYoY), cpi: num(supp.cpi), receivableDays: num(supp.receivableDays) });
+  const y10 = num(supp.y10); const y1 = num(supp.y1);
+  const rateSpreadBp = y10 !== null && y1 !== null ? (y10 - y1) * 100 : null;
+  const s3 = bmpiS3(s3Pb, { housePriceYoY: num(supp.housePriceYoY), soePb: num(supp.soePb), govDebtPct: num(supp.govDebtPct) }, rateSpreadBp);
+  const r = y10 !== null ? Math.round(100 - y10 * 25) : null;
+  const sl = supp.netInjection !== undefined ? Math.round((() => { const n = supp.netInjection!; return n >= 5000 ? 100 : n <= -3000 ? 10 : Math.min(Math.max(50 + (n / 1000) * 10, 10), 100); })()) : null;
 
-  // LLM 综合研判：S1/S2/S3 打分 + 研判（数据已采集，search=false 省成本）
+  const weights = bmpiWeights(s1 ?? 50, s2 ?? 50, s3 ?? 50);
+  // BMPI：S 三因子全有才算；R/SL 缺失时仅用 S 部分归一化（0-100），并标注 missing
+  const missing: string[] = [];
+  if (s1 === null || s2 === null || s3 === null) missing.push("S1/S2/S3");
+  if (r === null) missing.push("R(国债收益率)");
+  if (sl === null) missing.push("SL(逆回购净投放)");
+  let bmpi: number | null = null;
+  if (s1 !== null && s2 !== null && s3 !== null) {
+    const sPart = weights.w1 * s1 + weights.w2 * s2 + weights.w3 * s3;
+    bmpi = r !== null && sl !== null
+      ? bmpiComposite(s1, s2, s3, r, sl, weights)
+      : Math.round((sPart / 0.7) * 100) / 100;
+  }
+  return {
+    indices: { R: r ?? 0, SL: sl ?? 0, S1: s1 ?? 0, S2: s2 ?? 0, S3: s3 ?? 0, weights },
+    s1, s2, s3, r, sl, bmpi, rateSpreadBp, missing,
+    s1Pct, s2Pct, s3Pb,
+  };
+}
+
+/** ③ LLM 综合研判（基于真实数据 + 计算的指数；不再采集数据） */
+async function analyze(c: Awaited<ReturnType<typeof compute>>, supp: BmpiSupplement, stocks: Record<string, { price?: number; pb?: number }>, signal: AbortSignal): Promise<ExperimentBmpiResponse> {
   const tpl = getPromptTemplate("experiment.bmpi");
   const prompt = tpl
     .replace(/\{date\}/g, today())
-    .replace(/\{data\}/g, JSON.stringify({ ...parsed, computed: { R: r, SL: sl }, asOf: today() }, null, 2));
-  const r2 = await chat([{ role: "user", content: prompt }], { search: false, json: true, signal, module: "experiment.bmpi" });
-  if (!r2.ok) throw new Error(r2.message);
-  const j = robustJsonParse(r2.content) as Record<string, unknown> | null;
+    .replace(/\{data\}/g, JSON.stringify({ computed: c.indices, bmpi: c.bmpi, weights: c.indices.weights, missing: c.missing, stocks, supplement: supp, asOf: today() }, null, 2));
+  const r = await chat([{ role: "user", content: prompt }], { search: false, json: true, signal, module: "experiment.bmpi" });
+  if (!r.ok) throw new Error(r.message);
+  const j = robustJsonParse(r.content) as Record<string, unknown> | null;
   if (!j || typeof j !== "object") throw new Error("LLM 研判输出无法解析为结构化数据");
-
-  const S = j.indices as Record<string, unknown> | undefined;
-  const s1 = num(S?.S1);
-  const s2 = num(S?.S2);
-  const s3 = num(S?.S3);
-  const weights = (S?.weights as Record<string, unknown>) ?? {};
-  const w = {
-    w1: num(weights.w1) ?? 0.28,
-    w2: num(weights.w2) ?? 0.21,
-    w3: num(weights.w3) ?? 0.21,
-  };
-  // 合成：S 分缺失时用 R/SL 兜底；全缺 → 0（S/R/L 内部 0-10，BMPI 输出 0-100 与框架分档一致）
-  const bmpi = s1 !== null && s2 !== null && s3 !== null && r !== null && sl !== null
-    ? Math.round(bmpiComposite(s1, s2, s3, r, sl, w) * 10)
-    : null;
-
-  const indices = {
-    R: r ?? num(S?.R) ?? 0,
-    SL: sl ?? num(S?.SL) ?? 0,
-    S1: s1 ?? 0,
-    S2: s2 ?? 0,
-    S3: s3 ?? 0,
-    weights: w,
-  };
-
+  const details = (Array.isArray(j.details) ? j.details : []).map((d) => {
+    const o = d as Record<string, unknown>;
+    return { index: String(o.index ?? ""), score: Number(o.score ?? 0), evidence: String(o.evidence ?? ""), confidence: String(o.confidence ?? "中") };
+  });
   return {
     ok: true,
     asOf: today(),
-    indices,
-    bmpi: bmpi ?? 0,
-    status: bmpi !== null ? bmpiStatus(bmpi) : (typeof j.status === "string" ? j.status : "🟡关注"),
+    indices: c.indices,
+    bmpi: c.bmpi ?? 0,
+    status: c.bmpi !== null ? bmpiStatus(c.bmpi) : (typeof j.status === "string" ? j.status : "🟡关注"),
     summary: typeof j.summary === "string" ? j.summary : "",
-    details: Array.isArray(j.details) ? j.details as ExperimentBmpiResponse["details"] : [],
+    details,
     watchDates: Array.isArray(j.watchDates) ? j.watchDates as ExperimentBmpiResponse["watchDates"] : [],
     caveats: Array.isArray(j.caveats) ? j.caveats as ExperimentBmpiResponse["caveats"] : [],
-    model: r2.model,
+    model: r.model,
   };
 }
 
@@ -100,8 +163,9 @@ async function runBmpi(opts: ExperimentBmpiRequest, signal: AbortSignal): Promis
   const cachedAtMs = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
   const fresh = cached && typeof cached === "object" && cached.ok && Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_TTL_MS;
   if (!opts.force && fresh) return { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() };
-  const parsed = await collectData(signal);
-  const result = await analyze(parsed, signal);
+  const { stocks, supp } = await collectData();
+  const c = await compute(stocks, supp);
+  const result = await analyze(c, supp, stocks, signal);
   kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
   return result;
 }
@@ -118,5 +182,16 @@ export function registerExperimentBmpi(app: Hono): void {
     const task = getTask<ExperimentBmpiResponse>(c.req.param("taskId"));
     if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
     return c.json(task, 200);
+  });
+
+  // 用户补全数据读写（无 API 字段：国债/逆回购/S 宏观）
+  app.get(`${API_PREFIX}/tools/experiment/bmpi/supplement`, (c) => c.json({ ok: true, supplement: kvGet<BmpiSupplement>(SUPP_KEY) ?? {} }));
+  app.put(`${API_PREFIX}/tools/experiment/bmpi/supplement`, async (c) => {
+    const body = (await c.req.json().catch(() => null)) as Partial<BmpiSupplement> | null;
+    if (!body) return c.json({ ok: false, message: "补全数据不能为空" }, 400);
+    const old = (kvGet<BmpiSupplement>(SUPP_KEY) ?? {}) as BmpiSupplement;
+    const merged: BmpiSupplement = { ...old, ...body, updatedAt: new Date().toISOString() };
+    kvSet(SUPP_KEY, merged);
+    return c.json({ ok: true, supplement: merged });
   });
 }

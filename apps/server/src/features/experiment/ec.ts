@@ -1,7 +1,7 @@
 // ============================================================
-// 实验·页面3：欧元/日元泡沫预警（ec）
-// 两段式：①LLM 联网采集最新数据（汇率/利差/VIX/CFTC/估值）→ ②服务端指标公式固化（B/Ω/CVAS/CCV）
-//         → ③LLM 研判（基于数据+指标，输出结构化预警 JSON）→ 缓存 6h（force 绕过）
+// 实验·页面3：欧元/日元泡沫预警（ec）——数据源直采版（2026-08-16 重构）
+// ①外汇走腾讯 wh 真实接口（fetchFx）②VIX/利差/CFTC/估值走用户补全 KV（无免费 API）
+// ③B/Ω/CVAS/CCV 指标公式固化（indicators.ts）④LLM 仅做研判——不再用 LLM 采集数据
 // ============================================================
 import { Hono } from "hono";
 import { API_PREFIX, type AsyncTaskResult, type ExperimentEcRequest, type ExperimentEcResponse, type ExperimentEcData } from "@toolbox/shared";
@@ -11,6 +11,7 @@ import { chat } from "../../core/llm.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
+import { fetchFx } from "../../core/quote.js";
 import { ecB, ecOmega, ecCvas, ecCcv, ecStatus } from "./indicators.js";
 
 registerDataSource({
@@ -18,80 +19,100 @@ registerDataSource({
   name: "experiment:ec:",
   page: "实验·ec 泡沫预警",
   tag: "分析缓存",
-  description: "欧元/日元泡沫预警结果缓存（Key-结构化 Value，TTL 6h）",
+  description: "ec 预警结果缓存（TTL 6h）+ 用户补全数据（experiment:ec:supplement，无 API 的 VIX/利差/CFTC 字段）",
 });
 
-const CACHE_KEY = "experiment:ec:v1";
+const CACHE_KEY = "experiment:ec:v2";          // v2：数据源直采版（旧 LLM 采集缓存失效）
+const SUPP_KEY = "experiment:ec:supplement";   // 用户补全（无 API 字段）
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** 用户补全数据结构（页面输入区保存） */
+export interface EcSupplement {
+  vix?: number;            // VIX 指数
+  vixPrev?: number;        // 上一交易日 VIX
+  lowVolWeeks?: number;    // VIX<20 连续周数
+  de10y?: number;          // 德国 10Y 收益率 %
+  jp10y?: number;          // 日本 10Y 收益率 %
+  spreadDiff?: number;     // 德日 10Y 利差（百分点）
+  cftcNetShortK?: number;  // CFTC 日元净空头（千手）
+  cftcZ?: number;          // 空头 z 分数
+  buffettIndicator?: number; // 巴菲特指标
+  zFx?: number; zSpread?: number; zValuation?: number;  // z 分数
+  fxChangePct?: number;    // 欧元/日元周度变动 %
+  spreadChangePct?: number; // 利差周度变动（百分点）
+  bTrend?: string;         // up|down|flat
+  updatedAt?: string;
+}
 
 function today(): string {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
+const num = (v: unknown): number | undefined => (typeof v === "number" && isFinite(v) ? v : undefined);
 
-/** ① 数据采集：LLM 联网搜索最新数据（结构化 JSON） */
-async function collectData(signal: AbortSignal): Promise<Record<string, any>> {
-  const prompt = getPromptTemplate("experiment.ec.collect").replace(/\{date\}/g, today());
-  const r = await chat([{ role: "user", content: prompt }], { search: true, json: true, signal, module: "experiment.ec.collect" });
-  if (!r.ok) throw new Error(r.message);
-  const parsed = robustJsonParse(r.content);
-  if (!parsed || typeof parsed !== "object") throw new Error("数据采集输出无法解析为结构化数据");
-  return parsed as Record<string, any>;
+/** ① 数据采集：外汇真实接口 + 用户补全合并（无 LLM） */
+async function collectData(): Promise<{ fx: ExperimentEcData["fx"]; supp: EcSupplement }> {
+  const supp = (kvGet<EcSupplement>(SUPP_KEY) ?? {}) as EcSupplement;
+  const [eurjpy, usdjpy, eurusd] = await Promise.all([fetchFx("EURJPY"), fetchFx("USDJPY"), fetchFx("EURUSD")]);
+  return {
+    fx: {
+      eurjpy: eurjpy?.price,
+      usdjpy: usdjpy?.price,
+      eurusd: eurusd?.price,
+    },
+    supp,
+  };
 }
 
-/** ② 指标计算（公式固化）+ ③ LLM 研判 */
-async function analyze(parsed: Record<string, any>, signal: AbortSignal): Promise<ExperimentEcResponse> {
-  const num = (v: unknown): number | undefined => (typeof v === "number" && isFinite(v) ? v : undefined);
+/** ② 指标计算（公式固化） */
+function compute(fx: ExperimentEcData["fx"], supp: EcSupplement) {
   const data: ExperimentEcData = {
     asOf: today(),
-    fx: {
-      eurjpy: num(parsed.eurjpy ?? parsed.fx?.eurjpy) ?? undefined,
-      usdjpy: num(parsed.usdjpy ?? parsed.fx?.usdjpy) ?? undefined,
-      eurusd: num(parsed.eurusd ?? parsed.fx?.eurusd) ?? undefined,
-    },
+    fx,
     spreads: {
-      de10y: num(parsed.de10y ?? parsed.spreads?.de10y) ?? undefined,
-      jp10y: num(parsed.jp10y ?? parsed.spreads?.jp10y) ?? undefined,
-      diff: num(parsed.spreadDiff ?? parsed.spreads?.diff) ?? undefined,
+      de10y: num(supp.de10y),
+      jp10y: num(supp.jp10y),
+      diff: num(supp.spreadDiff),
     },
-    vix: num(parsed.vix) ?? undefined,
+    vix: num(supp.vix),
     cftc: {
-      netShortK: num(parsed.cftcNetShortK ?? parsed.cftc?.netShortK) ?? undefined,
-      zScore: num(parsed.cftcZ ?? parsed.cftc?.zScore) ?? undefined,
+      netShortK: num(supp.cftcNetShortK),
+      zScore: num(supp.cftcZ),
     },
-    buffettIndicator: num(parsed.buffettIndicator) ?? undefined,
+    buffettIndicator: num(supp.buffettIndicator),
   };
-
-  // 指标（周度变动由采集提供：fxChangePct / spreadChangePct / vixPrev / lowVolWeeks）
-  const b = ecB(num(parsed.fxChangePct) ?? 0, num(parsed.spreadChangePct) ?? 0);
-  const cvasVal = ecCvas(data.vix ?? null, num(parsed.lowVolWeeks) ?? 0);
+  const b = ecB(num(supp.fxChangePct) ?? 0, num(supp.spreadChangePct) ?? 0);
+  const cvasVal = ecCvas(data.vix ?? null, num(supp.lowVolWeeks) ?? 0);
   const omega = ecOmega(
-    { fx: num(parsed.zFx) ?? undefined, short: data.cftc?.zScore, spread: num(parsed.zSpread) ?? undefined, valuation: num(parsed.zValuation) ?? undefined },
+    { fx: num(supp.zFx), short: data.cftc?.zScore, spread: num(supp.zSpread), valuation: num(supp.zValuation) },
     cvasVal,
   );
-  const ccv = ecCcv(data.vix ?? null, num(parsed.vixPrev) ?? null);
-  const bTrend: string = typeof parsed.bTrend === "string" ? parsed.bTrend : "flat";
-  const signals: string[] = Array.isArray(parsed.signals) ? parsed.signals.map(String) : [];
-
-  const indicators = { b, bTrend, omega, cvas: cvasVal, ccv, signals };
+  const ccv = ecCcv(data.vix ?? null, num(supp.vixPrev) ?? null);
+  const indicators = {
+    b, bTrend: typeof supp.bTrend === "string" ? supp.bTrend : "flat",
+    omega, cvas: cvasVal, ccv,
+    signals: [] as string[],
+  };
   const quick = ecStatus(b, omega);
+  return { data, indicators, quick };
+}
 
-  // LLM 研判（数据 + 指标 → 预警 JSON）
+/** ③ LLM 研判（基于真实外汇 + 补全 + 指标；不再采集数据） */
+async function analyze(d: Awaited<ReturnType<typeof compute>>, supp: EcSupplement, signal: AbortSignal): Promise<ExperimentEcResponse> {
   const tpl = getPromptTemplate("experiment.ec");
   const prompt = tpl
     .replace(/\{date\}/g, today())
-    .replace(/\{data\}/g, JSON.stringify({ ...data, raw: parsed, computed: indicators, quickStatus: quick }, null, 2));
+    .replace(/\{data\}/g, JSON.stringify({ data: d.data, computed: d.indicators, quickStatus: d.quick, supplement: supp, asOf: today() }, null, 2));
   const r = await chat([{ role: "user", content: prompt }], { search: false, json: true, signal, module: "experiment.ec" });
   if (!r.ok) throw new Error(r.message);
   const j = robustJsonParse(r.content) as Partial<ExperimentEcResponse> | null;
   if (!j || typeof j !== "object") throw new Error("LLM 研判输出无法解析为结构化数据");
-
   return {
     ok: true,
     asOf: today(),
-    data,
-    indicators,
-    status: typeof j.status === "string" ? j.status : quick,
+    data: d.data,
+    indicators: { ...d.indicators, signals: Array.isArray(j.indicators?.signals) ? j.indicators!.signals : [] },
+    status: typeof j.status === "string" ? j.status : d.quick,
     summary: typeof j.summary === "string" ? j.summary : "",
     anchors: Array.isArray(j.anchors) ? j.anchors : [],
     watchDates: Array.isArray(j.watchDates) ? j.watchDates : [],
@@ -105,8 +126,9 @@ async function runEc(opts: ExperimentEcRequest, signal: AbortSignal): Promise<Ex
   const cachedAtMs = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
   const fresh = cached && typeof cached === "object" && cached.ok && Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_TTL_MS;
   if (!opts.force && fresh) return { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() };
-  const parsed = await collectData(signal);
-  const result = await analyze(parsed, signal);
+  const { fx, supp } = await collectData();
+  const d = compute(fx, supp);
+  const result = await analyze(d, supp, signal);
   kvSet(CACHE_KEY, { ...result, fromCache: false, cachedAt: new Date().toISOString() });
   return result;
 }
@@ -123,5 +145,16 @@ export function registerExperimentEc(app: Hono): void {
     const task = getTask<ExperimentEcResponse>(c.req.param("taskId"));
     if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
     return c.json(task, 200);
+  });
+
+  // 用户补全数据读写
+  app.get(`${API_PREFIX}/tools/experiment/ec/supplement`, (c) => c.json({ ok: true, supplement: kvGet<EcSupplement>(SUPP_KEY) ?? {} }));
+  app.put(`${API_PREFIX}/tools/experiment/ec/supplement`, async (c) => {
+    const body = (await c.req.json().catch(() => null)) as Partial<EcSupplement> | null;
+    if (!body) return c.json({ ok: false, message: "补全数据不能为空" }, 400);
+    const old = (kvGet<EcSupplement>(SUPP_KEY) ?? {}) as EcSupplement;
+    const merged: EcSupplement = { ...old, ...body, updatedAt: new Date().toISOString() };
+    kvSet(SUPP_KEY, merged);
+    return c.json({ ok: true, supplement: merged });
   });
 }

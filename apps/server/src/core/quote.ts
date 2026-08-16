@@ -284,6 +284,26 @@ async function fetchTencent(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
 }
 
 /**
+ * 外汇快照（腾讯 wh 接口）：EURJPY / USDJPY / EURUSD。
+ * 字段：3=最新价 6=昨收 13=涨跌%。
+ */
+export async function fetchFx(code: "EURJPY" | "USDJPY" | "EURUSD"): Promise<{ price: number; prevClose: number; changePct: number } | null> {
+  try {
+    const r = await fetch(`https://qt.gtimg.cn/q=wh${code}`, { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(8000) });
+    const t = await r.text();
+    const m = t.match(/="([^"]+)"/);
+    if (!m || !m[1]) return null;
+    const f = m[1].split("~");
+    const price = Number(f[3]);
+    const prevClose = Number(f[6]);
+    if (!isFinite(price)) return null;
+    return { price, prevClose, changePct: prevClose > 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 获取实时行情快照（多源 failover：腾讯 → 东财 → 新浪）。
  * KV 缓存 5 分钟（force 可绕过）。
  */

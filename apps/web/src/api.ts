@@ -413,6 +413,11 @@ export const api = {
   experimentEcTask: (taskId: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentEcResponse>>(`/tools/experiment/ec/task/${encodeURIComponent(taskId)}`),
   experimentBmpi: (force: boolean) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentBmpiResponse>>("/tools/experiment/bmpi", jsonInit("POST", { force })),
   experimentBmpiTask: (taskId: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentBmpiResponse>>(`/tools/experiment/bmpi/task/${encodeURIComponent(taskId)}`),
+  // 实验 · 用户补全数据（无 API 字段）
+  experimentBmpiSupplement: () => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/bmpi/supplement"),
+  experimentBmpiSaveSupplement: (data: Record<string, unknown>) => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/bmpi/supplement", jsonInit("PUT", data)),
+  experimentEcSupplement: () => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/ec/supplement"),
+  experimentEcSaveSupplement: (data: Record<string, unknown>) => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/ec/supplement", jsonInit("PUT", data)),
   // 知乎爬虫
   zhihuCookie: () => request<{ ok: boolean; configured: boolean }>("/tools/zhihu-crawler/cookie"),
   zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),
