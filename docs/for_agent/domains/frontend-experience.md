@@ -171,6 +171,7 @@ cd apps/web; npx shadcn@latest add <组件> -y -c apps/web   # -c 指定 workspa
 ### 9.1 组件化评估结论（2026-08-16，memo msvp4nao）
 
 - **shadcn 官方 + 277 个社区注册表：无文件树组件**（只有 sidebar 导航/file-input 上传；`@toc-cn` 是 TOC 组件但网络超时）
+  - **⚠️ 2026-08-16 调研修正**：独立 registry `shadcn.io`（7805 组件，registry 列表可匿名访问）有 `sidebar-file-tree`/`crud-file-manager`/`timeline-tree`/`file-upload-folder` 等 34 个文件树相关组件；21st.dev（MagicTree）也有。但源码下载需注册认证：shadcn.io 401（dashboard/account 拿 token）、21st.dev 需登录、vibekit 404。用户注册后可 `npx shadcn add <url>` 安装，届时再评估替换手写树
 - Base UI 有 Tree 但是**选择树**（nested checkbox），不支持右键/拖拽/内联重命名/多级图标
 - **结论**：文件树保留手写（vscode 资源管理器范式），骨架组件（ScrollArea/按钮/输入）用成熟件
 
@@ -184,6 +185,14 @@ cd apps/web; npx shadcn@latest add <组件> -y -c apps/web   # -c 指定 workspa
 - 回收站作为树底部特殊条目（软删可恢复）
 
 ---
+
+### 9.3 组件调研方法论（2026-08-16 复盘：search 结论被 DeepSeek 指正）
+
+- **结论必须带范围**：上次说"277 个社区注册表全扫无文件树"——实际只扫了 **shadcn 官方目录索引**，漏了独立 registry（shadcn.io 7805 组件 / 21st.dev / vibekit）——**"全扫"名不副实，官方目录无 ≠ 生态无**
+- **生态调研优先联网搜索**：本地猜 URL + fetch 官方目录手段单一；shadcn 生态日新月异（shadcn.io 7805 组件、21st.dev 等），**先 web 搜索（research 工具/DeepSeek 联网）再验证 URL**
+- **registry 列表通常匿名可读**：`https://www.shadcn.io/r/registry.json` 200（7805 项）可 fetch 后 grep（tree/explorer/file-manager）筛组件；**组件源码才需 token**（401）
+- **结论入库带日期+范围+⚠️修正标记**：错误结论会污染后续 Agent；已按此修正 9.1
+- **用户分享的 DeepSeek 对话链接本身是调研输入**：它用联网搜索找组件，能对冲本地调研盲区——收到后先提取再验证，不要直接沿用或直接否定
 
 ## 十、踩坑集锦（边角经验速查）
 

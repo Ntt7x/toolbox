@@ -282,7 +282,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 2. **弹层一律 portal 到 body** + 鼠标点翻转贴近 + Escape 关闭（`Math.min` 压边是"菜单太远"根因）
 3. **UI 最小尺寸**：输入框 padding≥0.6rem/高≥40px/字号≥0.9rem；按钮 padding≥0.5rem 1rem/圆角≥10px；正文≥0.8rem；点击区≥28px；字段有常驻 label（不只 placeholder）；可点击元素有 hover 反馈
 
-**专项结论**：shadcn 生态无文件树组件（277 注册表全扫）——资源管理器手写（vscode 范式），骨架组件用成熟件（详见 frontend-experience.md §九）。
+**专项结论**：shadcn 官方目录无文件树组件，但独立 registry shadcn.io/21st.dev 有（需注册 token，详见 frontend-experience.md §九）——资源管理器当前手写（vscode 范式），骨架组件用成熟件。
 
 ## 6. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 
