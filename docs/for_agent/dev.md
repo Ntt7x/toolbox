@@ -179,15 +179,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 ## 5. 验证清单（每功能必过）
 ### 5.0 设计前置（2026-08-16 文档中心反思，新页面/大改造写代码前必做）
 
-写代码前先产出《设计说明》并自答五问（答不了说明没想清楚，不许动手）：
-
-1. **定位**：这个页面在用户工作流里是什么？在 toolbox 生态里是**采集/沉淀/应用**哪一层？和相邻模块（知识库/爬虫/交易）的关系与数据流转？
-2. **范式**：成熟工具领域有没有已验证的交互范式可复用（vscode 目录+编辑器、资源管理器）？**禁止自创更差的范式**。
-3. **规模**：数据量增长到 100/1000 时还成立吗？**搜索/缓存/层级这些"规模性能力"是否一开始就有**，而不是等崩了再补？
-4. **消费 vs 管理**：内容型页面以**消费**（读/搜/改/用内容）为核心，管理功能（组织/回收站/标签）是手段不是目的——别本末倒置。
-5. **验收 = 用户旅程**：从进页面到完成核心任务（找到→打开→读完→改完）每一步是否顺手？用**用户旅程走查**代替"功能存在性"验收。
-
-**反面案例（文档中心初版）**：弹窗预览、树无叶子、无编辑、无全文搜索、无缓存——全是被用户 memo 一条条点破后才补（数学公式→tab→树叶子→编辑器布局）。根因是"先实现后设计、被动修补"，本节省作为设计前置强制项。
+写代码前先产出《设计说明》并自答五问（定位/范式/规模/消费vs管理/用户旅程）——答不了说明没想清楚，不许动手。
+**五问详情 + 反面案例（文档中心初版"先实现后设计"）见 `domains/frontend-experience.md` §一**。
 
 ### 5.1 测试分级与场景引导（2026-08-08 起）
 
@@ -282,57 +275,14 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   业务不得反向依赖；LLM 三模式（direct/chatSession/reasonix）与 SQLite 数据层为显式带标签边。
 - **验证**：改完跑 `/api/dependency-graph` 看节点/边数量与新增模块是否出现。
 
-### 5.4 UI 细节规范（2026-08-07 起，教训：医学知识库输入框过小）
+### 5.4 UI 细节规范（2026-08-07 起）——**前端全量经验见 `domains/frontend-experience.md`**（设计/组件/UI/工程化/踩坑）
 
-**组件库选型（2026-08-09 起，2026-08-10 底层切 Base UI）：新前端组件优先采用成熟组件库 `shadcn/ui`**
-- 官方安装文档：https://ui.shadcn.com/docs/installation/vite（React 19 + Vite 兼容）
-- 定位：shadcn/ui 是**复制式**组件库（无头组件 + Tailwind 样式），组件源码复制进 `apps/web/src/components/ui/`，**可完全定制、无运行时包锁定**——适合"个人工具集 + 频繁迭代"
-- **底层（2026-08-10 切换）：Base UI（`@base-ui/react`）**，非 Radix——shadcn 官网 2026-07 起新项目默认 Base UI；切换/API 差异/踩坑**见 `docs/for_agent/domains/shadcn.md`**（Slider 单值/Seclet null/placeholder/自定义易被覆盖）
-- **适用范围**：复杂交互组件（对话框/下拉/开关/标签页/表格/表单/弹窗）优先 shadcn；**简单元素**（按钮/输入框/卡片）继续用现有 `styles.css` 工具类或内联样式——**存量页面渐进迁移，不强制重写**
-- **引入前提（已落地 2026-08-09，TradePlanTool 重写时）**：`tailwindcss` v4（`@tailwindcss/vite` 插件）+ `cn` 工具（clsx + tailwind-merge，`src/lib/utils.ts`）+ `components.json` + `@/` path alias（vite resolve.alias + tsconfig paths）+ CSS 变量 token（`src/index.css`，主色对齐 #2563eb）
-- **shadcn 使用经验**：API 细节/踩坑（Select 空串、Slider 数组、Input 半受控、@theme inline 映射、组件染色）**全部在 `docs/for_agent/domains/shadcn.md`**——用 shadcn 组件前先读该文档（本项目为 Base UI 底层）
-- **重写策略**：大组件重写保留业务逻辑层（状态/回调/计算），只换 JSX 渲染层（Card/Button/Input/Select/Table/Badge 等）——逻辑零回归
-- **约束**：引入 shadcn 组件后仍需满足下方细节（可读性/最小尺寸/hover 反馈）；新组件必须过定向冒烟（smoke-pages --page）
+**三条核心铁律（必守）**：
+1. **手写交互组件优先成熟库**：滚动/弹层/菜单/折叠/对话框/表格/标签页一律 shadcn（ScrollArea/DropdownMenu/Collapsible/Tabs/Dialog/Table），**不要手写轮子**（手写反复踩坑：文本重叠/定位漂移/Escape 失效/高亮错位——用户批"一堆 bug"）。安装：`npx shadcn@latest add <组件> -y -c apps/web`；shadcn API 细节见 `domains/shadcn.md`
+2. **弹层一律 portal 到 body** + 鼠标点翻转贴近 + Escape 关闭（`Math.min` 压边是"菜单太远"根因）
+3. **UI 最小尺寸**：输入框 padding≥0.6rem/高≥40px/字号≥0.9rem；按钮 padding≥0.5rem 1rem/圆角≥10px；正文≥0.8rem；点击区≥28px；字段有常驻 label（不只 placeholder）；可点击元素有 hover 反馈
 
-**通用细节（所有页面交互控件，含 shadcn 组件）**：
-
-1. **输入框/文本域**：`padding ≥ 0.6rem 0.85rem`、`min-height ≥ 40px`、`font-size ≥ 0.9rem`、
-   `border-radius 10px`、边框 `#cbd5e1` + focus ring（`0 0 0 3px rgba(37,99,235,0.12)`）。
-   多行文本域高度 ≥ 96px（约 4 行），`line-height 1.7`。
-2. **按钮**：`padding ≥ 0.5rem 1rem`、`font-size ≥ 0.86rem`、圆角 ≥ 10px；主按钮品牌蓝 +
-   阴影 + hover 反馈；禁用态 opacity 0.55。
-3. **表单结构**：字段用 `.field-label`（0.8rem/600/深灰）标注，输入框与标签间距 ≥ 0.3rem；
-   不要只靠 placeholder 表达字段含义（placeholder 会消失，标签常驻）。
-4. **通用原则**：可读性优先——正文 ≥ 0.8rem、表格 ≥ 0.8rem；可点击元素有 hover 反馈；
-   卡片间距 ≥ 1rem；避免过小点击区（≥ 28px 高度）。
-5. 优先复用 `styles.css` 的 `.input`/`.btn`/`.field-label`/`.card` 工具类；内联样式不得低于上述最小尺寸。
-
-**弹层/右键菜单规范（2026-08-16 文档中心"菜单太远"反复排查教训，强制）**：
-
-1. **一律 `createPortal` 渲染到 `document.body`**——`position: fixed` 视口定位不受任何容器干扰（flex 链 / overflow 滚动 / transform 祖先）；antd/mui 成熟方案均如此，不要渲染在组件树内层
-2. **定位 = 鼠标视口坐标（clientX/Y）+ 4px 偏移**，从鼠标点右下方展开；**空间不足翻转到另一侧**（菜单底缘/右缘贴鼠标点）。
-   ❌ 禁止 `Math.min(鼠标, 窗口边缘)` "压边"——会把菜单推到窗口边缘，离鼠标几百 px（**"菜单太远"根因**，msuzjelj 两轮未修的教训）
-3. **必须支持 Escape 关闭**（菜单打开时挂 window keydown 监听、关闭时卸载）——否则遮罩（inset:0）残留挡住后续交互，表现为"点了没反应"
-4. **验证脚本陷阱**：菜单本体是遮罩（z-index:90）的**子级**（z-index:95）——`body > div` 选择器只匹配遮罩会**误报"菜单未出现"**；验证必须用匹配真实 DOM 结构的选择器（`querySelectorAll("div")` 找 z95），或直接断言菜单文本存在
-5. **用户反馈与实测矛盾时**（实测贴近但用户说远/说没生效）按序怀疑：① 验证脚本选择器/等待/状态是否错了 ② 用户浏览器是否 HMR 未生效（旧代码仍在跑，需硬刷新 Ctrl+F5）③ 窗口尺寸/DPI/浏览器缩放差异 —— **不要急着否定用户，先自查测试链路**
-
-**手写交互组件优先成熟库（2026-08-16 用户批评"你写的什么玩意一堆bug"后确立，强制）**：
-
-1. **凡是滚动容器、弹层/菜单、折叠、气泡这类有成熟语义的交互组件，一律优先用 shadcn/ui 成熟组件**（ScrollArea / DropdownMenu / Collapsible / Tabs / Dialog / Tooltip），**不要手写轮子**——手写反复踩坑：flex 容器子项压缩导致**文本重叠**（→ ScrollArea 解决）、fixed 定位受容器干扰（→ portal）、Escape 关闭缺失、滚动/高亮联动错位
-2. **安装组件**：`npx shadcn@latest add <组件> -y -c apps/web`（workspace 必须 `-c apps/web`，否则报 monorepo 根错误；Base UI 底层自动匹配）
-3. **滚动容器**：长列表（TOC/日志/结果列表）用 `ScrollArea`（内部 viewport 自动滚动，天然防 flex 压缩重叠）；手写 `overflowY: auto` 在 flex column 父容器里会被子项压缩（flex-shrink:1）导致文本溢出重叠
-4. **TOC/大纲联动高亮**（MarkdownView 实践）：
-   - 高亮判定用**内容区相对坐标**（`标题.top - 内容区.top <= 80`），**不要用视口绝对坐标**（内容区在页面中部时标题永远到不了视口顶部，高亮错位/消失）
-   - 点击跳转用**瞬间 scrollIntoView（block: start）**+ `jumpAt` 时间戳——跳转后 600ms 内 onScroll 不覆盖高亮（否则 smooth 途中 onScroll 把点击项覆盖成中间标题）
-5. **右键菜单**：当前文档中心保留 portal 版（定位/翻转/Escape 已修）；后续新菜单优先 shadcn `DropdownMenu`（Base UI Menu，支持 `openOnContextMenu` 与虚拟 anchor 定位）
-
-**文件浏览器树（资源管理器）组件化评估（2026-08-16，memo msvp4nao）**：
-- **shadcn 无 Tree 组件**（registry 404，`npx shadcn add tree` 报 not found）
-- **Base UI 有 Tree**（`@base-ui/react/tree`）但是**选择树**（nested selection/checkbox），**不支持**右键菜单/拖拽移动/内联重命名/多级图标——文档中心树的核心功能会丢
-- **结论**：现无成熟组件能完整覆盖"文件浏览器树"（右键+拖拽+内联编辑+选中高亮）——文档中心树保留手写（vscode 资源管理器范式），用成熟交互模式改善（折叠/默认收起/缩进占位对齐）
-- 树的体验改善优先做：**默认收起子级**（默认打开一级）、折叠箭头、缩进对齐、右键菜单、拖拽——逐项按 memo 修，不整体重写
-
-
+**专项结论**：shadcn 生态无文件树组件（277 注册表全扫）——资源管理器手写（vscode 范式），骨架组件用成熟件（详见 frontend-experience.md §九）。
 
 ## 6. LLM 公共模块（core/llm.ts + chatSession + reasonix）——三种调用模式
 

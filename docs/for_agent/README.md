@@ -44,6 +44,7 @@
 |---|---|---|
 | `domains/reasonix.md` | Reasonix ACP（协议/会话/进程/MCP/托管/引导词去重） | 涉足 Reasonix 会话 / 知识库会话复用 |
 | `domains/shadcn.md` | shadcn/ui 组件（Base UI 底层/API 差异/主题映射） | 涉足前端组件 / 页面 UI |
+| `domains/frontend-experience.md` | 前端全量经验（设计五问/组件选型/UI 细节/布局工程化/React 陷阱/踩坑集锦） | 前端页面开发/改造前必读 |
 | `domains/llm.md` | LLM 调用细节（用量切面三标注/三模式/决策清单/JSON 容错） | 改动 LLM 调用 / 新增 LLM 业务 |
 | `domains/features.md` | 浏览器自动化 / 策略仓位管理（trade-plan / 仓位管理 v2）/ 数据可信度（cbRate） | 改 browserChat / trade-plan / trade-v2 / LLM 结构化输出 |
 | `domains/data-sources.md` | 外部数据源（知乎/知识库中心/行情/分享/快讯） | 涉足外部数据源 |
