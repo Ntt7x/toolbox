@@ -8,7 +8,7 @@
 // 底层脚本仍在 scripts/dev-utils/ 原位置可直接调用（本入口仅做分发，不改变实现）。
 // ============================================================
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +21,7 @@ const TOOLS = [
   // ---- 验证 ----
   { cmd: "test", script: "test.mjs", group: "验证", desc: "模块单测（自动定位测试文件 / 空=全量）", example: "toolbox test tradePlan" },
   { cmd: "typecheck", script: "typecheck.mjs", group: "验证", desc: "TypeScript 类型检查（server + web + shared；L0 必跑）", example: "toolbox typecheck [--app server|web]" },
+  { cmd: "share", script: "share-extract.mjs", group: "小工具", desc: "DeepSeek 分享链接对话提取 CLI（memo msvpddmz；ts hook 自动加载）", example: "toolbox share <url|id> [--json]", ts: true },
   { cmd: "smoke", script: "smoke-pages.mjs", group: "验证", desc: "页面冒烟（18 页；--page 定向单页配合 L2）", example: "toolbox smoke [--page /tools/x]" },
   { cmd: "api", script: "api-cli.mjs", group: "验证", desc: "API CLI（curl 替代，Windows 引号安全；自动加 /api 前缀）", example: "toolbox api GET /health" },
   { cmd: "check", script: "check-change.mjs", group: "验证", desc: "改动健康检查（文件数/行数/触及分层 → 建议验证级别）", example: "toolbox check [--base main]" },
@@ -86,5 +87,6 @@ if (!t) {
 }
 
 const scriptPath = path.join(SCRIPT_DIR, t.script);
-const r = spawnSync(process.execPath, [scriptPath, ...rest], { stdio: "inherit", cwd: path.resolve(SCRIPT_DIR, "..", "..") });
+const pre = t.ts ? ["--import", pathToFileURL(path.join(SCRIPT_DIR, "ts-resolve-hook.mjs")).href] : [];
+const r = spawnSync(process.execPath, [...pre, scriptPath, ...rest], { stdio: "inherit", cwd: path.resolve(SCRIPT_DIR, "..", "..") });
 process.exit(r.status ?? 1);

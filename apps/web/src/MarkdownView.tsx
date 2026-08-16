@@ -62,22 +62,24 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
   const jumpAt = useRef(0);                       // 点击跳转时间戳（onScroll 短暂不覆盖高亮）
 
   const toc = useMemo(() => extractToc(String(props.children ?? "")), [props.children]);
-  const [tocCollapsed, setTocCollapsed] = useState<Set<number>>(new Set());  // 一级标题折叠（memo msvp46y5）
-  // 每个一级标题的子标题区间（[start, end) 不含一级本身）
-  const tocGroups = useMemo(() => {
-    const gs: { level1Idx: number; start: number; end: number }[] = [];
-    let cur: { level1Idx: number; start: number; end: number } | null = null;
-    toc.forEach((t, i) => {
-      if (t.level === 1) {
-        if (cur) { cur.end = i; gs.push(cur); }
-        cur = { level1Idx: i, start: i + 1, end: toc.length };
-      }
-    });
-    if (cur) gs.push(cur);
-    return gs;
-  }, [toc]);
-  const isTocHidden = (i: number) => tocGroups.some((g) => g.level1Idx !== i && g.start <= i && i < g.end && tocCollapsed.has(g.level1Idx));
-  const toggleTocGroup = (level1Idx: number) => setTocCollapsed((p) => { const n = new Set(p); if (n.has(level1Idx)) n.delete(level1Idx); else n.add(level1Idx); return n; });
+  const [tocCollapsed, setTocCollapsed] = useState<Set<number>>(new Set());  // 任意层级标题折叠（memo msvpm03z）
+  // 通用折叠：i 被隐藏 = 存在 j<i 且 toc[j].level < toc[i].level 且 j 折叠，且 j..i 之间没有 level ≤ toc[i].level 的标题
+  const isTocHidden = (i: number) => {
+    for (let j = i - 1; j >= 0; j--) {
+      if (tocCollapsed.has(j) && toc[j].level < toc[i].level) return true;
+      if (toc[j].level <= toc[i].level) break;
+    }
+    return false;
+  };
+  // 有直属子标题（其后首个更低级标题出现在下一个同级/更高级之前）
+  const hasSub = (i: number) => {
+    for (let j = i + 1; j < toc.length; j++) {
+      if (toc[j].level <= toc[i].level) break;
+      return true;
+    }
+    return false;
+  };
+  const toggleTocGroup = (i: number) => setTocCollapsed((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; });
 
   // 渲染后给标题加锚点 id（md-h-{i}），供 TOC 点击定位
   useEffect(() => {
@@ -178,12 +180,11 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
             {toc.length === 0 && <div style={{ fontSize: "0.75rem", color: "#cbd5e1", padding: "0.3rem 0.5rem" }}>无标题</div>}
             {toc.map((t, i) => {
               if (isTocHidden(i)) return null;
-              const isL1 = t.level === 1;
-              const hasSub = tocGroups.some((g) => g.level1Idx === i && g.start < g.end);
-              const collapsedHere = isL1 && tocCollapsed.has(i);
+              const hasKids = hasSub(i);
+              const collapsedHere = tocCollapsed.has(i);
               return (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  {isL1 && hasSub ? (
+                  {hasKids ? (
                     <span
                       onClick={(e) => { e.stopPropagation(); toggleTocGroup(i); }}
                       title={collapsedHere ? "展开" : "收起"}
@@ -197,7 +198,7 @@ export function MarkdownView({ fontScale = 1, showToc = false, maxWidth, ...prop
                     title={t.text}
                     style={{
                       flex: 1, padding: "0.22rem 0.3rem", paddingLeft: `${(t.level - 1) * 0.75}rem`, cursor: "pointer", borderRadius: 5,
-                      fontSize: isL1 ? "0.8rem" : "0.75rem", fontWeight: isL1 ? 600 : 400,
+                      fontSize: t.level === 1 ? "0.8rem" : "0.75rem", fontWeight: t.level === 1 ? 600 : 400,
                       color: i === activeIdx ? "#2563eb" : "#64748b",
                       background: i === activeIdx ? "#eff6ff" : "transparent",
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",

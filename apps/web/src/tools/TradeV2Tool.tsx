@@ -1437,7 +1437,7 @@ export default function TradeV2Tool() {
   const [global, setGlobal] = useState<TradeV2GlobalAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
-  const [tab, setTab] = useState("analysis");
+  const [tab, setTab] = useState("positions");   // 默认仓位明细（memo msvpak4x）
   const [entryEditorOpen, setEntryEditorOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TradeV2Entry | null>(null);
   const [groupEditorOpen, setGroupEditorOpen] = useState(false);
