@@ -19,6 +19,9 @@ import NewsCenterTool from "./tools/NewsCenterTool";
 import TodoV3Tool from "./tools/TodoV3Tool";
 import DocsTool from "./tools/DocsTool";
 import TradeV2Tool from "./tools/TradeV2Tool";
+import ExperimentFrameworkTool from "./tools/ExperimentFrameworkTool";
+import ExperimentEcTool from "./tools/ExperimentEcTool";
+import ExperimentBmpiTool from "./tools/ExperimentBmpiTool";
 import MemoTool from "./settings/MemoTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
@@ -42,6 +45,9 @@ const toolPages: Record<string, ComponentType> = {
   "todo-v3": TodoV3Tool,
   "docs": DocsTool,
   "trade-v2": TradeV2Tool,
+  "framework": ExperimentFrameworkTool,
+  "ec": ExperimentEcTool,
+  "bmpi": ExperimentBmpiTool,
 };
 
 /** 已实现工具页渲染；未映射的工具回退到占位页（ErrorBoundary 捕获运行时崩溃，显示错误而非白屏） */
@@ -65,6 +71,7 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-v2"] },
+  { label: "实验", toolIds: ["framework", "ec", "bmpi"] },
   { label: "工具", toolIds: ["todo-v3", "docs", "news-center", "deepseek-share", "zhihu-crawler"] },
   {
     // 默认收起的不常用分组（memo msqb197d）：架构图/本地数据/知识库中心/书籍下载

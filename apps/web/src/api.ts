@@ -406,6 +406,13 @@ export const api = {
     ),
   // 项目架构依赖图（扫描源码自动生成）
   dependencyGraph: () => request<{ ok: boolean; generatedAt: string; nodes: unknown[]; edges: unknown[] }>("/dependency-graph"),
+  // 实验分组（memo msvwslfq：投资框架 / ec 泡沫预警 / BMPI）
+  experimentFramework: (topic: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentFrameworkResponse>>("/tools/experiment/framework", jsonInit("POST", { topic })),
+  experimentFrameworkTask: (taskId: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentFrameworkResponse>>(`/tools/experiment/framework/task/${encodeURIComponent(taskId)}`),
+  experimentEc: (force: boolean) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentEcResponse>>("/tools/experiment/ec", jsonInit("POST", { force })),
+  experimentEcTask: (taskId: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentEcResponse>>(`/tools/experiment/ec/task/${encodeURIComponent(taskId)}`),
+  experimentBmpi: (force: boolean) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentBmpiResponse>>("/tools/experiment/bmpi", jsonInit("POST", { force })),
+  experimentBmpiTask: (taskId: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentBmpiResponse>>(`/tools/experiment/bmpi/task/${encodeURIComponent(taskId)}`),
   // 知乎爬虫
   zhihuCookie: () => request<{ ok: boolean; configured: boolean }>("/tools/zhihu-crawler/cookie"),
   zhihuSaveCookie: (cookie: string) => request<{ ok: boolean; configured: boolean }>(`/tools/zhihu-crawler/cookie`, jsonInit("PUT", { cookie })),

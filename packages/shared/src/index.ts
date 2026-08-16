@@ -2144,4 +2144,70 @@ export interface TradeV2GlobalResult {
   message?: string;
 }
 
+// ============================================================
+// 实验分组（memo msvwslfq：通用投资框架 / ec 泡沫预警 / BMPI 化债牛市）
+// ============================================================
 
+export interface ExperimentFrameworkRequest {
+  topic: string;
+}
+
+export interface ExperimentFrameworkResponse {
+  ok: true;
+  topic: string;
+  /** markdown 分析报告（哲学/战略/战术/批判 4 层 + e-梯队仓位表） */
+  report: string;
+  asOf: string;
+  model?: string;
+}
+
+export interface ExperimentEcData {
+  asOf: string;
+  fx: { eurjpy?: number; usdjpy?: number; eurusd?: number };
+  spreads?: { de10y?: number; jp10y?: number; diff?: number };
+  vix?: number;
+  cftc?: { netShortK?: number; zScore?: number };
+  buffettIndicator?: number;
+  cvas?: number;
+  ccv?: number;
+}
+
+export interface ExperimentEcRequest {
+  force?: boolean;
+  useSearch?: boolean;
+}
+
+export interface ExperimentEcResponse {
+  ok: true;
+  asOf: string;
+  data: ExperimentEcData;
+  indicators: { b: number | null; bTrend: string; omega: number | null; cvas: number | null; ccv: number | null; signals: string[] };
+  status: string;
+  summary: string;
+  anchors: { condition: string; status: string; action: string }[];
+  watchDates: { date: string; event: string; focus: string }[];
+  caveats: string[];
+  fromCache?: boolean;
+  cachedAt?: string;
+  model?: string;
+}
+
+export interface ExperimentBmpiRequest {
+  force?: boolean;
+  useSearch?: boolean;
+}
+
+export interface ExperimentBmpiResponse {
+  ok: true;
+  asOf: string;
+  indices: { R: number; SL: number; S1: number; S2: number; S3: number; weights: { w1: number; w2: number; w3: number } };
+  bmpi: number;
+  status: string;
+  summary: string;
+  details: { index: string; score: number; evidence: string; confidence: string }[];
+  watchDates: { date: string; event: string; focus: string }[];
+  caveats: string[];
+  fromCache?: boolean;
+  cachedAt?: string;
+  model?: string;
+}
