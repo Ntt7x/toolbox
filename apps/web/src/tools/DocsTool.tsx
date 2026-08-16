@@ -221,6 +221,17 @@ const [editingItemName, setEditingItemName] = useState("");
     try { await navigator.clipboard.writeText(activeTab.content ?? ""); setMsg({ kind: "ok", text: `✅ 已复制「${activeTab.item.name}」内容` }); }
     catch (e) { setMsg({ kind: "err", text: "复制失败：" + errMsg(e) }); }
   };
+  // 右键复制：按 item 加载并复制 md 文本（不依赖当前 tab；memo msvwmzog）
+  const copyItemText = async (it: DocItem) => {
+    if (it.type === "pdf") { setMsg({ kind: "err", text: "PDF 不支持复制内容" }); return; }
+    try {
+      const d = await api.docsDetail(it.id);
+      const content = d.content ?? "";
+      if (!content) { setMsg({ kind: "err", text: "该文档无内容可复制" }); return; }
+      await navigator.clipboard.writeText(content);
+      setMsg({ kind: "ok", text: `✅ 已复制「${it.name}」内容` });
+    } catch (e) { setMsg({ kind: "err", text: "复制失败：" + errMsg(e) }); }
+  };
 
   // 在 VSCode 中打开（导出到本地文件后唤起）
   const openInVscode = async () => {
@@ -442,6 +453,7 @@ const [editingItemName, setEditingItemName] = useState("");
     if (!it) return [];
     return [
       { label: "预览", icon: "👁️", onClick: () => void openPreview(it) },
+      { label: "复制内容", icon: "📋", onClick: () => void copyItemText(it) },
       { label: "详情", icon: "ℹ️", onClick: () => setDetailDoc(it) },
       { label: "重命名", icon: "✎", onClick: () => { setEditingItem(it.id); setEditingItemName(it.name); } },
       { label: "添加标签", icon: "#", onClick: () => { const t = prompt("添加标签", ""); if (t) void addTagToItem(it, t); } },
