@@ -518,7 +518,7 @@ const [editingItemName, setEditingItemName] = useState("");
     return (
       <Fragment key={f.id}>
         <div
-          onClick={() => { setCurFolder(curFolder === f.id ? null : f.id); setTrashView(false); }}
+          onClick={() => { setCurFolder(f.id); setTrashView(false); if (childCount > 0 || folderDocs(f.id).length > 0) setCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n; }); }}
           onContextMenu={(e) => openMenu(e, "folder", f.id)}
           draggable
           onDragStart={(e) => { e.dataTransfer.setData("text/folder", f.id); e.dataTransfer.effectAllowed = "move"; }}
@@ -533,7 +533,7 @@ const [editingItemName, setEditingItemName] = useState("");
             outline: dragOver === f.id ? "1px dashed #3b82f6" : "none",
           }}
         >
-          {childCount > 0 ? (
+          {childCount > 0 || folderDocs(f.id).length > 0 ? (
             <span
               onClick={(e) => { e.stopPropagation(); setCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n; }); }}
               style={{ fontSize: "0.6rem", color: "#64748b", width: 14, textAlign: "center", cursor: "pointer", userSelect: "none" }}
