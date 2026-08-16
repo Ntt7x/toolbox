@@ -235,7 +235,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 **历史教训（TradePlanTool 列表卡加载中）**：页面加载类 useEffect(() => { void loadX(); }, [loadX]) 曾被重构误删 → API 请求**根本不发出**（浏览器看不到请求，fetch 无超时则永久卡「加载中」）——此类问题 curl 测 API 是测不出来的，**涉及页面加载逻辑时必须跑浏览器级冒烟**
 - 防御约定：加载类 effect 必须带注释防误删；`api.ts request` 已统一 20s 超时（普通请求），挂起会转成可见错误
-- **冒烟必须断言页面内容（2026-08-09 教训）**：旧版 smoke-pages 只查 API 状态与 JS 崩溃——`/admin/deps`（不存在路由）404 占位页因无 API 错误而 PASS，**静默放行**；现已升级为**每页 expect 标志词 + 「页面不存在」反断言**（19 页）。新增页面必须同步 smoke-pages 的 PAGES（含 expect 词），改页面标题时同步更新 expect。
+- **冒烟必须断言页面内容（2026-08-09 教训）**：旧版 smoke-pages 只查 API 状态与 JS 崩溃——`/admin/deps`（不存在路由）404 占位页因无 API 错误而 PASS，**静默放行**；现已升级为**每页 expect 标志词 + 「页面不存在」反断言**（18 页）。新增页面必须同步 smoke-pages 的 PAGES（含 expect 词），改页面标题时同步更新 expect。
 
 ### 5.2 新页面 / 新路由 / 新菜单注意事项（2026-08-06 起，教训：agent-sessions）
 

@@ -16,7 +16,7 @@ scripts/
     ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
     ├── proc.mjs              进程诊断/清理 CLI（status/list/kill/kill-port）
     ├── typecheck.mjs         TypeScript 类型检查（全仓 / --app server|web）
-    ├── smoke-pages.mjs       页面冒烟（19 页；--page <路径> 定向单页）
+    ├── smoke-pages.mjs       页面冒烟（18 页；--page <路径> 定向单页）
     ├── test.mjs              模块单测快捷（自动定位测试文件 / 全量串行）
     ├── commit.mjs            git 提交包装（消息引号安全，自动 add+commit+push）
     ├── api-cli.mjs           API CLI（GET/POST/PUT/DELETE + JSON body）
@@ -41,7 +41,7 @@ scripts/
 | `proc` | **进程诊断/清理**：端口占用 + supervisor 状态 + node 进程命令行（查残留） | `toolbox proc status|list|kill <pid>|kill-port <port>` |
 | `typecheck` | **TypeScript 类型检查（L0 必跑）**：全仓或单 app | `toolbox typecheck [--app server|web]` |
 | `test` | **模块单测快捷**（自动定位测试文件/全量；自动探测：能 spawn 走 tsx，受限自动回退 resolve hook） | `toolbox test tradePlan` |
-| `smoke` | 页面冒烟（19 页；`--page` 定向单页配合 L2） | `toolbox smoke [--page /tools/x]` |
+| `smoke` | 页面冒烟（18 页；`--page` 定向单页配合 L2） | `toolbox smoke [--page /tools/x]` |
 | `api` | **API CLI**（curl 替代，Windows 引号安全，自动加 /api 前缀） | `toolbox api GET /health` |
 | `check` | 改动健康检查（文件数/行数/触及分层 → 建议验证级别） | `toolbox check [--base main]` |
 | `probe` | 浏览器探针：launch 系统 Chrome + 选择器状态 | `toolbox probe <url> --check "textarea:主输入框"` |

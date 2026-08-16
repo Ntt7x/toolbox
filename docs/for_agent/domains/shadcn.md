@@ -22,6 +22,7 @@
 | 可选值空 | Select value 禁空串 | **Select value 可为 `null`** | `onValueChange={(v) => ...}` 的 v 类型 `string \| null` → `v ?? ""` |
 | placeholder | 接受 null | **不接受 null**（TS 报 `string\|null`→`string\|undefined`） | 传 `placeholder ?? undefined` 或 `placeholder \|\| undefined` |
 | data 属性 | `data-[state=...]`（冒号） | `data-horizontal` / `data-disabled`（连字符） | 自定义 CSS 选择器注意；Tailwind 类 `data-*:` 前缀不同 |
+| **Select.Value 显示**（全局隐患 2026-08-16） | 渲染选项文本 | **渲染 value 本身（id），不自动找选项文本** | 显式映射：`<SelectValue>{opts.find(o=>o.value===v)?.label}</SelectValue>`（受控时）或包装层映射；trade-v2 已修 6 处，**其他页面（todo-v3/docs/知识库等）待全局排查** |
 | asChild | Radix 的 `asChild` | **Base UI 用 `render` prop** | shadcn 模板已封装，业务代码无感（不要直接改模板） |
 
 - **主题映射**（index.css `@theme inline`）对 Base UI 同样生效（`bg-primary` 等类正常解析，已采样确认）。

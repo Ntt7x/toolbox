@@ -190,6 +190,7 @@ cd apps/web; npx shadcn@latest add <组件> -y -c apps/web   # -c 指定 workspa
 | 现象 | 根因 | 解法 |
 |---|---|---|
 | 按钮/滑块白色透明"看不见" | tailwind `@theme inline` 未映射 CSS 变量 | 补映射（见 shadcn.md）；自检 `getComputedStyle(button).backgroundColor` 应为 `rgb(37,99,235)` |
+| Select 显示 value(id) 而非选项文本 | Base UI 的 Select.Value 渲染 value 本身 | 显式映射 `<SelectValue>{opts.find(...)?.label}</SelectValue>`（shadcn.md；全局隐患待排查其他页面） |
 | 菜单"太远"/贴屏幕边缘 | `Math.min(鼠标, 窗口边缘)` 压边 | 翻转贴近（§2.3） |
 | TOC 文本重叠 | flex column 子项 flex-shrink:1 压缩 | ScrollArea 或非 flex 容器 |
 | TOC 高亮错位/消失 | 视口绝对坐标（内容区在页面中部） | 内容区相对坐标（§2.4） |
