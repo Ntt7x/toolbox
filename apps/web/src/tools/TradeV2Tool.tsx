@@ -473,12 +473,13 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
 
 // ---------- 分组编辑器弹窗 ----------
 
-function GroupEditor({ open, onClose, groups, initial, onSaved }: {
+function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
   open: boolean;
   onClose: () => void;
   groups: TradeV2GroupSummary[];
   initial: TradeV2Group | null;
   onSaved: () => void;
+  inline?: boolean;   // 内嵌模式（分组设置 tab）：不渲染 Dialog，直接渲染表单
 }) {
   const [name, setName] = useState("");
   const [totalCapital, setTotalCapital] = useState(0);
@@ -509,7 +510,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
       if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort });
       else await api.tradeV2CreateGroup(name.trim());
       onSaved();
-      onClose();
+      if (!inline) onClose();
     } catch (e) {
       setMsg("❌ " + errMsg(e));
     } finally {
@@ -524,13 +525,66 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
     try {
       await api.tradeV2DeleteGroup(initial.id);
       onSaved();
-      onClose();
+      if (!inline) onClose();
     } catch (e) {
       setMsg("❌ " + errMsg(e));
     } finally {
       setDeleting(false);
     }
   };
+
+  const form = (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">分组名称</label>
+          <Input className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：稳健成长 / 网格策略" />
+        </div>
+        <div>
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">总仓位上限（元）</label>
+          <Input type="number" min={0} className="h-8" value={totalCapital || ""} placeholder="0 = 不限" onChange={(e) => setTotalCapital(Number(e.target.value) || 0)} />
+        </div>
+        <div>
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单日加仓上限（元）</label>
+          <Input type="number" min={0} className="h-8" value={dailyAddLimit || ""} placeholder="0 = 不限" onChange={(e) => setDailyAddLimit(Number(e.target.value) || 0)} />
+        </div>
+        <div className="col-span-2">
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单标的上限（% 占总仓位；可选）</label>
+          <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 4 }}>
+          {limits.map((l, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+              <Input className="h-8 w-40" value={l.code} placeholder="代码" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))} />
+              <Input className="h-8 w-36" value={l.name ?? ""} placeholder="名称（可选）" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+              <Input type="number" min={0} max={100} className="h-8 w-24" value={l.maxWeightPct ?? ""} placeholder="上限%" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, maxWeightPct: e.target.value === "" ? undefined : Number(e.target.value) || 0 } : x)))} />
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setLimits((p) => (p.length > 1 ? p.filter((_, j) => j !== i) : p))}>✕</Button>
+            </div>
+          ))}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setLimits((p) => [...p, { code: "" }])}>＋ 添加标的限制</Button>
+        </div>
+        <div className="col-span-2" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem", color: C.sub, fontWeight: 500 }}>
+            <input type="checkbox" checked={allowShort} onChange={(e) => setAllowShort(e.target.checked)} style={{ accentColor: C.accent }} />
+            🔻 允许做空（卖出可超持仓 → 负持仓）
+          </label>
+          <span style={{ fontSize: "0.72rem", color: C.muted }}>开启后卖出数量可超过当前持仓，超卖部分形成空头；未开启时超卖视为异常被拒绝</span>
+        </div>
+      </div>
+      {msg && <div style={{ color: msg.startsWith("❌") ? C.gain : C.text, fontSize: "0.85rem", marginTop: 6 }}>{msg}</div>}
+
+      <div style={{ display: "flex", gap: 8, width: "100%", justifyContent: "space-between", marginTop: 10 }}>
+        {initial ? (
+          <Button variant="destructive" size="sm" onClick={() => void remove()} disabled={deleting}>{deleting ? "删除中…" : "🗑 删除分组"}</Button>
+        ) : <span />}
+        <div style={{ display: "flex", gap: 8 }}>
+          {!inline && <Button variant="outline" size="sm" onClick={onClose}>取消</Button>}
+          <Button size="sm" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "💾 保存"}</Button>
+        </div>
+      </div>
+    </>
+  );
+
+  if (inline) return <div>{form}</div>;
 
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
@@ -539,55 +593,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved }: {
           <DialogTitle>{initial ? "分组设置" : "新建分组"}</DialogTitle>
           <DialogDescription>分组 = 交易的组织单元（如策略）；组内可实施仓位限制（总仓位 / 单日加仓 / 单标的上限）。</DialogDescription>
         </DialogHeader>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">分组名称</label>
-            <Input className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：稳健成长 / 网格策略" />
-          </div>
-          <div>
-            <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">总仓位上限（元）</label>
-            <Input type="number" min={0} className="h-8" value={totalCapital || ""} placeholder="0 = 不限" onChange={(e) => setTotalCapital(Number(e.target.value) || 0)} />
-          </div>
-          <div>
-            <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单日加仓上限（元）</label>
-            <Input type="number" min={0} className="h-8" value={dailyAddLimit || ""} placeholder="0 = 不限" onChange={(e) => setDailyAddLimit(Number(e.target.value) || 0)} />
-          </div>
-          <div className="col-span-2">
-            <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单标的上限（% 占总仓位；可选）</label>
-            <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 4 }}>
-            {limits.map((l, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                <Input className="h-8 w-40" value={l.code} placeholder="代码" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))} />
-                <Input className="h-8 w-36" value={l.name ?? ""} placeholder="名称（可选）" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-                <Input type="number" min={0} max={100} className="h-8 w-24" value={l.maxWeightPct ?? ""} placeholder="上限%" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, maxWeightPct: e.target.value === "" ? undefined : Number(e.target.value) || 0 } : x)))} />
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setLimits((p) => (p.length > 1 ? p.filter((_, j) => j !== i) : p))}>✕</Button>
-              </div>
-            ))}
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setLimits((p) => [...p, { code: "" }])}>＋ 添加标的限制</Button>
-          </div>
-          <div className="col-span-2" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem", color: C.sub, fontWeight: 500 }}>
-              <input type="checkbox" checked={allowShort} onChange={(e) => setAllowShort(e.target.checked)} style={{ accentColor: C.accent }} />
-              🔻 允许做空（卖出可超持仓 → 负持仓）
-            </label>
-            <span style={{ fontSize: "0.72rem", color: C.muted }}>开启后卖出数量可超过当前持仓，超卖部分形成空头；未开启时超卖视为异常被拒绝</span>
-          </div>
-        </div>
-        {msg && <div style={{ color: C.gain, fontSize: "0.85rem" }}>{msg}</div>}
-
-        <DialogFooter>
-          <div style={{ display: "flex", gap: 8, width: "100%", justifyContent: "space-between" }}>
-            {initial ? (
-              <Button variant="destructive" onClick={() => void remove()} disabled={deleting}>{deleting ? "删除中…" : "🗑 删除分组"}</Button>
-            ) : <span />}
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="outline" onClick={onClose}>取消</Button>
-              <Button onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "💾 保存"}</Button>
-            </div>
-          </div>
-        </DialogFooter>
+        {form}
       </DialogContent>
     </Dialog>
   );
@@ -1062,19 +1068,6 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
       ...(r.note && r.note.trim() ? { note: r.note.trim() } : {}),
     }));
 
-  // 复制上一交易日（作为今日模板）
-  const copyPrevDay = () => {
-    const groupEntries = allEntries.filter((e) => e.groupId === groupId && e.date < date && !e.initial);
-    const prevDate = groupEntries.map((e) => e.date).sort().pop();
-    if (!prevDate) { setCopiedMsg("没有更早的交易可复制"); return; }
-    const prevRows = groupEntries.filter((e) => e.date === prevDate).map((e) => ({
-      key: ++keySeq.current, code: e.code, name: e.name, action: e.action, quantity: e.quantity, price: e.price, fee: e.fee, note: e.note,
-    }));
-    setRows(prevRows.length > 0 ? prevRows : [newRow()]);
-    setResult(null);
-    setSummary(null);
-    setCopiedMsg(`已载入 ${prevDate} 的 ${prevRows.length} 笔，可直接修改后提交`);
-  };
   const clear = () => { setRows([newRow()]); setResult(null); setSummary(null); setCopiedMsg(null); setMsg(null); };
 
   // 📥 粘贴批量导入：每行「[买/卖] 代码 数量 价格 [手续费] [备注]」，空格/tab/逗号分隔（memo msvvn2v4）
@@ -1162,7 +1155,6 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
           </SelectContent>
         </Select>
         <Input type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
-        <Button variant="outline" size="sm" onClick={copyPrevDay}>📋 复制上一交易日</Button>
         <Button variant="outline" size="sm" onClick={() => { setPasteOpen(true); setPasteText(""); }}>📥 粘贴批量</Button>
         <Button variant="ghost" size="sm" onClick={clear}>🧹 清空</Button>
         <div style={{ flex: 1 }} />
@@ -1591,6 +1583,11 @@ export default function TradeV2Tool() {
   // 功能区 tab 视图感知：仅分组视图需把 analysis-global 映射为 analysis；全部视图 analysis/analysis-global 均有效
   const activeTab = isGroupView && tab === "analysis-global" ? "analysis" : tab;
   const selectedGroup = detail?.group ?? null;
+  // 流水跟随分组选中：选中分组 / 全部组合 时同步默认过滤（memo msvw40lt）
+  useEffect(() => {
+    if (isGroupView && selectedGroup) setFGroup(selectedGroup.id);
+    else if (!isGroupView) setFGroup("all");
+  }, [isGroupView, selectedGroup?.id]);
 
   const cur = useMemo(() => {
     if (isGroupView && analysis) {
@@ -1781,11 +1778,6 @@ export default function TradeV2Tool() {
   const pagedEntries = filteredEntries.slice(0, ledgerPage * PAGE_SIZE);
   const hasMore = pagedEntries.length < filteredEntries.length;
 
-  const openCreate = () => {
-    if (groups.length === 0) { setMsg("请先创建一个分组，再记交易"); return; }
-    setEditingEntry(null);
-    setEntryEditorOpen(true);
-  };
   const openEdit = (e: TradeV2Entry) => {
     setEditingEntry(e);
     setEntryEditorOpen(true);
@@ -1826,7 +1818,7 @@ export default function TradeV2Tool() {
         <h1 style={{ fontSize: "1.125rem", fontWeight: 700, margin: 0, color: C.text }}>📋 {isGroupView && selectedGroup ? selectedGroup.name : "仓位管理 v2"}</h1>
         <div style={{ fontSize: "0.82rem", color: C.sub }}>逐笔交易 → 仓位自动归并 · 分组约束 · 收益分析 · 每日交易单</div>
         <div style={{ flex: 1 }} />
-        <Button size="sm" onClick={openCreate}>➕ 记一笔交易</Button>
+        <Button size="sm" onClick={() => setTab("order")}>💼 去交易单</Button>
       </div>
 
       {msg && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.5rem 0.8rem", borderRadius: 8, fontSize: "0.84rem", fontWeight: 500, border: "1px solid " + C.gainBorder, background: C.gainBg, color: "#b91c1c" }}>{msg}</div>}
@@ -1857,7 +1849,7 @@ export default function TradeV2Tool() {
             })}
             <div style={{ flex: 1 }} />
             {isGroupView && selectedGroup && (
-              <Button size="sm" variant="outline" onClick={() => { setEditingGroup(selectedGroup); setGroupEditorOpen(true); }}>⚙️ 分组设置</Button>
+              <Button size="sm" variant="outline" onClick={() => setTab("group-settings")}>⚙️ 分组设置</Button>
             )}
             <Button size="sm" variant="outline" onClick={() => { setEditingGroup(null); setGroupEditorOpen(true); }}>🗂️ 新建分组</Button>
                       </div>
@@ -1869,6 +1861,7 @@ export default function TradeV2Tool() {
               <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分区</TabsTrigger>
               <TabsTrigger value="positions" style={{ flex: 1 }}>📈 仓位明细</TabsTrigger>
               <TabsTrigger value="ledger" style={{ flex: 1 }}>💹 交易流水</TabsTrigger>
+              {isGroupView && selectedGroup && <TabsTrigger value="group-settings" style={{ flex: 1 }}>⚙️ 分组设置</TabsTrigger>}
             </TabsList>
 
             {/* 共享统计区：Tab 条之下、各功能区内容之上（始终可见） */}
@@ -2096,6 +2089,37 @@ export default function TradeV2Tool() {
                 )}
               </CardContent></Card>
             </TabsContent>
+            {isGroupView && selectedGroup && (
+              <TabsContent value="group-settings">
+                <Card><CardContent>
+                  <SectionTitle icon="⚙️" color={C.indigo}>分组设置 · {selectedGroup.name}（memo msvvra4c tab 化）</SectionTitle>
+                  {/* 分组概览统计（丰富内容） */}
+                  {analysis && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+                      <div style={{ background: C.panel, borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+                        <div style={{ fontSize: "0.72rem", color: C.muted }}>组内标的</div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.text }}>{analysis.positions.length} 个</div>
+                      </div>
+                      <div style={{ background: C.panel, borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+                        <div style={{ fontSize: "0.72rem", color: C.muted }}>交易笔数</div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.text }}>{analysis.deals.length} 笔</div>
+                      </div>
+                      <div style={{ background: C.panel, borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+                        <div style={{ fontSize: "0.72rem", color: C.muted }}>当前市值</div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.accent }}>{cny(analysis.positions.reduce((s, p) => s + p.marketValue, 0))}</div>
+                      </div>
+                      <div style={{ background: C.panel, borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+                        <div style={{ fontSize: "0.72rem", color: C.muted }}>占用总仓位</div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: selectedGroup.totalCapital > 0 ? C.text : C.muted }}>
+                          {selectedGroup.totalCapital > 0 ? pct((analysis.positions.reduce((s, p) => s + p.marketValue, 0) / selectedGroup.totalCapital) * 100) : "未设上限"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <GroupEditor inline open initial={selectedGroup} onSaved={() => void reloadAll()} groups={groups} onClose={() => {}} />
+                </CardContent></Card>
+              </TabsContent>
+            )}
           </Tabs>
         </>
       )}

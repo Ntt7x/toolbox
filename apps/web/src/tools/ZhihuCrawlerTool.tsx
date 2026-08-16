@@ -444,10 +444,10 @@ export default function ZhihuCrawlerTool() {
             <input
               type="number"
               min={1}
-              max={100}
+              max={10000}
               value={limit}
-              onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 20)))}
-              style={{ width: 70, padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1" }}
+              onChange={(e) => setLimit(Math.max(1, Math.min(10000, Number(e.target.value) || 20)))}
+              style={{ width: 80, padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid #cbd5e1" }}
             />
           </label>
           <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>

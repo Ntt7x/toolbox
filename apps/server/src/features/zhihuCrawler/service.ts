@@ -776,8 +776,8 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
 
   const types = opts.types?.length ? opts.types : (["answer", "article", "pin"] as ZhihuCrawlKind[]);
   // 每类目标（默认 20，上限 100；0=不限制）；单次任务总数硬上限（默认 100）
-  const perKindLimit = opts.limit === undefined ? 20 : Math.min(Math.max(opts.limit, 0), 100); // 0=不限制
-  const maxTotal = Math.min(Math.max(opts.maxTotal ?? 100, 1), 500);
+  const perKindLimit = opts.limit === undefined ? 20 : Math.min(Math.max(opts.limit, 0), 10000); // 0=不限（memo msvvpw3a 上限 100→10000）制
+  const maxTotal = Math.min(Math.max(opts.maxTotal ?? 100, 1), 10000); // memo msvvpw3a 上限 500→10000
   const progressId = opts.progressId ?? `zhp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const deadline = Date.now() + (opts.deadlineMs ?? 20 * 60 * 1000);
 
