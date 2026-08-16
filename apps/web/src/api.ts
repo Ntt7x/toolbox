@@ -282,6 +282,8 @@ export const api = {
     request<DocFolderMutateResult>("/tools/docs/folder", jsonInit("POST", parentId ? { name, parentId } : { name })),
   docsFolderRename: (id: string, name: string) =>
     request<DocFolderMutateResult>(`/tools/docs/folder/${encodeURIComponent(id)}`, jsonInit("PUT", { name })),
+  docsRename: (id: string, name: string) =>
+    request<DocsMutateResult>(`/tools/docs/${encodeURIComponent(id)}/rename`, jsonInit("PUT", { name })),
   docsFolderMove: (id: string, parentId: string | null) =>
     request<DocFolderMutateResult>(`/tools/docs/folder/${encodeURIComponent(id)}/move`, jsonInit("PUT", { parentId })),
   docsFolderDelete: (id: string) =>

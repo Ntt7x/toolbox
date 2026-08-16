@@ -62,6 +62,17 @@ export function registerDocsFeature(app: Hono) {
     return c.json({ ok: true, item: it, ...(it.type === "md" ? { content: ctx.docStore.getContent(it.id) } : {}) });
   });
 
+  // 重命名文档（memo msvhz9in）
+  app.put(`${API_PREFIX}/tools/docs/:id/rename`, async (c: Context) => {
+    const ctx = await getDocsCtx();
+    const body = await c.req.json().catch(() => ({}));
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return c.json({ ok: false, message: "名称不能为空" }, 400);
+    const items = ctx.docStore.renameItem(c.req.param("id")!, name);
+    if (!items) return c.json({ ok: false, message: "文档不存在" }, 404);
+    return c.json({ ok: true, items, folders: ctx.docStore.listFolders(), tags: ctx.docIndex.listTags() });
+  });
+
   // pdf 二进制下载/预览
   app.get(`${API_PREFIX}/tools/docs/:id/file`, async (c: Context) => {
     const ctx = await getDocsCtx();

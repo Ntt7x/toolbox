@@ -89,6 +89,8 @@ export default function DocsTool() {
   // 新建文件夹
   const [newFolderName, setNewFolderName] = useState("");
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
+const [editingItem, setEditingItem] = useState<string | null>(null);          // 文档重命名（memo msvhz9in）
+const [editingItemName, setEditingItemName] = useState("");
   const [editFolderName, setEditFolderName] = useState("");
   // 右键菜单
   const [menu, setMenu] = useState<{ x: number; y: number; kind: "folder" | "item"; id: string } | null>(null);
@@ -293,6 +295,15 @@ export default function DocsTool() {
     } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
   };
 
+  const renameItem = async (id: string) => {
+    try {
+      const r = await api.docsRename(id, editingItemName.trim());
+      setItems(r.items);
+      setEditingItem(null);
+      setMsg({ kind: "ok", text: "✅ 已重命名" });
+    } catch (e) { setMsg({ kind: "err", text: errMsg(e) }); }
+  };
+
   const removeFolder = async (f: DocFolder) => {
     const subCount = folders.filter((x) => x.parentId === f.id).length;
     if (!confirm(`将文件夹「${f.name}」移到回收站？${subCount > 0 ? ` ${subCount} 个子文件夹及其中文档一并移入，` : ""}可恢复`)) return;
@@ -424,6 +435,7 @@ export default function DocsTool() {
     return [
       { label: "预览", icon: "👁️", onClick: () => void openPreview(it) },
       { label: "详情", icon: "ℹ️", onClick: () => setDetailDoc(it) },
+      { label: "重命名", icon: "✎", onClick: () => { setEditingItem(it.id); setEditingItemName(it.name); } },
       { label: "添加标签", icon: "#", onClick: () => { const t = prompt("添加标签", ""); if (t) void addTagToItem(it, t); } },
       { label: "移到回收站", icon: "🗑️", danger: true, onClick: () => void removeItem(it) },
     ];
@@ -470,7 +482,19 @@ export default function DocsTool() {
     >
       <span style={{ width: 14, textAlign: "center", flexShrink: 0 }} />
       <span style={{ width: 14, textAlign: "center", flexShrink: 0 }}>{it.type === "pdf" ? "📕" : "📄"}</span>
-      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {editingItem === it.id ? (
+          <input
+            autoFocus
+            value={editingItemName}
+            onChange={(e) => setEditingItemName(e.target.value)}
+            onBlur={() => void renameItem(it.id)}
+            onKeyDown={(e) => { if (e.key === "Enter") void renameItem(it.id); if (e.key === "Escape") setEditingItem(null); }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", boxSizing: "border-box", fontSize: "0.82rem", padding: "0.15rem 0.4rem", borderRadius: 4, border: "1px solid #3b82f6" }}
+          />
+        ) : it.name}
+      </span>
       {it.tags.slice(0, 2).map((tg) => (
         <span key={tg} style={{ fontSize: "0.6rem", background: "#eef2ff", color: "#4f46e5", borderRadius: 4, padding: "0.05rem 0.3rem", flexShrink: 0 }}>{tg}</span>
       ))}

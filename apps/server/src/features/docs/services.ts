@@ -193,6 +193,19 @@ export class DocStoreService extends Service {
     return this.listItems("all").find((x) => x.id === id) ?? null;
   }
 
+  /** 重命名文档（memo msvhz9in） */
+  renameItem(id: string, name: string): DocItem[] | null {
+    const trimmed = name.trim();
+    const items = this.listItems("all");
+    const it = items.find((x) => x.id === id);
+    if (!it) return null;
+    if (!trimmed) return this.listItems();
+    it.name = trimmed;
+    it.updatedAt = new Date().toISOString();
+    kvSet(DOCS_META_KEY, { items });
+    return this.listItems();
+  }
+
   getContent(id: string): string {
     return kvGet<string>(DOCS_CONTENT_PREFIX + id) ?? "";
   }

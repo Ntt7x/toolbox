@@ -156,3 +156,17 @@ test("extractMdTitle：非 LLM 提取首个 markdown 标题（memo msuz05fu-3）
   assert.equal(extractMdTitle(""), null, "空内容返回 null");
   assert.equal(extractMdTitle("# 带 *斜体* 的标题"), "带 斜体 的标题", "清理 markdown 符号");
 });
+
+test("重命名文档：改名/空名保留/不存在返回 null（memo msvhz9in）", async () => {
+  const ctx = await makeCtx();
+  {
+    const items = ctx.docStore.listItems();
+    if (items.length === 0) { assert.ok(true, "无文档可测（环境为空）"); return; }
+    const target = items[0];
+    const after = ctx.docStore.renameItem(target.id, "重命名后.md");
+    assert.ok(after && after.some((i) => i.id === target.id && i.name === "重命名后.md"), "改名生效");
+    const blank = ctx.docStore.renameItem(target.id, "   ");
+    assert.ok(blank && blank.some((i) => i.id === target.id && i.name === "重命名后.md"), "空名保留原名");
+    assert.equal(ctx.docStore.renameItem("no-such-id", "x"), null, "不存在返回 null");
+  }
+});
