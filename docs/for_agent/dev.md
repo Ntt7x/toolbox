@@ -26,7 +26,7 @@
 1. **加载规范**：读 `docs/for_agent/README.md`（文档地图）定位本次任务涉及的文档；本文件（dev.md）§0-§5 + §6.1/6.5/6.7 为常驻核心规范（§6 其余小节涉足 LLM/脚本时按需）；涉足专业领域（Reasonix / 行情 / 知乎 / 知识库 / trade-plan / 浏览器自动化）时按 §7 索引**按需加载**对应 domains 文档。
 2. **查状态**：`git status` / `git branch -a`——当前分支 + 是否有待验收分支（§4）。
 3. **读历史**：先看 `docs/for_agent/history/INDEX.md`（主题索引）或最近一份归档，了解已完成/遗留（§8）。
-4. **读备忘录**：`toolbox memo stats` + `list`——处理 open 改进备忘录（§8.0）。
+4. **读备忘录（每会话必做）**：`toolbox memo stats` + `list`——**有 open 必须先处理**（完整流程见 §8.0；收尾前必须 open=0，否则不许提交）。
 5. **建分支**：需要改动一律 `git switch -c <type>/<简述>`（§4.1，禁止 main 直改）。
 6. **验证→报告→等确认后提交**：L0 typecheck → 按 §5.1 分级验证 → **报告给用户（不自动提交）** → 用户确认分支处理正确后 → `toolbox commit "msg"`（自动 add+commit+push）→ 等用户验收再合并 main（§4）。
 
@@ -504,6 +504,10 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   收尾前 `memo.mjs list` 确认 open=0；曾发生「改完忘标记 done」导致用户重复催促，
   处理与标记 done 视为同一动作、不可拆分
 - 处理完的条目在 memo:items 里标记 status=done；类型字段 `kind`（缺省 fix，旧数据兼容）
+
+**memo 格式约定（页面前缀规范）**：
+- 每条 fix 文本建议 `[页面] 问题描述`——`stats` 会按 `[页面]` 前缀分组，`bypage <关键词>` 按页面过滤。
+- 用户从**右下浮窗**新增的 memo **自动带页面前缀**（浮窗读取当前路由页名）；手动/CLI 新增需自行写 `[页面]` 前缀，不写则归入「（无页面标签）」。
 
 **memo 复用脚本指引（2026-08-10 强化）**——处理 memo 全流程用 `scripts/dev-utils/memo.mjs`：
 - **开工感知**：`memo.mjs stats`（open/doing/done 统计 + 未完成按页面分组）→ `memo.mjs list` 看明细

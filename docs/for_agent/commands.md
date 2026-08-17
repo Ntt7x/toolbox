@@ -29,6 +29,7 @@
 
 | 命令 | 用途 |
 |---|---|
+| `toolbox memo add <text>` | 新增 fix 型备忘录（Agent 用；格式建议 `[页面] 问题`，用户浮窗会自动加页面前缀） |
 | `toolbox memo stats` / `list` | 改进备忘录统计 / 明细（每轮处理 memo 必用） |
 | `toolbox memo bypage <关键词>` | 按页面过滤未完成 memo |
 | `toolbox memo done <id>...` | 处理完当场标记 done（硬性，dev.md §8.0） |

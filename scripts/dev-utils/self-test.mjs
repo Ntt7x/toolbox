@@ -53,8 +53,17 @@ let badExit = null;
 try { execSync(`${PATCH} _t_bad.json --apply`, { stdio: "pipe" }); } catch (e) { badExit = e.status; }
 t("count 不匹配 → 失败不写盘", badExit !== 0 && readFileSync("_t_p2.txt", "utf8") === "X\nY1\nZ\n");
 
+// 6. memo CLI 冒烟（读操作，不 done 不改数据——防漂移）
+const MEMO = "node scripts/dev-utils/memo.mjs";
+const memoList = execSync(`${MEMO} list`, { stdio: "pipe" }).toString();
+t("memo list 可用（open 统计输出）", /open: \d+ 条/.test(memoList), memoList.split("\n")[0] ?? "");
+const memoStats = execSync(`${MEMO} stats`, { stdio: "pipe" }).toString();
+t("memo stats 可用（open/doing/done 统计）", /memo 统计：open \d+/.test(memoStats), memoStats.split("\n")[0] ?? "");
+const memoBypage = execSync(`${MEMO} bypage 页面不存在xyz`, { stdio: "pipe" }).toString();
+t("memo bypage 可用（空关键词 0 条不崩）", /0 条/.test(memoBypage), memoBypage.split("\n")[0] ?? "");
+
 // 清理
 for (const f of ["_t_p1.txt", "_t_p2.txt", "_t_crlf.txt", "_t_crlf2.txt", "_t_patch.json", "_t_crlf_patch.json", "_t_c0.json", "_t_bad.json"]) if (existsSync(f)) unlinkSync(f);
 
-console.log(fail === 0 ? "\n═══ patch.mjs 自测 ALL-PASS ═══" : `\n═══ ${fail} 项失败 ═══`);
+console.log(fail === 0 ? "\n═══ dev-utils 自测 ALL-PASS（patch + memo CLI）═══" : `\n═══ ${fail} 项失败 ═══`);
 process.exit(fail === 0 ? 0 : 1);
