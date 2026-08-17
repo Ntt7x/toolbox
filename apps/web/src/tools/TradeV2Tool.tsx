@@ -1581,7 +1581,6 @@ export default function TradeV2Tool() {
   const [editingGroup, setEditingGroup] = useState<TradeV2Group | null>(null);
     const [stockDlg, setStockDlg] = useState<{ code: string; name?: string } | null>(null);
 
-  const [fGroup, setFGroup] = useState<string>("all");
   const [fAction, setFAction] = useState<string>("all");
   const [fCode, setFCode] = useState("");
   const [fFrom, setFFrom] = useState("");
@@ -1650,11 +1649,7 @@ export default function TradeV2Tool() {
   // 功能区 tab 视图感知：仅分组视图需把 analysis-global 映射为 analysis；全部视图 analysis/analysis-global 均有效
   const activeTab = isGroupView && tab === "analysis-global" ? "analysis" : tab;
   const selectedGroup = detail?.group ?? null;
-  // 流水跟随分组选中：选中分组 / 全部组合 时同步默认过滤（memo msvw40lt）
-  useEffect(() => {
-    if (isGroupView && selectedGroup) setFGroup(selectedGroup.id);
-    else if (!isGroupView) setFGroup("all");
-  }, [isGroupView, selectedGroup?.id]);
+  // 流水分组过滤已由 filteredEntries 直接跟随顶部 selectedId（memo msx4rs60），无需额外同步
 
   const cur = useMemo(() => {
     if (isGroupView && analysis) {
@@ -1830,15 +1825,16 @@ export default function TradeV2Tool() {
   }, [analysis]);
 
   const filteredEntries = useMemo(() => {
+    // 分组过滤跟随顶部选中分组（selectedId；memo msx4rs60：功能区 tab 不再单独选分组）
     return entries.filter((e) => {
-      if (fGroup !== "all" && e.groupId !== fGroup) return false;
+      if (selectedId !== "all" && e.groupId !== selectedId) return false;
       if (fAction !== "all" && e.action !== fAction) return false;
       if (fCode.trim() && !e.code.includes(fCode.trim()) && !(e.name ?? "").includes(fCode.trim())) return false;
       if (fFrom && e.date < fFrom) return false;
       if (fTo && e.date > fTo) return false;
       return true;
     });
-  }, [entries, fGroup, fAction, fCode, fFrom, fTo]);
+  }, [entries, selectedId, fAction, fCode, fFrom, fTo]);
 
   // 流水分页：每页 100（长流水不卡顿）
   const PAGE_SIZE = 100;
@@ -2069,16 +2065,9 @@ export default function TradeV2Tool() {
                   onDeleteEntry={(e) => void removeEntry(e)}
                 />
               )}
-              <DailySummaryCard entries={entries} />
+              <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
               <Card><CardContent>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-                  <Select value={fGroup} onValueChange={(v: string | null) => setFGroup(v ?? "all")}>
-                    <SelectTrigger className="w-36"><SelectValue>{fGroup === "all" ? "全部分组" : groups.find((g) => g.id === fGroup)?.name ?? "分组"}</SelectValue></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">全部分组</SelectItem>
-                      {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
                   <Select value={fAction} onValueChange={(v: string | null) => setFAction(v ?? "all")}>
                     <SelectTrigger className="w-28"><SelectValue>{fAction === "all" ? "全部操作" : fAction === "sell" ? "卖出" : "买入"}</SelectValue></SelectTrigger>
                     <SelectContent>
