@@ -96,7 +96,7 @@ const cny2 = (v: number | undefined | null) => {
 const pct = (v: number | undefined | null, digits = 1) => (typeof v === "number" && isFinite(v) ? `${v.toFixed(digits)}%` : "—");
 const pctSigned = (v: number | undefined | null, digits = 1) => (typeof v === "number" && isFinite(v) ? (v > 0 ? "+" : "") + `${v.toFixed(digits)}%` : "—");
 const qtyFmt = (v: number) => v.toLocaleString("zh-CN");
-const costFmt = (v?: number) => (typeof v === "number" && !isNaN(v) ? String(+v.toFixed(6)) : "—");
+const costFmt = (v?: number) => (typeof v === "number" && !isNaN(v) ? String(+v.toFixed(3)) : "—");
 
 function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -665,7 +665,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
     <Card><CardContent>
       {exportName && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
-          <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "占总仓位", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, p.avgCost, p.latestPrice ?? "", Math.round(p.marketValue * 100) / 100, weightOf(p) !== undefined ? Math.round(weightOf(p)! * 100) / 100 : "", Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
+          <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "占总仓位", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, +p.avgCost.toFixed(3), p.latestPrice ? +p.latestPrice.toFixed(3) : "", Math.round(p.marketValue * 100) / 100, weightOf(p) !== undefined ? Math.round(weightOf(p)! * 100) / 100 : "", Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
         </div>
       )}
       <Table>
@@ -1053,7 +1053,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
     try {
       const r = await api.watchlistQuotes([code]);
       const q = r.quotes.find((x) => typeof (x as any)?.price === "number" && (x as any).price > 0);
-      if (q) setRow(key, { price: (q as any).price });
+      if (q) setRow(key, { price: +((q as any).price).toFixed(3) });
     } catch { /* 行情失败静默 */ } finally {
       setPriceBusy(null);
     }
