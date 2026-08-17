@@ -6,6 +6,7 @@
 // ============================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
+import { calcFee } from "./tradeV2Fee";
 import type {
   TradeV2Alert,
   TradeV2CheckResult,
@@ -998,6 +999,8 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
   const keySeq = useRef(0);
   const newRow = (): OrderRow => ({ key: ++keySeq.current, code: "", action: "buy", quantity: 0, price: 0 });
   const [groupId, setGroupId] = useState(initialGroup.id);
+  // 跟随分组 tab（memo mswvpykt）：左侧切分组时交易单分组自动跟随（组件不重挂，需显式同步）
+  useEffect(() => { setGroupId(initialGroup.id); }, [initialGroup.id]);
   const [date, setDate] = useState(nextTradingDay());
   const [rows, setRows] = useState<OrderRow[]>([newRow()]);
   const [result, setResult] = useState<TradeV2CheckResult | null>(null);
@@ -1054,6 +1057,13 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
     }
   };
 
+  // 每行手续费：用户手填优先，否则自动按规则算（memo msww20u5：ETF 万1 最低 0.1 / 个股 万1.154 最低 5）
+  const rowFee = (r: OrderRow): number | undefined => {
+    if (r.fee !== undefined && r.fee > 0) return r.fee;
+    const auto = calcFee(r.code, r.quantity, r.price);
+    return auto > 0 ? auto : undefined;
+  };
+
   const valid = rows.filter((r) => r.code.trim() && r.quantity > 0 && r.price > 0);
   const drafts = (): TradeV2EntryDraft[] =>
     valid.map((r) => ({
@@ -1064,7 +1074,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
       action: r.action,
       quantity: r.quantity,
       price: r.price,
-      ...(r.fee && r.fee > 0 ? { fee: r.fee } : {}),
+      ...(rowFee(r) ? { fee: rowFee(r) } : {}),
       ...(r.note && r.note.trim() ? { note: r.note.trim() } : {}),
     }));
 
@@ -1133,7 +1143,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
       const r = await api.tradeV2BatchEntries(drafts(), false);
       setResult(r.result ?? null);
       setSummary(r.daySummary ?? null);
-      setMsg(`✅ 已提交 ${r.createdCount} 笔交易，仓位已自动归并重算`);
+      setMsg(`✅ 已提交 ${r.createdCount} 笔交易，仓位已自动归并重算（买入按加权平均重算均价、手续费摊入成本；卖出仅减数量、不影响均价）`);
       onSubmitted();
       setRows([newRow()]);
       setCopiedMsg(null);
@@ -1181,8 +1191,8 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
             <TableHead>标的（Enter 跳到下一格）</TableHead>
             <TableHead>操作</TableHead>
             <TableHead className="w-28">数量（股）</TableHead>
-            <TableHead className="w-28">价格（元）</TableHead>
-            <TableHead className="w-24">手续费</TableHead>
+            <TableHead className="w-40">价格（元）</TableHead>
+            <TableHead className="w-28">手续费（自动算）</TableHead>
             <TableHead>备注</TableHead>
             <TableHead className="w-10" />
           </TableRow>
@@ -1209,7 +1219,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
                   <Button variant="ghost" size="icon" className="h-8 w-7 shrink-0" title="填入最新价" disabled={!r.code.trim() || priceBusy === r.code.trim()} onClick={() => void fillLivePrice(r.key, r.code.trim())}>{priceBusy === r.code.trim() ? "…" : "⚡"}</Button>
                 </span>
               </TableCell>
-              <TableCell><Input ref={setRef(r.key, "fee")} type="number" min={0} step={0.01} className="h-8" value={r.fee ?? ""} placeholder="0" onChange={(e) => setRow(r.key, { fee: e.target.value === "" ? undefined : Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "fee"); }} /></TableCell>
+              <TableCell><Input ref={setRef(r.key, "fee")} type="number" min={0} step={0.01} className="h-8" value={rowFee(r) ?? ""} placeholder="0" onChange={(e) => setRow(r.key, { fee: e.target.value === "" ? undefined : Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "fee"); }} title={rowFee(r) !== r.fee ? "自动按佣金规则计算（ETF 万1 最低0.1 / 个股 万1.154 最低5）；手填可覆盖" : undefined} /></TableCell>
               <TableCell><Input ref={setRef(r.key, "note")} className="h-8" value={r.note ?? ""} onChange={(e) => setRow(r.key, { note: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "note"); }} /></TableCell>
               <TableCell><Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setRows((p) => (p.length > 1 ? p.filter((x) => x.key !== r.key) : p))}>✕</Button></TableCell>
             </TableRow>
@@ -1338,6 +1348,60 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
 
 
 // ---------- 分组贡献表（全部 = 组合整体统计） ----------
+
+/** 日度交易汇总（memo msww7ny3）：按日分组汇总买卖金额/手续费/笔数，默认选中最近交易日 */
+function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
+  const byDate = useMemo(() => {
+    const m = new Map<string, { buy: number; sell: number; fee: number; count: number; codes: Set<string> }>();
+    for (const e of entries) {
+      const d = e.date || "—";
+      const cur = m.get(d) ?? { buy: 0, sell: 0, fee: 0, count: 0, codes: new Set<string>() };
+      const amount = e.quantity * e.price;
+      const fee = typeof e.fee === "number" ? e.fee : 0;
+      if (e.action === "buy") cur.buy += amount + fee; else cur.sell += amount - fee;
+      cur.fee += fee; cur.count++; cur.codes.add(e.code);
+      m.set(d, cur);
+    }
+    return [...m.entries()].map(([date, v]) => ({ date, ...v, codes: v.codes.size })).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [entries]);
+  const [sel, setSel] = useState<string>("");
+  useEffect(() => {
+    if (byDate.length > 0 && !byDate.some((d) => d.date === sel)) setSel(byDate[0]!.date);
+  }, [byDate, sel]);
+  if (byDate.length === 0) return null;
+  const cur = byDate.find((d) => d.date === sel);
+  const net = cur ? cur.sell - cur.buy : 0;
+  return (
+    <Card><CardContent>
+      <div style={{ fontSize: "0.85rem", fontWeight: 700, color: C.text, marginBottom: 8 }}>🗓️ 日度交易汇总</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        {byDate.slice(0, 15).map((d) => (
+          <button key={d.date} onClick={() => setSel(d.date)}
+            style={{ padding: "0.25rem 0.6rem", borderRadius: 999, fontSize: "0.75rem", border: `1px solid ${sel === d.date ? C.accent : C.border}`, background: sel === d.date ? "#eff6ff" : "#fff", color: sel === d.date ? C.accent : C.sub, cursor: "pointer" }}>
+            {d.date}（{d.count} 笔）
+          </button>
+        ))}
+      </div>
+      {cur && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+          {[
+            { label: "笔数", value: `${cur.count} 笔` },
+            { label: "买入金额（含费）", value: cny2(cur.buy) },
+            { label: "卖出回款（含费）", value: cny2(cur.sell) },
+            { label: "手续费合计", value: cny2(cur.fee) },
+            { label: "净流入（卖−买）", value: cny2(net), tone: net >= 0 ? C.gain : C.loss },
+            { label: "涉及标的", value: `${cur.codes} 只` },
+          ].map((it) => (
+            <div key={it.label} style={{ background: "#f8fafc", borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7" }}>
+              <div style={{ fontSize: "0.68rem", color: C.muted }}>{it.label}</div>
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: it.tone ?? C.text }}>{it.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </CardContent></Card>
+  );
+}
 
 function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV2GroupSummary[]; globalMv: number; onSelect: (id: string) => void }) {
   if (groups.length === 0) return null;
@@ -2002,6 +2066,7 @@ export default function TradeV2Tool() {
                   onDeleteEntry={(e) => void removeEntry(e)}
                 />
               )}
+              <DailySummaryCard entries={entries} />
               <Card><CardContent>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
                   <Select value={fGroup} onValueChange={(v: string | null) => setFGroup(v ?? "all")}>
