@@ -136,11 +136,16 @@ export function buildPositions(entries: TradeV2Entry[]): TradeV2Position[] {
   for (const [code, st] of states) {
     if (st.qty === 0) continue;
     const avgCost = st.qty !== 0 ? st.costBasis / st.qty : 0;
+    // 成本均价（摊薄口径，2026-08-17）：把已实现盈亏摊入剩余持仓
+    // = (总成本基数 − 已实现盈亏) / 数量 ≡ (累计买入含费 − 累计卖出回款含费) / 剩余数量
+    // 与「买入均价 avgCost」区分：卖出盈利后成本均价下降（接近券商「摊薄成本」显示）
+    const costAvg = st.qty !== 0 ? (st.costBasis - st.realized) / st.qty : 0;
     out.push({
       code,
       ...(nameOf.has(code) ? { name: nameOf.get(code) } : {}),
       quantity: st.qty,
       avgCost,
+      costAvg,
       costValue: st.qty * avgCost,
       marketValue: st.qty * avgCost,
       unrealizedPnl: 0,

@@ -639,7 +639,7 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 // ---------- 仓位明细表 ----------
 
 function PositionsTable({ positions, groupView, onRowClick, exportName }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string }) {
-  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
+  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
   const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
   const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
@@ -673,7 +673,8 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
           <TableRow>
             <TableHead>标的（点击行看交易历史）</TableHead>
             {sortableHead("数量", "quantity", "text-right")}
-            {sortableHead("均价", "avgCost", "text-right")}
+            {sortableHead("买入均价", "avgCost", "text-right")}
+            {sortableHead("成本均价", "costAvg", "text-right")}
             <TableHead className="text-right">最新价</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
             {sortableHead("占总仓位", "weightPct", "text-right")}
@@ -688,6 +689,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
               <TableCell><NameCode name={p.name} code={p.code} />{p.quantity < 0 ? <Badge style={{ marginLeft: 6, background: "#fff7ed", color: "#c2410c" }} title="空头（做空）：数量为负，价格下跌盈利">空头</Badge> : p.avgCost < 0 ? <Badge style={{ marginLeft: 6, background: "#faf5ff", color: "#7c3aed" }} title="负成本（已回本/做空记账）：盈亏率无意义">负成本</Badge> : null}</TableCell>
               <TableCell className="text-right">{qtyFmt(Math.abs(p.quantity))}{p.quantity < 0 ? <span style={{ color: "#c2410c", fontSize: "0.72rem", marginLeft: 4 }}>卖</span> : null}</TableCell>
               <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
+              <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降" : "未持仓"}>{p.costAvg !== undefined ? costFmt(p.costAvg) : "—"}</TableCell>
               <TableCell className="text-right">{p.latestPrice ? costFmt(p.latestPrice) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
@@ -1477,7 +1479,8 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
         {pos && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", background: C.panel, borderRadius: 10, padding: "0.6rem 0.8rem", fontSize: "0.8rem", color: C.sub }}>
             <span>持仓 <b style={{ color: C.text }}>{qtyFmt(pos.quantity)} 股</b></span>
-            <span>均价 <b style={{ color: C.text }}>{costFmt(pos.avgCost)}</b></span>
+            <span>买入均价 <b style={{ color: C.text }}>{costFmt(pos.avgCost)}</b></span>
+            {pos.costAvg !== undefined && <span title="摊薄成本：已实现盈亏摊入剩余持仓">成本均价 <b style={{ color: pos.costAvg < pos.avgCost ? C.gain : C.text }}>{costFmt(pos.costAvg)}</b></span>}
             <span>市值 <b style={{ color: C.text }}>{cny2(pos.marketValue)}</b></span>
             <span>已实现 <b style={{ color: pnlColor(pos.realizedPnl) }}>{pnlText(pos.realizedPnl)}</b></span>
             <span>未实现 <b style={{ color: pnlColor(pos.unrealizedPnl) }}>{pnlText(pos.unrealizedPnl)}</b></span>

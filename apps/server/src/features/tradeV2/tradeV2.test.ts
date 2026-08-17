@@ -93,6 +93,33 @@ test("重放：卖出计入已实现盈亏、摊余成本不变", () => {
   assert.equal(st.costBasis, 600);
 });
 
+test("成本均价（摊薄口径）：买入均价不变、成本均价随卖出盈利下降（2026-08-17）", () => {
+  const entries = [
+    mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),
+    mkEntry({ code: "600519", date: "2026-01-10", action: "sell", quantity: 4, price: 130, fee: 5 }),
+  ];
+  const pos = buildPositions(entries)[0]!;
+  // 买入均价 = 100（卖出不改）
+  assert.equal(pos.avgCost, 100);
+  // 成本均价 = (costBasis − realized) / qty = (600 − 115) / 6 = 80.83（已实现盈利摊入 → 下降）
+  assert.ok(pos.costAvg !== undefined);
+  assert.ok(Math.abs(pos.costAvg! - 80.83) < 0.01, `costAvg=${pos.costAvg}`);
+});
+
+test("成本均价：159866 负成本场景（期初负价 + 卖出盈利 → 成本均价更负）", () => {
+  const entries = [
+    mkEntry({ code: "159866", date: "2026-08-15", action: "buy", quantity: 2100, price: -0.117 }),
+    mkEntry({ code: "159866", date: "2026-08-17", action: "sell", quantity: 1300, price: 1.753, fee: 0.23 }),
+  ];
+  const pos = buildPositions(entries)[0]!;
+  assert.equal(pos.quantity, 800);
+  // 买入均价 = -0.117（期初负价，卖出不改）
+  assert.ok(Math.abs(pos.avgCost - -0.117) < 1e-9);
+  // 成本均价 = (costBasis − realized) / 800；costBasis = -245.7 + 152.1 = -93.6；realized = 卖出 2278.9+0.23费…
+  assert.ok(pos.costAvg !== undefined);
+  assert.ok(pos.costAvg! < pos.avgCost, `costAvg=${pos.costAvg} 应小于买入均价 ${pos.avgCost}`);
+});
+
 test("重放：卖出超持仓 → findOverSell 报告", () => {
   const entries = [
     mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 }),

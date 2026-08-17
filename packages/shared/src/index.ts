@@ -1865,6 +1865,9 @@ export interface TradeV2Position {
   quantity: number;
   /** 加权平均成本（含手续费摊入；空头为开空均价，正数） */
   avgCost: number;
+  /** 成本均价（摊薄口径，2026-08-17）：把已实现盈亏摊入剩余持仓 = (总成本基数−已实现盈亏)/数量；
+   *  与 avgCost（买入均价）区分——卖出盈利后成本均价下降（券商「摊薄成本」显示） */
+  costAvg?: number;
   /** 持仓成本（= quantity × avgCost；空头为负 = 空头占用） */
   costValue: number;
   /** 最新价（行情可得时） */

@@ -9,7 +9,9 @@
 // ============================================================
 import { call, BASE } from "./api.mjs";
 
-const [method, p, bodyRaw] = process.argv.slice(2);
+const argsAll = process.argv.slice(2);
+const fullOut = argsAll.includes("--full");
+const [method, p, bodyRaw] = argsAll.filter((a) => a !== "--full");
 if (!method || !p) {
   console.error(`用法: node scripts/dev-utils/api-cli.mjs <GET|POST|PUT|DELETE> <path> [json-body]\nBASE: ${BASE}`);
   process.exit(1);
@@ -36,7 +38,6 @@ if (bodyRaw) {
 }
 // BASE 已含 /api，path 直接拼接（如 /health 或 health）
 const fullPath = p.startsWith("/") ? p : "/" + p;
-const fullOut = process.argv.slice(2).includes("--full");
 try {
   const { status, data } = await call(fullPath, method.toUpperCase(), body);
   console.log(`HTTP ${status}`);
