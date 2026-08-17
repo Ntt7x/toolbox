@@ -6,6 +6,7 @@
 //   node scripts/dev-utils/commit.mjs "feat(x): 说明"
 // 多行：消息内用 \n 分隔；自动 git add -A → commit → push（--no-add 跳过 add）。
 // push 失败不丢提交：保留本地提交、报告原因、exit 非 0（§4.2「提交即推送」）。
+// 2026-08-16 增强：垃圾文件检测（cmd 产物畸形文件名防混入提交）+ 尾部引号清理。
 // ============================================================
 import { spawnSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
@@ -20,6 +21,23 @@ const msg = args.filter((a) => !a.startsWith("--")).join(" ").replace(/\\n/g, "\
 
 if (!msg) {
   console.error("用法: node scripts/dev-utils/commit.mjs <提交消息> [--no-add] [--no-push]\n多行用 \\n 分隔");
+  process.exit(1);
+}
+
+// ---------- 垃圾文件检测（2026-08-16） ----------
+// Windows cmd 下 node -e 失败 / 重定向 / 引号剥离常产生畸形文件（$null、{xxx、含括号引号），
+// 曾多次混入提交后 amend/清理。提交前拦截，避免污染历史。
+const JUNK_RE = /^\$null$|^\{|^m\[|\$\{|\}'|'|"|`|\)$/;
+const st = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+const junk = (st.stdout || "")
+  .split("\n")
+  .filter((l) => l.startsWith("??"))
+  .map((l) => l.slice(3).trim())
+  .filter((f) => f && JUNK_RE.test(f));
+if (junk.length > 0) {
+  console.error(`❌ 检测到 ${junk.length} 个疑似垃圾文件（cmd 畸形产物），中止提交。请先清理：`);
+  for (const f of junk) console.error(`   ${f}`);
+  console.error('   删除示例：node -e "const fs=require(\'fs\');fs.rmSync(process.argv[1],{force:true})" <路径>');
   process.exit(1);
 }
 

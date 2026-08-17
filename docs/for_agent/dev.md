@@ -124,6 +124,8 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
   4. 需要日期用 `echo %DATE%`（或 `git log -1 --format=%ad --date=short`）；取目录最新文件用专用 ls 工具或 `dir /b`（cmd 无 Select-Object/tail）
   - 例外：给用户在**真实 PowerShell 终端**手动执行的说明（§3.1 等标注「终端手动」处）不受此限；bash 工具内一律按 cmd 写
   - 根因在宿主工具层（bash 工具由 cmd 解析），仓库内无法根治，只能统一规避；违反会浪费多轮排查，故列为硬性
+  - **toolbox.mjs 已全局剥离参数尾部 ASCII 分号（2026-08-16）**：`toolbox test cache;` 等价 `test cache`——统一入口命令写错尾分号不再报错；裸 git/curl 仍要避免
+  - **禁止 `node -e` 内联含引号/中文/反引号的长 JS**（cmd 会剥引号导致语法错 + 生成畸形垃圾文件如 `{if(i`、`m[1])`）——一律 `write_file` 写 `scripts/dev-utils/_tmp_*.mjs` 落盘执行，用完即删；api 验证用 `toolbox api`（已支持宽松 JSON body `{force:true}`，大响应默认截断加 `--full`）
 - 提交用 `commit.mjs`（消息引号安全，自动 add+commit+push，§6.8）
 - typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
 
@@ -509,9 +511,9 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 每条 fix 文本建议 `[页面] 问题描述`——`stats` 会按 `[页面]` 前缀分组，`bypage <关键词>` 按页面过滤。
 - 用户从**右下浮窗**新增的 memo **自动带页面前缀**（浮窗读取当前路由页名）；手动/CLI 新增需自行写 `[页面]` 前缀，不写则归入「（无页面标签）」。
 
-**memo 复用脚本指引（2026-08-10 强化）**——处理 memo 全流程用 `scripts/dev-utils/memo.mjs`：
-- **开工感知**：`memo.mjs stats`（open/doing/done 统计 + 未完成按页面分组）→ `memo.mjs list` 看明细
-- **聚焦**：`memo.mjs bypage <页面关键词>`（如 `bypage 策略仓位管理`）——只列某页面未完成，避免 200 条全量刷屏
+**memo 复用脚本指引（2026-08-10 强化；2026-08-16 降本版）**——处理 memo 全流程用 `scripts/dev-utils/memo.mjs`：
+- **开工感知（降本）**：`memo.mjs stats`（open/doing/done 统计 + 未完成按页面分组）→ `memo.mjs list`（**默认仅标题首行 80 字符**，`--full` 才看全文——省 token）→ 需要细节用 `bypage <关键词>` 聚焦
+- **聚焦**：`memo.mjs bypage <页面关键词>`（如 `bypage 策略仓位管理`）——只列某页面未完成，避免全量刷屏
 - **进度**：`memo.mjs recent [N]`（默认 5）——了解最近已处理，避免重复开发
 - **批量 done**：`memo.mjs done <id>...`（多 id 空格分隔；cmd 分号防御已内置）
 

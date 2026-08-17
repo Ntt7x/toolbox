@@ -2,7 +2,7 @@
 // 开发辅助脚本：改进备忘录 CLI（scripts/dev-utils/memo.mjs）
 // 反复需求固化：每轮「处理备忘录」都要读 open 列表、批量标记 done。
 // 用法（node scripts/dev-utils/memo.mjs ...）：
-//   list                列出全部（默认只看非 done）
+//   list                列出全部（默认只看非 done，仅标题；--full 看全文）
 //   list --all          列出全部含 done
 //   done <id> [id...]   批量标记 done
 //   add <text>          新增一条（kind 默认 fix）
@@ -24,12 +24,13 @@ const [cmd, ...rest] = process.argv.slice(2);
 const STRIP_SEMI = (a) => (a.includes(";") ? (console.warn(`⚠️ 参数 "${a}" 含分号（cmd 下 ; 会粘进参数），已剥离为 "${a.split(";")[0]}"`), a.split(";")[0]) : a);
 const ID_RE = /^[a-z0-9]{6,}-[a-z0-9]+$/i;
 
-async function list(showAll) {
+async function list(showAll, full) {
   const { data } = await call("/tools/memo");
   const items = (data.items ?? []).filter((i) => showAll || i.status !== "done");
-  console.log(`${showAll ? "全部" : "open"}: ${items.length} 条`);
+  console.log(`${showAll ? "全部" : "open"}: ${items.length} 条${full ? "" : "（默认仅标题，--full 看全文，降本）"}`);
   for (const it of items) {
-    console.log(`[${it.status}][${it.kind}] ${it.id} | ${it.text}`);
+    const text = full ? it.text : it.text.split("\n")[0].slice(0, 80);
+    console.log(`[${it.status}][${it.kind}] ${it.id} | ${text}`);
   }
 }
 
@@ -96,7 +97,7 @@ function putMemo(id, body) {
   return call("/tools/memo/" + id, "PUT", body);
 }
 
-if (cmd === "list") list(rest.includes("--all"));
+if (cmd === "list") list(rest.includes("--all"), rest.includes("--full"));
 else if (cmd === "done") done(rest);
 else if (cmd === "add") add(rest.join(" "));
 else if (cmd === "stats") stats();

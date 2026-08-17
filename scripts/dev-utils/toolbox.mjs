@@ -74,7 +74,11 @@ function printHelp(cmd) {
   console.log("  用法: " + t.example);
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
+const [cmd, ...restRaw] = process.argv.slice(2);
+
+// 全局防御（2026-08-16）：Windows cmd/PowerShell 下 `;` 会粘进参数（`test cache;` → 参数 "cache;"），
+// 统一剥离尾部 ASCII 分号——所有 toolbox 子命令受益（memo.mjs 内已有同类防御，此处全局兜底）
+const rest = restRaw.map((a) => (typeof a === "string" && a.endsWith(";") ? a.slice(0, -1) : a));
 
 if (!cmd || cmd === "help") { printHelp(rest[0]); process.exit(0); }
 if (cmd === "list") { printList(); process.exit(0); }
