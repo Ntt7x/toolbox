@@ -3,6 +3,13 @@
 > 所有开发命令统一走 `toolbox` 入口（`node scripts/dev-utils/toolbox.mjs`）；底层脚本可直调。
 > 环境注意：node 在 `D:\Softwares\nodejs`（不在 PATH），命令前设 `set "PATH=D:\Softwares\nodejs;%PATH%"`（dev.md §3）。
 
+## ⚠️ 命令卫生（Windows/cmd，⛔ dev.md 第 1 条）
+
+- **任何命令不带 `;`**（cmd 下 `;` 会被当参数：`git status;` → unknown switch、`toolbox test cache;` → 找不到模块）——**要串命令就拆成多次工具调用**
+- **不写 `node -e` 长 JS**（引号/中文被 cmd 剥 → 语法错 + 生成畸形垃圾文件）——大段替换一律 `write_file` 写 `scripts/dev-utils/_tmp_*.mjs` 落盘执行
+- **`toolbox` 入口已自动剥离参数尾部 `;`**（`toolbox test cache;` 等价 `test cache`）——但**裸 `git`/`curl`/`node` 无此兜底**，务必逐条写
+- api 验证用 `toolbox api`（宽松 JSON body 如 `{force:true}` 自动补引号；大响应默认截断加 `--full`）
+
 ## 开发进程
 
 | 命令 | 用途 |
