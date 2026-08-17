@@ -82,8 +82,8 @@ const pnlText = (v: number | undefined | null): string => {
   const a = Math.abs(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return v > 0 ? `▲ ¥${a}` : `▼ ¥${a}`;
 };
-const alertColor: Record<TradeV2Alert["level"], string> = { error: C.gain, warn: "#d97706", info: C.accent };
-const alertBg: Record<TradeV2Alert["level"], string> = { error: C.gainBg, warn: "#fffbeb", info: C.accentBg };
+const alertColor: Record<TradeV2Alert["level"], string> = { error: C.gain, warn: C.amber, info: C.accent };
+const alertBg: Record<TradeV2Alert["level"], string> = { error: C.gainBg, warn: C.amberBg, info: C.accentBg };
 
 // ---------- 格式化 ----------
 
@@ -133,7 +133,7 @@ function NameCode({ name, code, size = "0.85rem" }: { name?: string; code: strin
   return (
     <span className="whitespace-nowrap">
       <span style={{ fontWeight: 600, fontSize: size }}>{name ?? code}</span>
-      {isHk && <span style={{ marginLeft: 4, padding: "0 3px", borderRadius: 4, background: "#eef2ff", color: "#4f46e5", fontSize: "0.68rem", fontWeight: 600 }}>HK</span>}
+      {isHk && <span style={{ marginLeft: 4, padding: "0 3px", borderRadius: 4, background: C.indigoBg, color: C.indigo, fontSize: "0.68rem", fontWeight: 600 }}>HK</span>}
       {name ? <span style={{ color: C.muted, marginLeft: 4, fontSize: "0.75rem" }}>{code}</span> : null}
     </span>
   );
@@ -184,7 +184,7 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
       ],
       series: [
         { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
-        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: "#94a3b8", width: 1.5, type: "dashed" } },
+        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
         { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
         { name: "累计收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
       ],
@@ -1394,7 +1394,7 @@ function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
             { label: "净流入（卖−买）", value: cny2(net), tone: net >= 0 ? C.gain : C.loss },
             { label: "涉及标的", value: `${cur.codes} 只` },
           ].map((it) => (
-            <div key={it.label} style={{ background: "#f8fafc", borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7" }}>
+            <div key={it.label} style={{ background: C.panel, borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7" }}>
               <div style={{ fontSize: "0.68rem", color: C.muted }}>{it.label}</div>
               <div style={{ fontSize: "1rem", fontWeight: 700, color: it.tone ?? C.text }}>{it.value}</div>
             </div>
@@ -1801,7 +1801,7 @@ export default function TradeV2Tool() {
       yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
       series: [
         { name: "组合净值(现金+市值)", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
-        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: daily.map((d) => Math.round(d.marketValue)), lineStyle: { color: "#94a3b8", width: 1.5, type: "dashed" } },
+        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: daily.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
         { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
       ],
     };
