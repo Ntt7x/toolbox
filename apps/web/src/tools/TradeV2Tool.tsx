@@ -4,7 +4,8 @@
 // 数据：逐笔交易账本（增量）→ 仓位明细（存量，自动归并派生）→ 分组约束 → 收益分析
 // 每日工作流：💼 交易单 批量录入（Enter 流式跳转/复制上日/价格预填）→ 提交 → 仓位自动重算
 // ============================================================
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as echarts from "echarts";
 import { calcFee } from "./tradeV2Fee";
 import type {
@@ -234,10 +235,33 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ up: boolean; top: number; left: number; width: number } | null>(null);
+  const show = open && sugs.length > 0;
 
   useEffect(() => {
     setText(value.code);
   }, [value.code]);
+
+  // 建议列表定位：portal 到 body 后按输入框视口坐标 fixed 定位；滚动/缩放跟随，视口下方空间不足时翻转到上方
+  useLayoutEffect(() => {
+    if (!show) { setPos(null); return; }
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      const estH = Math.min(220, sugs.length * 40) + 12;
+      const up = r.bottom + estH > window.innerHeight - 8 && r.top > estH;
+      setPos({ up, top: up ? r.top : r.bottom, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [show, sugs.length]);
 
   const pick = (s: { code: string; name: string }) => {
     onPick({ code: s.code, name: s.name });
@@ -283,7 +307,7 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    <div style={{ position: "relative" }} ref={wrapRef}>
       <Input
         ref={inputRef}
         value={text}
@@ -301,8 +325,16 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
         className="h-8"
       />
       {value.name && <div style={{ position: "absolute", right: 8, top: 7, fontSize: "0.72rem", color: C.sub, pointerEvents: "none" }}>{value.name}</div>}
-      {open && sugs.length > 0 && (
-        <div style={{ position: "absolute", zIndex: 60, top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto" }}>
+      {show && createPortal(
+        <div style={{
+          position: "fixed",
+          zIndex: 9999,
+          top: pos ? (pos.up ? undefined : pos.top + 4) : 0,
+          bottom: pos && pos.up ? window.innerHeight - pos.top + 4 : undefined,
+          left: pos?.left ?? 0,
+          width: pos?.width ?? 220,
+          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto",
+        }}>
           {sugs.map((s, i) => (
             <div
               key={s.code}
@@ -314,7 +346,8 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
               <span style={{ color: C.muted, fontSize: "0.75rem" }}>{s.code}</span>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
