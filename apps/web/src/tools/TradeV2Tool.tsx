@@ -135,8 +135,23 @@ function NameCode({ name, code, size = "0.85rem" }: { name?: string; code: strin
       <span style={{ fontWeight: 600, fontSize: size }}>{name ?? code}</span>
       {isHk && <span style={{ marginLeft: 4, padding: "0 3px", borderRadius: 4, background: C.indigoBg, color: C.indigo, fontSize: "0.68rem", fontWeight: 600 }}>HK</span>}
       {name ? <span style={{ color: C.muted, marginLeft: 4, fontSize: "0.75rem" }}>{code}</span> : null}
+      <a href={xueqiuUrl(code)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title={`雪球 ${code}`} style={{ marginLeft: 4, color: C.muted, textDecoration: "none", fontSize: "0.75rem" }}>🔗</a>
     </span>
   );
+}
+
+/** 雪球外链 URL（A/H 股市场前缀转换；北交所/未知代码返回 # 不跳转） */
+function xueqiuUrl(code: string): string {
+  const c = code.trim().toUpperCase();
+  let sym = "";
+  if (/^(SH|SZ|BJ)\d+/.test(c)) sym = c;
+  else if (/^(HK)\d+/.test(c)) sym = c.replace(/^HK/, "HK");
+  else if (/^\d{6}$/.test(c)) {
+    if (/^6\d{5}$/.test(c)) sym = "SH" + c;
+    else if (/^[0135]\d{5}$/.test(c)) sym = "SZ" + c;
+    else if (/^[489]\d{5}$/.test(c)) sym = "BJ" + c;
+  } else if (/^\d{3,5}$|^0\d{4}$/.test(c)) sym = "HK" + c;
+  return sym ? `https://xueqiu.com/S/${sym}` : "#";
 }
 
 // ---------- ECharts 容器 ----------
@@ -287,7 +302,7 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
       />
       {value.name && <div style={{ position: "absolute", right: 8, top: 7, fontSize: "0.72rem", color: C.sub, pointerEvents: "none" }}>{value.name}</div>}
       {open && sugs.length > 0 && (
-        <div style={{ position: "absolute", zIndex: 30, top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto" }}>
+        <div style={{ position: "absolute", zIndex: 60, top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto" }}>
           {sugs.map((s, i) => (
             <div
               key={s.code}
@@ -393,7 +408,7 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
 
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg overflow-visible" style={{ minHeight: 660 }}>
         <DialogHeader>
           <DialogTitle>{initial ? "编辑交易" : "记一笔交易"}</DialogTitle>
           <DialogDescription>一笔交易进入账本后，仓位/盈亏/复盘全部自动重算（单一数据源）。</DialogDescription>
@@ -659,6 +674,19 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
       {label}{sortKey === k ? (asc ? " ▲" : " ▼") : ""}
     </TableHead>
   );
+  /** 成本金额（成本均价 × 数量；全部视图无 costAvg 时用买入均价成本口径） */
+  const costOf = (p: TradeV2Position): number | undefined => {
+    if (p.costAvg !== undefined) return p.costAvg * Math.abs(p.quantity);
+    return Math.abs(p.avgCost * p.quantity);
+  };
+  const totalPnlOf = (p: TradeV2Position): number => (p.realizedPnl ?? 0) + (p.unrealizedPnl ?? 0);
+  /** 总盈亏比例（对成本金额；成本 ≤0 时无意义显示 —） */
+  const totalPnlPctOf = (p: TradeV2Position): string => {
+    const c = costOf(p);
+    if (c === undefined || c <= 0) return "—";
+    const t = (totalPnlOf(p) / c) * 100;
+    return `${t > 0 ? "+" : ""}${t.toFixed(1)}%`;
+  };
   return positions.length === 0 ? (
     <Card><CardContent style={{ padding: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>暂无持仓（仓位明细由交易自动派生）。</CardContent></Card>
   ) : (
@@ -676,11 +704,13 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
             {sortableHead("买入均价", "avgCost", "text-right")}
             {sortableHead("成本均价", "costAvg", "text-right")}
             <TableHead className="text-right">最新价</TableHead>
+            <TableHead className="text-right">成本</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
             {sortableHead("占总仓位", "weightPct", "text-right")}
             {sortableHead("已实现", "realizedPnl", "text-right")}
-            {groupView && sortableHead("未实现", "unrealizedPnl", "text-right")}
-            {groupView && sortableHead("未实现%", "unrealizedPnl", "text-right")}
+            {sortableHead("未实现", "unrealizedPnl", "text-right")}
+            {sortableHead("未实现%", "unrealizedPnl", "text-right")}
+            <TableHead className="text-right">总盈亏%</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -691,11 +721,13 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
               <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
               <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降" : "未持仓"}>{p.costAvg !== undefined ? costFmt(p.costAvg) : "—"}</TableCell>
               <TableCell className="text-right">{p.latestPrice ? costFmt(p.latestPrice) : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl), fontWeight: 600 }}>{pnlText(p.realizedPnl)}</TableCell>
-              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 600 }}>{pnlText(p.unrealizedPnl)}</TableCell>}
-              {groupView && <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>}
+              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 600 }}>{pnlText(p.unrealizedPnl)}</TableCell>
+              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)) }}>{totalPnlPctOf(p)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -1683,10 +1715,15 @@ export default function TradeV2Tool() {
         winRate: global.winRate,
         avgDays: global.avgDays,
         negCount: global.negCount,
+        positionPct: (() => {
+          // 全部组合：总市值 / 各分组总仓位上限之和（未设上限的分组不计入分母）
+          const cap = groups.reduce((a, g) => a + (g.totalCapital > 0 ? g.totalCapital : 0), 0);
+          return cap > 0 ? (global.totalMv / cap) * 100 : undefined;
+        })(),
       };
     }
     return null;
-  }, [isGroupView, analysis, global]);
+  }, [isGroupView, analysis, global, groups]);
 
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
 
@@ -1855,9 +1892,7 @@ export default function TradeV2Tool() {
     }
   };
 
-  /** 盈亏率基准（对持仓成本）：浮动/已实现/未实现/总 各带率——金额与率成对（资金逻辑链） */
-  const floatPnl = cur ? cur.unrealizedPnl : 0; // 真实未实现（负成本标的计入；totalCost 为 V1 正成本口径）
-  const floatRate = cur && cur.totalCost > 0 && !cur.negCount ? (floatPnl / cur.totalCost) * 100 : undefined;
+  /** 盈亏率基准（对持仓成本）：已实现/未实现/总 各带率——金额与率成对（资金逻辑链） */
   const totalRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.totalPnl / cur.totalCost) * 100 : undefined;
   const realizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.realizedPnl / cur.totalCost) * 100 : undefined;
   const unrealizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.unrealizedPnl / cur.totalCost) * 100 : undefined;
@@ -1881,7 +1916,6 @@ export default function TradeV2Tool() {
         <h1 style={{ fontSize: "1.125rem", fontWeight: 700, margin: 0, color: C.text }}>📋 {isGroupView && selectedGroup ? selectedGroup.name : "仓位管理 v2"}</h1>
         <div style={{ fontSize: "0.82rem", color: C.sub }}>逐笔交易 → 仓位自动归并 · 分组约束 · 收益分析 · 每日交易单</div>
         <div style={{ flex: 1 }} />
-        <Button size="sm" onClick={() => setTab("order")}>💼 去交易单</Button>
       </div>
 
       {msg && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.5rem 0.8rem", borderRadius: 8, fontSize: "0.84rem", fontWeight: 500, border: "1px solid " + C.gainBorder, background: C.gainBg, color: "#b91c1c" }}>{msg}</div>}
@@ -1911,9 +1945,6 @@ export default function TradeV2Tool() {
               );
             })}
             <div style={{ flex: 1 }} />
-            {isGroupView && selectedGroup && (
-              <Button size="sm" variant="outline" onClick={() => setTab("group-settings")}>⚙️ 分组设置</Button>
-            )}
             <Button size="sm" variant="outline" onClick={() => { setEditingGroup(null); setGroupEditorOpen(true); }}>🗂️ 新建分组</Button>
                       </div>
 
@@ -1921,21 +1952,21 @@ export default function TradeV2Tool() {
           <Tabs value={activeTab} onValueChange={setTab}>
             <TabsList style={{ width: "100%" }}>
               {!isGroupView && <TabsTrigger value="analysis-global" style={{ flex: 1 }}>🧩 组合分析</TabsTrigger>}
-              <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分区</TabsTrigger>
+              <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分析</TabsTrigger>
               <TabsTrigger value="positions" style={{ flex: 1 }}>📈 仓位明细</TabsTrigger>
               <TabsTrigger value="ledger" style={{ flex: 1 }}>💹 交易流水</TabsTrigger>
               {isGroupView && selectedGroup && <TabsTrigger value="group-settings" style={{ flex: 1 }}>⚙️ 分组设置</TabsTrigger>}
             </TabsList>
 
-            {/* 共享统计区：Tab 条之下、各功能区内容之上（始终可见） */}
+            {/* 共享统计区：仅「收益分析」tab 展示（资金概览与收益分析绑定） */}
             <SectionTitle icon="📊" color={C.indigo}>资金概览（市值 − 成本 = 浮动盈亏；已实现 + 未实现 = 总盈亏；仓位控制在右下）</SectionTitle>
-            {cur && (
+            {activeTab === "analysis" && cur && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10 }}>
               {/* 资金逻辑链①：市值 − 成本 = 浮动盈亏（金额与率成对） */}
               <StatGroup title="持仓" icon="📦" tone="blue" items={[
-                { label: "持仓市值", value: cny(cur.totalMv), sub: cur.positionPct !== undefined ? `占总仓位 ${pct(cur.positionPct)}` : undefined },
+                { label: "持仓市值", value: cny(cur.totalMv) },
                 { label: "持仓成本", value: cny(cur.totalCost), sub: cur.negCount ? `不含 ${cur.negCount} 个负成本（已回本）· 净投入 ${cny(cur.invested)}` : `累计净投入 ${cny(cur.invested)}` },
-                { label: "浮动盈亏", value: pnlText(floatPnl), color: pnlColor(floatPnl), sub: floatRate !== undefined ? `浮动率 ${pctSigned(floatRate)}` : undefined },
+                { label: "仓位比例", value: cur.positionPct !== undefined ? pct(cur.positionPct) : "—", sub: cur.positionPct !== undefined ? `占总仓位 ${pct(cur.positionPct)}` : undefined },
               ]} />
               {/* 资金逻辑链②：已实现（落袋）+ 未实现（浮动）= 总盈亏，各带率 */}
               <StatGroup title="盈亏" icon="💰" tone="red" items={[
