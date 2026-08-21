@@ -25,6 +25,19 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** 尝试 CDP 连接已打开的 Chrome（--remote-debugging-port；默认 9222）——复用登录态/窗口，避免新开 --no-sandbox 窗口。
+ *  无调试端口或连接失败返回 null（调用方 fallback 到 launchPersistentContext）。 */
+export async function tryConnectCdp(port = 9222): Promise<BrowserContext | null> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return null;
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    return browser.contexts()[0] ?? (await browser.newContext());
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 

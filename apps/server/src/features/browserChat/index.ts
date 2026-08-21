@@ -15,7 +15,7 @@ import type { BrowserContext, Page } from "playwright-core";
 import { join } from "node:path";
 import { API_PREFIX } from "@toolbox/shared";
 import { DATA_DIR } from "../../core/db.js";
-import { launchPersistentContext, sleep } from "../../core/browser.js";
+import { launchPersistentContext, tryConnectCdp, sleep } from "../../core/browser.js";
 
 export const meta = { id: "browser-chat", name: "DeepSeek Chat 自动填入" };
 
@@ -23,8 +23,15 @@ const PROFILE_DIR = join(DATA_DIR, "ds-chat-profile");
 const DS_HOME = "https://chat.deepseek.com/";
 const LOGIN_WAIT_MS = 3 * 60 * 1000; // 未登录时等待用户登录的时限
 
-// 单实例：同一时间只允许一个 browserChat 窗口（防同 profile 独占锁）
-let activeCtx: BrowserContext | null = null;
+// 单实例：同一时间只允许一个 browserChat 窗口（防同 profile 独占锁）。
+// activeCtx 存 globalThis（tsx watch 模块重载后仍保留——2026-08-19 修复"连续点击不能复用"）
+const CTX_KEY = "__toolboxBrowserChatCtx";
+function getActiveCtx(): BrowserContext | null {
+  return ((globalThis as Record<string, unknown>)[CTX_KEY] as BrowserContext | null) ?? null;
+}
+function setActiveCtx(v: BrowserContext | null): void {
+  (globalThis as Record<string, unknown>)[CTX_KEY] = v;
+}
 /** 2026-08-14：互斥锁——并发 /open 同时 launch 同 profile 会因 Chrome 独占锁失败 */
 let chatBrowserBusy = false;
 
@@ -41,6 +48,8 @@ export interface ChatBrowserOpenResult {
   ok: boolean;
   loggedIn: boolean;
   message: string;
+  /** 本次是否复用了上次的浏览器窗口（2026-08-19） */
+  reused?: boolean;
 }
 
 /** 安全读取当前 URL（页面关闭/跳转时返回空串，不抛错） */
@@ -130,19 +139,43 @@ async function setToggle(page: Page, label: "深度思考" | "智能搜索", wan
  * 未登录时保持窗口并轮询等待用户登录，登录完成后继续。
  */
 export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOptions = {}): Promise<ChatBrowserOpenResult> {
-  // 互斥锁（2026-08-14）：同一时刻只允许一个 browserChat 窗口
-  if (chatBrowserBusy) return { ok: false, loggedIn: false, message: "已有浏览器会话进行中，请稍候再试" };
-  chatBrowserBusy = true;
-  // 关闭上一个残留窗口（避免同 profile 并发锁）
-  if (activeCtx) {
-    await activeCtx.close().catch(() => {});
-    activeCtx = null;
+  // 互斥锁（2026-08-14；2026-08-19 增强）：同一时刻只允许一个 browserChat 会话。
+  // 连续点击多次「去 Chat」时不再直接拒绝，而是等待当前会话完成（最多 30s），随后复用同一窗口继续。
+  const t0 = Date.now();
+  while (chatBrowserBusy) {
+    if (Date.now() - t0 > 30000) return { ok: false, loggedIn: false, message: "浏览器会话繁忙（超过 30s），请稍后再试" };
+    await sleep(300);
   }
+  chatBrowserBusy = true;
   let ctx: BrowserContext | null = null;
+  let reused = false; // 本次是否复用上次窗口（2026-08-19）
   try {
-    ctx = await launchPersistentContext(PROFILE_DIR, { headless: false });
-    activeCtx = ctx;
-    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // 2026-08-19：① 优先 CDP 连接已打开的 Chrome；② 否则复用上次打开的窗口（不关闭，多次 chat 同一窗口）；③ 无则新开
+    const cdp = await tryConnectCdp();
+    if (cdp) {
+      ctx = cdp;
+      console.log("browserChat: CDP 连接已开浏览器");
+    } else {
+      // 复用上次窗口（模块 let 跨调用赋值，TS 单次调用分析误判恒 null → 用断言绕过）
+      const maybe = getActiveCtx();
+      if (maybe) {
+        try {
+          maybe.pages(); // 窗口/连接在则正常返回；已断开则抛错 → 判定不可复用
+          ctx = maybe;
+          reused = true;
+          console.log("browserChat: 复用上次窗口");
+        } catch (e) {
+          setActiveCtx(null);
+        }
+      } else {
+      }
+      if (!ctx) {
+        ctx = await launchPersistentContext(PROFILE_DIR, { headless: false });
+        setActiveCtx(ctx);
+      }
+    }
+    // CDP：新建 tab（不覆盖用户已有页面）；复用/新开窗口：找已有 chat tab 复用（同一窗口同一对话流），否则用首页/新建
+    const page = cdp ? await ctx.newPage() : (ctx.pages().find((p) => p.url().includes("chat.deepseek.com")) ?? ctx.pages()[0] ?? (await ctx.newPage()));
     // 窗口置前，用户可见可操作
     await page.bringToFront().catch(() => {});
     await page.goto(DS_HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -186,10 +219,10 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
       await page.keyboard.press("Enter");
       return { ok: true, loggedIn: true, message: "✅ 已填入提示词并发送，请在浏览器窗口中查看回复。" };
     }
-    return { ok: true, loggedIn: true, message: "✅ 已自动填入提示词，请在浏览器窗口中确认并发送。" };
+    return { ok: true, loggedIn: true, message: "✅ 已自动填入提示词，请在浏览器窗口中确认并发送。", reused };
   } catch (e) {
     if (ctx) await ctx.close().catch(() => {});
-    activeCtx = null;
+    setActiveCtx(null);
     return { ok: false, loggedIn: false, message: e instanceof Error ? e.message : String(e) };
   } finally {
     chatBrowserBusy = false;

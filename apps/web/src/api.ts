@@ -219,6 +219,8 @@ export const api = {
   tradeV2CreateEntry: (draft: TradeV2EntryDraft) => request<TradeV2EntryResult>("/tools/trade-v2/entries", jsonInit("POST", draft)),
   tradeV2UpdateEntry: (id: string, draft: TradeV2EntryDraft) => request<TradeV2EntryResult>("/tools/trade-v2/entries/" + encodeURIComponent(id), jsonInit("PUT", draft)),
   tradeV2DeleteEntry: (id: string) => request<{ ok: boolean; message?: string }>("/tools/trade-v2/entries/" + encodeURIComponent(id), jsonInit("DELETE", {})),
+  /** 移动某标的的全部交易到另一分组（memo mt2ttvqd） */
+  tradeV2MoveStock: (fromGroupId: string, code: string, toGroupId: string) => request<{ ok: boolean; moved?: number; message?: string }>("/tools/trade-v2/move-stock", jsonInit("POST", { fromGroupId, code, toGroupId })),
   /** 每日交易单批量提交（整批校验 → 入库 + 逐标的净归并汇总；preview=true 只校验不入库） */
   tradeV2BatchEntries: (items: TradeV2EntryDraft[], preview = false) =>
     request<TradeV2BatchResult>("/tools/trade-v2/entries/batch", jsonInit("POST", { items, ...(preview ? { preview: true } : {}) })),

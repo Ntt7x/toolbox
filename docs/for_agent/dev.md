@@ -455,6 +455,12 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 
 - **专业领域文档**：浏览器自动化经验（DeepSeek 网页版 Chat 操作、受控输入 insertText、aria-pressed、profile 锁）**见 `docs/for_agent/domains/features.md`**。
 
+**2026-08-19 browserChat 窗口复用排查教训（连续点击"不能复用"）**：
+1. **跨请求状态禁止存模块级 let**：`activeCtx` 被 tsx watch 模块重载重置 → 每次点击都新开窗口。**修复：存 `globalThis`**（`getActiveCtx()/setActiveCtx()` 封装，模块重载后仍保留）。凡"进程内跨请求共享"的可变状态（窗口句柄/连接/单例），一律考虑 globalThis 兜底。
+2. **重构时旧逻辑必须彻底删**："关闭上一个残留窗口"这段原逻辑残留，与新需求（复用窗口）直接冲突——每次 open 先把旧窗口 close+置 null，复用分支永远拿到 null。**改需求时要全文检索旧行为代码，不能只改目标分支**。
+3. **dev restart 可能假成功**：8787 被旧进程占用（EADDRINUSE）时 restart "✅ 已就绪"但实际跑旧代码 → 排查白费数轮。**改服务端后先 `proc kill-port 8787` 确认无占用再 start**（dev.mjs stop 已增强，但多次调用间可能残留）。
+4. **服务端调试别用 console.log**（tsx stdout 不落 server.log）→ 看不到。**用 API 返回 debug 字段**（排查完清理）或写临时文件。
+
 ### 7.3 策略仓位管理（trade-plan / 仓位管理 v2）
 
 - **专业领域文档**：策略仓位管理实现经验（配置/仓位拆分、日度计划按数量、保存即应用、基线+重放、校验分工）**见 `docs/for_agent/domains/features.md`**；通用原则见 §6.7（前后端分工）。

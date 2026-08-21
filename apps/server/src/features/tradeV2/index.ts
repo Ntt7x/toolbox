@@ -240,6 +240,23 @@ export function registerTradeV2Feature(app: Hono) {
     return c.json({ ok: true });
   });
 
+  // ---------- 标的移动分组（memo mt2ttvqd） ----------
+
+  app.post(`${API_PREFIX}/tools/trade-v2/move-stock`, async (c: Context) => {
+    const ctx = await getTradeV2Ctx();
+    const body = await c.req.json().catch(() => null);
+    const code = String(body?.code ?? "").trim();
+    const fromGroupId = String(body?.fromGroupId ?? "");
+    const toGroupId = String(body?.toGroupId ?? "");
+    if (!code || !fromGroupId || !toGroupId) return c.json({ ok: false, message: "缺少参数（code/fromGroupId/toGroupId）" }, 400);
+    if (fromGroupId === toGroupId) return c.json({ ok: false, message: "目标分组不能与原分组相同" }, 400);
+    const from = ctx.tradeV2Group.get(fromGroupId);
+    const to = ctx.tradeV2Group.get(toGroupId);
+    if (!from || !to) return c.json({ ok: false, message: "分组不存在" }, 404);
+    const moved = ctx.tradeV2Ledger.moveStock(fromGroupId, code, toGroupId);
+    return c.json({ ok: true, moved });
+  });
+
   // ---------- 全局分析（跨组） ----------
 
   app.get(`${API_PREFIX}/tools/trade-v2/analysis`, async (c: Context) => {

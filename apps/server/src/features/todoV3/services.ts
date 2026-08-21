@@ -133,15 +133,20 @@ export class TodoStoreService extends Service {
       }
       items = items.map((x) => (reset.has(x.id) ? { ...x, done: false } : x));
     }
-    // closed todo 到期自动归档（2026-08-15）：非周期已完成项超过保留期（3 天）→ 自动归档（幂等）
+    // closed todo 到期自动归档（2026-08-15；2026-08-19 修订：仅顶级归档，子 todo 跟随父归档）
     const ARCHIVE_RETENTION_MS = 3 * 24 * 3600 * 1000;
     let archived = false;
     for (const x of items) {
-      if (!x.done || x.repeat || x.archivedAt) continue;
+      if (x.parentId || !x.done || x.repeat || x.archivedAt) continue; // 仅顶级（子 todo 不单独归档）
       const doneAt = Date.parse(x.lastDoneAt ?? x.updatedAt);
       if (Number.isFinite(doneAt) && now - doneAt > ARCHIVE_RETENTION_MS) {
         x.archivedAt = new Date(now).toISOString();
         archived = true;
+        // 子 todo 跟随父归档：父归档时其已完成子孙一并入归档区
+        for (const did of descendants(items, x.id)) {
+          const d = items.find((y) => y.id === did);
+          if (d && d.done && !d.archivedAt) d.archivedAt = x.archivedAt;
+        }
       }
     }
     if (archived) kvSet(TODO_V3_KEY, { items });
@@ -301,17 +306,26 @@ export class TodoStoreService extends Service {
     if (!it.done) return { ok: false, message: "仅已完成的待办可归档" };
     it.archivedAt = new Date().toISOString();
     it.updatedAt = new Date().toISOString();
+    // 子 todo 跟随父归档（memo mt1c08xv）：已完成子孙一并入归档区
+    for (const did of descendants(items, id)) {
+      const d = items.find((y) => y.id === did);
+      if (d && d.done && !d.archivedAt) d.archivedAt = it.archivedAt;
+    }
     kvSet(TODO_V3_KEY, { items });
     return { ok: true, items: this.list() };
   }
 
-  /** 恢复归档（清 archivedAt，回到主列表） */
+  /** 恢复归档（清 archivedAt，回到主列表；子孙跟随恢复） */
   restore(id: string): { ok: true; items: TodoItemV3[] } | null {
     const items = loadAll();
     const it = items.find((x) => x.id === id);
     if (!it) return null;
     delete it.archivedAt;
     it.updatedAt = new Date().toISOString();
+    for (const did of descendants(items, id)) {
+      const d = items.find((y) => y.id === did);
+      if (d) delete d.archivedAt;
+    }
     kvSet(TODO_V3_KEY, { items });
     return { ok: true, items: this.list() };
   }

@@ -3,7 +3,8 @@
 // tab 展示区（默认）：按启用源合并拉取新闻（时间降序）
 // tab 配置区：配置新闻源（东财等，可拓展；配置存本地设置数据）
 // ============================================================
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react"
+import { openDeepSeekChat } from "../deepseekChat";
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
 
@@ -210,7 +211,7 @@ export default function NewsCenterTool() {
                       alignItems: "baseline",
                       textDecoration: "none",
                       color: "#334155",
-                      fontSize: "0.85rem",
+                      fontSize: "1rem",
                       lineHeight: 1.55,
                       padding: "0.28rem 0.4rem",
                       borderRadius: 8,
@@ -222,14 +223,20 @@ export default function NewsCenterTool() {
                     onMouseEnter={(e) => { e.currentTarget.style.background = imp ? "#ffedd5" : "#f8fafc"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = imp ? "#fff7ed" : "transparent"; }}
                   >
-                    <span style={{ color: "#94a3b8", fontSize: "0.72rem", flexShrink: 0, width: 104 }}>{n.time.slice(5, 16)}</span>
+                    <span style={{ color: "#94a3b8", fontSize: "0.82rem", flexShrink: 0, width: 104 }}>{n.time.slice(5, 16)}</span>
+                    <button
+                      type="button"
+                      title="用 DeepSeek Chat 分析这条新闻"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openDeepSeekChat(`【新闻】${n.title}\n\n${n.digest}\n\n来源：${n.sourceName}（${n.time}）`); }}
+                      style={{ flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: "#2563eb", padding: "0 0.2rem", lineHeight: 1 }}
+                    >💬</button>
                     <span style={{ flex: 1, minWidth: 0 }}>{n.title}</span>
                     {imp && (
-                      <span style={{ flexShrink: 0, background: "#f97316", color: "#fff", fontSize: "0.68rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: 999 }}>
+                      <span style={{ flexShrink: 0, background: "#f97316", color: "#fff", fontSize: "0.78rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: 999 }}>
                         ⭐ 重要
                       </span>
                     )}
-                    <span style={{ color: "#64748b", fontSize: "0.72rem", flexShrink: 0, background: "#f1f5f9", padding: "0.1rem 0.5rem", borderRadius: 999 }}>
+                    <span style={{ color: "#64748b", fontSize: "0.82rem", flexShrink: 0, background: "#f1f5f9", padding: "0.1rem 0.5rem", borderRadius: 999 }}>
                       {n.sourceName}
                     </span>
                   </a>

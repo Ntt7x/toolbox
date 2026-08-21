@@ -2085,9 +2085,10 @@ export interface TradeV2CheckResult {
 /** 全局分析（跨组对比 + 时间线） */
 export interface TradeV2GlobalAnalysis {
   groups: TradeV2GroupSummary[];
+  /** 全部组合合并持仓（跨组合按 code 合并，成本摊薄口径——服务端权威，前端不自行核算） */
+  positions: TradeV2Position[];
   /** 全部组合计市值 */
-  totalMv: number;
-  /** 持仓成本合计（V1 口径：仅正成本；负成本标的已回本不计入） */
+  totalMv: number;  /** 持仓成本合计（V1 口径：仅正成本；负成本标的已回本不计入） */
   totalCost: number;
   unrealizedPnl: number;
   realizedPnl: number;

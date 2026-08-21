@@ -697,10 +697,35 @@ export function buildGlobalAnalysis(
   let winTotal = 0;
   let daysTotal = 0;
   const timeline: { date: string; amount: number }[] = [];
+  /** 跨组合按 code 合并持仓（成本摊薄口径，服务端权威——memo mt1zg3xk） */
+  const posMap = new Map<string, TradeV2Position>();
 
   for (const { group, entries, latestPrices, klines } of groups) {
     const a = analyzeGroup(group, entries, latestPrices, klines);
     summaries.push(buildGroupSummary(group, entries, latestPrices));
+    for (const p of a.positions) {
+      const cur = posMap.get(p.code);
+      if (!cur) { posMap.set(p.code, { ...p }); continue; }
+      const q1 = cur.quantity, q2 = p.quantity;
+      const tq = Math.abs(q1) + Math.abs(q2);
+      const costVal = (cur.costValue ?? 0) + (p.costValue ?? 0);
+      const realized = (cur.realizedPnl ?? 0) + (p.realizedPnl ?? 0);
+      const unreal = (cur.unrealizedPnl ?? 0) + (p.unrealizedPnl ?? 0);
+      posMap.set(p.code, {
+        ...cur,
+        name: cur.name ?? p.name,
+        quantity: q1 + q2,
+        avgCost: q1 + q2 !== 0 ? (cur.avgCost * q1 + p.avgCost * q2) / (q1 + q2) : 0,
+        costValue: costVal,
+        marketValue: (cur.marketValue ?? 0) + (p.marketValue ?? 0),
+        realizedPnl: realized,
+        unrealizedPnl: unreal,
+        costAvg: tq > 0 ? (costVal - realized) / tq : undefined,
+        unrealizedPnlPct: costVal > 0 ? (unreal / costVal) * 100 : undefined,
+        latestPrice: cur.latestPrice ?? p.latestPrice,
+        weightPct: undefined, // 前端按市值占比重算
+      });
+    }
     totalMv += a.totalMv;
     totalCost += a.totalCost;
     unrealizedPnl += a.unrealizedPnl;
@@ -744,6 +769,7 @@ export function buildGlobalAnalysis(
 
   return {
     groups: summaries,
+    positions: [...posMap.values()].sort((x, y) => Math.abs(y.costValue ?? 0) - Math.abs(x.costValue ?? 0)),
     totalMv,
     totalCost,
     unrealizedPnl,

@@ -146,12 +146,12 @@ function xueqiuUrl(code: string): string {
   const c = code.trim().toUpperCase();
   let sym = "";
   if (/^(SH|SZ|BJ)\d+/.test(c)) sym = c;
-  else if (/^(HK)\d+/.test(c)) sym = c.replace(/^HK/, "HK");
+  else if (/^(HK)\d+/.test(c)) sym = c.slice(2); // 港股雪球 URL 不带 HK 前缀：/S/00189
   else if (/^\d{6}$/.test(c)) {
     if (/^6\d{5}$/.test(c)) sym = "SH" + c;
     else if (/^[0135]\d{5}$/.test(c)) sym = "SZ" + c;
     else if (/^[489]\d{5}$/.test(c)) sym = "BJ" + c;
-  } else if (/^\d{3,5}$|^0\d{4}$/.test(c)) sym = "HK" + c;
+  } else if (/^\d{3,5}$|^0\d{4}$/.test(c)) sym = c; // 港股：裸代码（雪球格式 /S/00189）
   return sym ? `https://xueqiu.com/S/${sym}` : "#";
 }
 
@@ -686,18 +686,17 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 
 // ---------- 仓位明细表 ----------
 
-function PositionsTable({ positions, groupView, onRowClick, exportName }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string }) {
-  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
+function PositionsTable({ positions, groupView, onRowClick, exportName, positionPct }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string; positionPct?: number }) {
+  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
   const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
   const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
   const sorted = useMemo(() => {
     if (!sortKey) return positions;
     const arr = [...positions].sort((a, b) => {
-      // weightPct 排序：组视图用服务端值；全局视图用市值绝对值（占比排序 = 市值排序）
-      const av = sortKey === "weightPct" ? (weightOf(a) ?? 0) : (a[sortKey] ?? 0);
-      const bv = sortKey === "weightPct" ? (weightOf(b) ?? 0) : (b[sortKey] ?? 0);
-      return av - bv;
+      // weightPct 排序：组视图用服务端值；全局视图用市值绝对值（占比排序 = 市值排序）；totalPnl = 已实现+未实现
+      const valOf = (x: TradeV2Position): number => sortKey === "weightPct" ? (weightOf(x) ?? 0) : sortKey === "totalPnl" ? (x.realizedPnl ?? 0) + (x.unrealizedPnl ?? 0) : (x[sortKey] ?? 0);
+      return valOf(a) - valOf(b);
     });
     return asc ? arr : arr.reverse();
   }, [positions, sortKey, asc, totalMv]);
@@ -707,6 +706,8 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
       {label}{sortKey === k ? (asc ? " ▲" : " ▼") : ""}
     </TableHead>
   );
+  /** 仓位进度条颜色：<60% 安全绿 / <85% 警告琥珀 / ≥85% 危险红（memo mt2lzbcw） */
+  const barColor = (pct: number): string => (pct < 60 ? "#059669" : pct < 85 ? "#d97706" : "#dc2626");
   /** 成本金额（成本均价 × 数量；全部视图无 costAvg 时用买入均价成本口径） */
   const costOf = (p: TradeV2Position): number | undefined => {
     if (p.costAvg !== undefined) return p.costAvg * Math.abs(p.quantity);
@@ -729,6 +730,17 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
           <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "占总仓位", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, +p.avgCost.toFixed(3), p.latestPrice ? +p.latestPrice.toFixed(3) : "", Math.round(p.marketValue * 100) / 100, weightOf(p) !== undefined ? Math.round(weightOf(p)! * 100) / 100 : "", Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
         </div>
       )}
+      {positionPct !== undefined && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: C.sub, marginBottom: 4 }}>
+            <span>分组仓位（总市值/总仓位上限）</span>
+            <span style={{ fontWeight: 700, color: barColor(positionPct) }}>{pct(positionPct)}</span>
+          </div>
+          <div style={{ height: 8, borderRadius: 4, background: "#e2e8f0", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, positionPct))}%`, height: "100%", background: barColor(positionPct), borderRadius: 4, transition: "width .3s ease" }} />
+          </div>
+        </div>
+      )}
       <Table>
         <TableHeader>
           <TableRow>
@@ -743,6 +755,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
             {sortableHead("已实现", "realizedPnl", "text-right")}
             {sortableHead("未实现", "unrealizedPnl", "text-right")}
             {sortableHead("未实现%", "unrealizedPnl", "text-right")}
+            {sortableHead("总盈亏", "totalPnl", "text-right")}
             <TableHead className="text-right">总盈亏%</TableHead>
           </TableRow>
         </TableHeader>
@@ -760,6 +773,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName }: { posi
               <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl), fontWeight: 600 }}>{pnlText(p.realizedPnl)}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 600 }}>{pnlText(p.unrealizedPnl)}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)), fontWeight: 600 }}>{pnlText(totalPnlOf(p))}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)) }}>{totalPnlPctOf(p)}</TableCell>
             </TableRow>
           ))}
@@ -1456,7 +1470,7 @@ function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
             { label: "买入金额（含费）", value: cny2(cur.buy) },
             { label: "卖出回款（含费）", value: cny2(cur.sell) },
             { label: "手续费合计", value: cny2(cur.fee) },
-            { label: "净流入（卖−买）", value: cny2(net), tone: net >= 0 ? C.gain : C.loss },
+            { label: net >= 0 ? "净卖出（卖−买）" : "净买入（买−卖）", value: cny2(Math.abs(net)), tone: net >= 0 ? C.gain : C.loss },
             { label: "涉及标的", value: `${cur.codes} 只` },
           ].map((it) => (
             <div key={it.label} style={{ background: C.panel, borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7" }}>
@@ -1519,7 +1533,7 @@ function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV
 
 // ---------- 标的交易历史下钻 ----------
 
-function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals }: {
+function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals, groups, onMoved }: {
   open: boolean;
   onClose: () => void;
   code: string;
@@ -1528,11 +1542,30 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   entries: TradeV2Entry[];
   positions: TradeV2Position[];
   deals: TradeV2Deal[];
+  groups: TradeV2GroupSummary[];
+  onMoved: () => void;
 }) {
+  const [moveTo, setMoveTo] = useState<string>("");
+  const [moving, setMoving] = useState(false);
   const codeEntries = entries.filter((e) => e.code === code);
   const sortedEntries = [...codeEntries].sort((a, b) => (a.date < b.date ? 1 : -1));
   const pos = positions.find((p) => p.code === code);
   const codeDeals = deals.filter((d) => d.code === code);
+  const fromGroupId = codeEntries[0]?.groupId ?? "";
+  const move = async () => {
+    if (!fromGroupId || !moveTo) return;
+    if (!window.confirm(`把「${name ?? code}」在本分组的 ${codeEntries.length} 笔交易全部移动到「${groups.find((g) => g.id === moveTo)?.name}」？`)) return;
+    setMoving(true);
+    try {
+      const r = await api.tradeV2MoveStock(fromGroupId, code, moveTo);
+      onMoved();
+      onClose();
+    } catch (e) {
+      alert("❌ " + errMsg(e));
+    } finally {
+      setMoving(false);
+    }
+  };
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
       <DialogContent className="sm:max-w-2xl">
@@ -1540,6 +1573,19 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
           <DialogTitle><NameCode name={name} code={code} /> <span style={{ fontSize: "0.75rem", color: C.muted, fontWeight: 400 }}>· {scopeName}</span></DialogTitle>
           <DialogDescription>该标的在此范围内的全部交易与盈亏归因（仓位/盈亏由账本自动派生）。</DialogDescription>
         </DialogHeader>
+
+        {groups.length > 1 && fromGroupId && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", color: C.sub, flexWrap: "wrap" }}>
+            <span>移动到分组：</span>
+            <Select value={moveTo} onValueChange={(v: string | null) => setMoveTo(v ?? "")}>
+              <SelectTrigger style={{ width: 200, height: 30 }}><SelectValue placeholder="选择目标分组" /></SelectTrigger>
+              <SelectContent>
+                {groups.filter((g) => g.id !== fromGroupId).map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" disabled={!moveTo || moving} onClick={() => void move()}>{moving ? "移动中…" : "移动"}</Button>
+          </div>
+        )}
 
         {pos && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", background: C.panel, borderRadius: 10, padding: "0.6rem 0.8rem", fontSize: "0.8rem", color: C.sub }}>
@@ -2107,15 +2153,18 @@ export default function TradeV2Tool() {
 
             <TabsContent value="positions">
               <PositionsTable
-                positions={isGroupView && analysis ? analysis.positions : positionsFromGlobal(entries)}
+                positions={isGroupView && analysis ? analysis.positions : (global?.positions ?? positionsFromGlobal(entries))}
                 groupView={isGroupView}
                 onRowClick={(p) => setStockDlg({ code: p.code, name: p.name })}
                 exportName={isGroupView && selectedGroup ? `仓位明细_${selectedGroup.name}.csv` : "全部持仓.csv"}
+                positionPct={cur?.positionPct}
               />
             </TabsContent>
 
 
             <TabsContent value="ledger">
+              {/* 日度交易汇总：流水 tab 最上方（memo mt2tzfw3） */}
+              <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
               {/* 分组视图：交易流水整合录入（记一笔/批量提交 → 流水下方即时可见） */}
               {isGroupView && selectedGroup && analysis && (
                 <OrderSheet
@@ -2129,7 +2178,6 @@ export default function TradeV2Tool() {
                   onDeleteEntry={(e) => void removeEntry(e)}
                 />
               )}
-              <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
               <Card><CardContent>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
                   <Select value={fAction} onValueChange={(v: string | null) => setFAction(v ?? "all")}>
@@ -2254,8 +2302,10 @@ export default function TradeV2Tool() {
         name={stockDlg?.name}
         scopeName={isGroupView && selectedGroup ? selectedGroup.name : "全部组合"}
         entries={groupEntries}
-        positions={isGroupView && analysis ? analysis.positions : positionsFromGlobal(entries)}
+        positions={isGroupView && analysis ? analysis.positions : (global?.positions ?? positionsFromGlobal(entries))}
         deals={analysis?.deals ?? []}
+        groups={groups}
+        onMoved={() => void reloadAll()}
       />
     </div>
   );

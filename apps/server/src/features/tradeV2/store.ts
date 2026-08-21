@@ -150,3 +150,16 @@ export function deleteEntry(id: string): boolean {
   kvSet(TRADE_LIST, listEntryIds().filter((x) => x !== id));
   return true;
 }
+
+/** 移动某标的（fromGroupId 内该 code 的全部交易）到 toGroupId；返回移动条数（memo mt2ttvqd） */
+export function moveStock(fromGroupId: string, code: string, toGroupId: string): number {
+  let moved = 0;
+  for (const id of listEntryIds()) {
+    const e = getEntry(id);
+    if (e && e.groupId === fromGroupId && e.code === code) {
+      updateEntry(id, { groupId: toGroupId });
+      moved++;
+    }
+  }
+  return moved;
+}

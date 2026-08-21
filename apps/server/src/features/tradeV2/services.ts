@@ -54,6 +54,7 @@ import {
   listEntries,
   listEntriesByGroup,
   listGroups,
+  moveStock as moveStockEntries,
   updateEntry,
   updateGroup,
 } from "./store.js";
@@ -216,6 +217,11 @@ export class TradeV2LedgerService extends Service {
 
   remove(id: string): boolean {
     return deleteEntry(id);
+  }
+
+  /** 移动某标的（fromGroupId 内该 code 的全部交易）到 toGroupId；返回移动条数（memo mt2ttvqd） */
+  moveStock(fromGroupId: string, code: string, toGroupId: string): number {
+    return moveStockEntries(fromGroupId, code, toGroupId);
   }
 }
 
