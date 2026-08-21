@@ -148,9 +148,9 @@ function xueqiuUrl(code: string): string {
   if (/^(SH|SZ|BJ)\d+/.test(c)) sym = c;
   else if (/^(HK)\d+/.test(c)) sym = c.slice(2); // 港股雪球 URL 不带 HK 前缀：/S/00189
   else if (/^\d{6}$/.test(c)) {
-    if (/^6\d{5}$/.test(c)) sym = "SH" + c;
-    else if (/^[0135]\d{5}$/.test(c)) sym = "SZ" + c;
-    else if (/^[489]\d{5}$/.test(c)) sym = "BJ" + c;
+    if (/^[56]\d{5}$/.test(c)) sym = "SH" + c;      // 沪市 A 股（6 开头）/ 沪市 ETF（5 开头，如 512800）
+    else if (/^[013]\d{5}$/.test(c)) sym = "SZ" + c; // 深市 A 股/ETF（0/1/3 开头，如 159745）
+    else if (/^[489]\d{5}$/.test(c)) sym = "BJ" + c; // 北交所（4/8/9 开头）
   } else if (/^\d{3,5}$|^0\d{4}$/.test(c)) sym = c; // 港股：裸代码（雪球格式 /S/00189）
   return sym ? `https://xueqiu.com/S/${sym}` : "#";
 }
