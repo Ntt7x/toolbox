@@ -174,8 +174,9 @@ export async function openChatWithPrompt(prompt: string, opts: ChatBrowserOpenOp
         setActiveCtx(ctx);
       }
     }
-    // CDP：新建 tab（不覆盖用户已有页面）；复用/新开窗口：找已有 chat tab 复用（同一窗口同一对话流），否则用首页/新建
-    const page = cdp ? await ctx.newPage() : (ctx.pages().find((p) => p.url().includes("chat.deepseek.com")) ?? ctx.pages()[0] ?? (await ctx.newPage()));
+    // 页面选择：新开窗口用初始空页；复用/CDP 优先用 about:blank 空页（避免空 tab 累积），否则新建 tab（不覆盖用户已有页面/对话——2026-08-19 修复"把前面的页面都关了"）
+    const isNewWindow = !reused && !cdp;
+    const page = isNewWindow ? (ctx.pages()[0] ?? (await ctx.newPage())) : (ctx.pages().find((p) => p.url() === "about:blank") ?? (await ctx.newPage()));
     // 窗口置前，用户可见可操作
     await page.bringToFront().catch(() => {});
     await page.goto(DS_HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
