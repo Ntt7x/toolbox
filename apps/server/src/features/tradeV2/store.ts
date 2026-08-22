@@ -39,7 +39,7 @@ export function getGroup(id: string): TradeV2Group | null {
   return g;
 }
 
-export function createGroup(name: string): TradeV2Group {
+export function createGroup(name: string, infoType?: "info" | "noinfo"): TradeV2Group {
   const now = new Date().toISOString();
   const g: TradeV2Group = {
     id: genId("g"),
@@ -47,6 +47,7 @@ export function createGroup(name: string): TradeV2Group {
     totalCapital: 0,
     dailyAddLimit: 0,
     stockLimits: [],
+    infoType,
     createdAt: now,
     updatedAt: now,
   };
@@ -59,11 +60,12 @@ export function createGroup(name: string): TradeV2Group {
 
 export function updateGroup(
   id: string,
-  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean },
+  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null },
 ): TradeV2Group | null {
   const g = getGroup(id);
   if (!g) return null;
   if (patch.name !== undefined && patch.name.trim()) g.name = patch.name.trim().slice(0, 30);
+  if (patch.infoType !== undefined) g.infoType = patch.infoType ?? undefined;
   if (patch.totalCapital !== undefined) g.totalCapital = patch.totalCapital;
   if (patch.dailyAddLimit !== undefined) g.dailyAddLimit = patch.dailyAddLimit;
   if (patch.stockLimits !== undefined) g.stockLimits = patch.stockLimits;

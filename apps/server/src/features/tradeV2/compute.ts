@@ -261,6 +261,8 @@ export function todayStr(): string {
  * 组分析：仓位明细（附行情/占比）+ 复盘 + 汇总。
  * @param latestPrices 最新价映射（行情缓存可得时传入；缺省按成本口径估算）
  */
+import { computeMetrics } from "./metrics.js";
+
 export function analyzeGroup(
   group: TradeV2Group,
   entries: TradeV2Entry[],
@@ -343,6 +345,7 @@ export function analyzeGroup(
     dailySeries: buildDailySeries(entries, klinePrices),
     monthlySeries: buildMonthlySeries(entries),
     pnlAttribution: buildPnlAttribution(entries, latestPrices),
+    metrics: computeMetrics(buildDailySeries(entries, klinePrices), deals),
   };
 }
 
@@ -669,6 +672,7 @@ export function buildGroupSummary(
     totalCapital: group.totalCapital,
     dailyAddLimit: group.dailyAddLimit,
     stockLimitCount: group.stockLimits.length,
+    infoType: group.infoType,
     entryCount: entries.length,
     openCount: a.openCount,
     totalMv: a.totalMv,

@@ -20,6 +20,7 @@ import type {
   TradeV2Group,
   TradeV2GroupAnalysis,
   TradeV2GroupSummary,
+  TradeV2Metrics,
   TradeV2MonthlyPoint,
   TradeV2PnlAttribution,
   TradeV2Position,
@@ -210,9 +211,9 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ fontSize: "0.75rem", color: C.muted }}>区间</span>
-        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
+        <Input autoComplete="off" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
         <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
+        <Input autoComplete="off" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
         {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
         <span style={{ fontSize: "0.7rem", color: C.muted, marginLeft: "auto" }}>收益率以区间起点净值为 100% 基准</span>
       </div>
@@ -223,12 +224,14 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
 
 // ---------- 标的搜索输入 ----------
 
-function StockSearchInput({ value, onPick, placeholder = "输入代码或名称", inputRef, onEnter }: {
+function StockSearchInput({ value, onPick, placeholder = "输入代码或名称", inputRef, onEnter, suggestions }: {
   value: { code: string; name?: string };
   onPick: (v: { code: string; name?: string }) => void;
   placeholder?: string;
   inputRef?: (el: HTMLInputElement | null) => void;
   onEnter?: () => void;
+  /** 空白输入时展示的已有标的列表（memo mt4hi1zc：提交交易单时可直接点选已有标的） */
+  suggestions?: { code: string; name?: string }[];
 }) {
   const [text, setText] = useState(value.code);
   const [sugs, setSugs] = useState<{ code: string; name: string }[]>([]);
@@ -237,7 +240,9 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ up: boolean; top: number; left: number; width: number } | null>(null);
-  const show = open && sugs.length > 0;
+  /** 显示列表：空白输入 → 已有标的（suggestions）；否则 → 搜索结果 */
+  const list = text.trim() ? sugs : (suggestions ?? []);
+  const show = open && list.length > 0;
 
   useEffect(() => {
     setText(value.code);
@@ -250,7 +255,7 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
     if (!el) return;
     const update = () => {
       const r = el.getBoundingClientRect();
-      const estH = Math.min(220, sugs.length * 40) + 12;
+      const estH = Math.min(320, list.length * 40) + 12;
       const up = r.bottom + estH > window.innerHeight - 8 && r.top > estH;
       setPos({ up, top: up ? r.top : r.bottom, left: r.left, width: r.width });
     };
@@ -261,9 +266,9 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [show, sugs.length]);
+  }, [show, list.length, suggestions]);
 
-  const pick = (s: { code: string; name: string }) => {
+  const pick = (s: { code: string; name?: string }) => {
     onPick({ code: s.code, name: s.name });
     setText(s.code);
     setOpen(false);
@@ -292,14 +297,14 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (!open) { if (sugs.length > 0) setOpen(true); return; }
-      setActive((i) => (i + 1) % Math.max(1, sugs.length));
+      if (!open) { if (list.length > 0) setOpen(true); return; }
+      setActive((i) => (i + 1) % Math.max(1, list.length));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => (i <= 0 ? sugs.length - 1 : i - 1));
+      setActive((i) => (i <= 0 ? list.length - 1 : i - 1));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (open && sugs.length > 0 && active >= 0) pick(sugs[active]!);
+      if (open && list.length > 0 && active >= 0) pick(list[active]!);
       else onEnter?.();
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -308,19 +313,20 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
 
   return (
     <div style={{ position: "relative" }} ref={wrapRef}>
-      <Input
+      <Input autoComplete="off"
         ref={inputRef}
         value={text}
         placeholder={placeholder}
         onChange={(e) => {
           const v = e.target.value;
           setText(v);
-          setOpen(false);
+          if (v.trim()) setOpen(false);
+          else if ((suggestions ?? []).length > 0) setOpen(true); // 空白 → 显示已有标的
           onPick({ code: v });
           search(v);
         }}
         onBlur={() => setTimeout(() => setOpen(false), 200)}
-        onFocus={() => { if (sugs.length > 0) setOpen(true); }}
+        onFocus={() => { if (list.length > 0) setOpen(true); }}
         onKeyDown={onKeyDown}
         className="h-8"
       />
@@ -333,9 +339,9 @@ function StockSearchInput({ value, onPick, placeholder = "输入代码或名称"
           bottom: pos && pos.up ? window.innerHeight - pos.top + 4 : undefined,
           left: pos?.left ?? 0,
           width: pos?.width ?? 220,
-          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto",
+          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(15,23,42,.12)", maxHeight: 320, overflowY: "auto",
         }}>
-          {sugs.map((s, i) => (
+          {list.map((s, i) => (
             <div
               key={s.code}
               style={{ padding: "0.5rem 0.7rem", cursor: "pointer", fontSize: "0.85rem", display: "flex", justifyContent: "space-between", gap: 8, background: i === active ? C.accentBg : undefined }}
@@ -371,6 +377,19 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
     price: 0,
   }));
   const [stock, setStock] = useState<{ code: string; name?: string }>({ code: "" });
+// 空白补全：接口获取当前分组的标的列表（memo 补充：直接接口，前端不过滤）
+const [groupStocks, setGroupStocks] = useState<{ code: string; name?: string }[]>([]);
+useEffect(() => {
+  if (!open || !draft.groupId) { setGroupStocks([]); return; }
+  let live = true;
+  void (async () => {
+    try {
+      const r = await api.tradeV2GroupStocks(draft.groupId);
+      if (live && r.ok) setGroupStocks(r.stocks ?? []);
+    } catch { if (live) setGroupStocks([]); }
+  })();
+  return () => { live = false; };
+}, [open, draft.groupId]);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<TradeV2CheckResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -459,11 +478,11 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">成交日期</label>
-            <Input type="date" className="h-8" value={draft.date} onChange={(e) => set("date", e.target.value)} />
+            <Input autoComplete="off" type="date" className="h-8" value={draft.date} onChange={(e) => set("date", e.target.value)} />
           </div>
           <div className="col-span-2">
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">标的（搜索补全名称）</label>
-            <StockSearchInput value={stock} onPick={(v) => { setStock(v); set("code", v.code); set("name", v.name); }} />
+            <StockSearchInput value={stock} onPick={(v) => { setStock(v); set("code", v.code); set("name", v.name); }} placeholder="输入代码或名称搜索" suggestions={groupStocks} />
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">操作</label>
@@ -477,19 +496,19 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">数量（股）</label>
-            <Input type="number" min={0} step={1} className="h-8" value={draft.quantity || ""} placeholder="如 100" onChange={(e) => set("quantity", numInput(e.target.value))} />
+            <Input autoComplete="off" type="number" min={0} step={1} className="h-8" value={draft.quantity || ""} placeholder="如 100" onChange={(e) => set("quantity", numInput(e.target.value))} />
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">成交价（元）</label>
-            <Input type="number" min={0} step={0.01} className="h-8" value={draft.price || ""} placeholder="如 10.50" onChange={(e) => set("price", Number(e.target.value) || 0)} />
+            <Input autoComplete="off" type="number" min={0} step={0.01} className="h-8" value={draft.price || ""} placeholder="如 10.50" onChange={(e) => set("price", Number(e.target.value) || 0)} />
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">手续费（可选）</label>
-            <Input type="number" min={0} step={0.01} className="h-8" value={draft.fee ?? ""} placeholder="0" onChange={(e) => set("fee", e.target.value === "" ? undefined : Number(e.target.value) || 0)} />
+            <Input autoComplete="off" type="number" min={0} step={0.01} className="h-8" value={draft.fee ?? ""} placeholder="0" onChange={(e) => set("fee", e.target.value === "" ? undefined : Number(e.target.value) || 0)} />
           </div>
           <div className="col-span-2">
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">备注（可选）</label>
-            <Input className="h-8" value={draft.note ?? ""} placeholder="交易理由/复盘备注" onChange={(e) => set("note", e.target.value)} />
+            <Input autoComplete="off" className="h-8" value={draft.note ?? ""} placeholder="交易理由/复盘备注" onChange={(e) => set("note", e.target.value)} />
           </div>
           <div className="col-span-2 flex items-center gap-2">
             <Switch checked={!!draft.initial} onCheckedChange={(v: boolean) => set("initial", v)} />
@@ -531,6 +550,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
   inline?: boolean;   // 内嵌模式（分组设置 tab）：不渲染 Dialog，直接渲染表单
 }) {
   const [name, setName] = useState("");
+  const [infoType, setInfoType] = useState<"info" | "noinfo" | "">("");
   const [totalCapital, setTotalCapital] = useState(0);
   const [dailyAddLimit, setDailyAddLimit] = useState(0);
   const [limits, setLimits] = useState<{ code: string; name?: string; maxWeightPct?: number }[]>([{ code: "" }]);
@@ -542,6 +562,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
   useEffect(() => {
     if (!open) return;
     setName(initial?.name ?? "");
+    setInfoType(initial?.infoType ?? "");
     setTotalCapital(initial?.totalCapital ?? 0);
     setDailyAddLimit(initial?.dailyAddLimit ?? 0);
     setLimits(initial && initial.stockLimits.length > 0 ? initial.stockLimits.map((s) => ({ ...s })) : [{ code: "" }]);
@@ -556,8 +577,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     setMsg(null);
     try {
       const stockLimits = limits.filter((l) => l.code.trim() && l.maxWeightPct !== undefined).map((l) => ({ code: l.code.trim(), ...(l.name ? { name: l.name } : {}), maxWeightPct: l.maxWeightPct! }));
-      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort });
-      else await api.tradeV2CreateGroup(name.trim());
+      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, ...(infoType ? { infoType } : { infoType: null }) });
+      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined);
       onSaved();
       if (!inline) onClose();
     } catch (e) {
@@ -587,24 +608,32 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">分组名称</label>
-          <Input className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：稳健成长 / 网格策略" />
+          <Input autoComplete="off" className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：稳健成长 / 网格策略" />
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">信息分类（memo mt4hl5g9：交易噪声是否携带信息）</label>
+          <Select value={infoType} onValueChange={(v: string | null) => setInfoType((v as "info" | "noinfo" | "") ?? "")}>
+            <SelectTrigger style={{ height: 32 }}><SelectValue placeholder="未设置" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="info">有信息（基于信息/逻辑判断）</SelectItem>
+              <SelectItem value="noinfo">无信息（纯执行/统计规律）</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">总仓位上限（元）</label>
-          <Input type="number" min={0} className="h-8" value={totalCapital || ""} placeholder="0 = 不限" onChange={(e) => setTotalCapital(Number(e.target.value) || 0)} />
+          <Input autoComplete="off" type="number" min={0} className="h-8" value={totalCapital || ""} placeholder="0 = 不限" onChange={(e) => setTotalCapital(Number(e.target.value) || 0)} />
         </div>
         <div>
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单日加仓上限（元）</label>
-          <Input type="number" min={0} className="h-8" value={dailyAddLimit || ""} placeholder="0 = 不限" onChange={(e) => setDailyAddLimit(Number(e.target.value) || 0)} />
+          <Input autoComplete="off" type="number" min={0} className="h-8" value={dailyAddLimit || ""} placeholder="0 = 不限" onChange={(e) => setDailyAddLimit(Number(e.target.value) || 0)} />
         </div>
         <div className="col-span-2">
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">单标的上限（% 占总仓位；可选）</label>
           <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 4 }}>
           {limits.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <Input className="h-8 w-40" value={l.code} placeholder="代码" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))} />
-              <Input className="h-8 w-36" value={l.name ?? ""} placeholder="名称（可选）" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-              <Input type="number" min={0} max={100} className="h-8 w-24" value={l.maxWeightPct ?? ""} placeholder="上限%" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, maxWeightPct: e.target.value === "" ? undefined : Number(e.target.value) || 0 } : x)))} />
+              <Input autoComplete="off" className="h-8 w-40" value={l.code} placeholder="代码" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))} />
+              <Input autoComplete="off" className="h-8 w-36" value={l.name ?? ""} placeholder="名称（可选）" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+              <Input autoComplete="off" type="number" min={0} max={100} className="h-8 w-24" value={l.maxWeightPct ?? ""} placeholder="上限%" onChange={(e) => setLimits((p) => p.map((x, j) => (j === i ? { ...x, maxWeightPct: e.target.value === "" ? undefined : Number(e.target.value) || 0 } : x)))} />
               <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setLimits((p) => (p.length > 1 ? p.filter((_, j) => j !== i) : p))}>✕</Button>
             </div>
           ))}
@@ -687,27 +716,10 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 // ---------- 仓位明细表 ----------
 
 function PositionsTable({ positions, groupView, onRowClick, exportName, positionPct }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string; positionPct?: number }) {
-  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
+  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "totalPnlPct" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
   const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
   const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
-  const sorted = useMemo(() => {
-    if (!sortKey) return positions;
-    const arr = [...positions].sort((a, b) => {
-      // weightPct 排序：组视图用服务端值；全局视图用市值绝对值（占比排序 = 市值排序）；totalPnl = 已实现+未实现
-      const valOf = (x: TradeV2Position): number => sortKey === "weightPct" ? (weightOf(x) ?? 0) : sortKey === "totalPnl" ? (x.realizedPnl ?? 0) + (x.unrealizedPnl ?? 0) : (x[sortKey] ?? 0);
-      return valOf(a) - valOf(b);
-    });
-    return asc ? arr : arr.reverse();
-  }, [positions, sortKey, asc, totalMv]);
-  const onSort = (k: typeof sortKey) => { if (sortKey === k) setAsc((v) => !v); else { setSortKey(k); setAsc(false); } };
-  const sortableHead = (label: string, k: typeof sortKey, cls?: string) => (
-    <TableHead className={cls} onClick={() => onSort(k)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
-      {label}{sortKey === k ? (asc ? " ▲" : " ▼") : ""}
-    </TableHead>
-  );
-  /** 仓位进度条颜色：<60% 安全绿 / <85% 警告琥珀 / ≥85% 危险红（memo mt2lzbcw） */
-  const barColor = (pct: number): string => (pct < 60 ? "#059669" : pct < 85 ? "#d97706" : "#dc2626");
   /** 成本金额（成本均价 × 数量；全部视图无 costAvg 时用买入均价成本口径） */
   const costOf = (p: TradeV2Position): number | undefined => {
     if (p.costAvg !== undefined) return p.costAvg * Math.abs(p.quantity);
@@ -721,6 +733,23 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
     const t = (totalPnlOf(p) / c) * 100;
     return `${t > 0 ? "+" : ""}${t.toFixed(1)}%`;
   };
+  const sorted = useMemo(() => {
+    if (!sortKey) return positions;
+    const arr = [...positions].sort((a, b) => {
+      // weightPct 排序：组视图用服务端值；全局视图用市值绝对值；totalPnl = 已实现+未实现；totalPnlPct 按百分比数值
+      const valOf = (x: TradeV2Position): number => sortKey === "weightPct" ? (weightOf(x) ?? 0) : sortKey === "totalPnl" ? (x.realizedPnl ?? 0) + (x.unrealizedPnl ?? 0) : sortKey === "totalPnlPct" ? parseFloat(totalPnlPctOf(x)) || 0 : (x[sortKey] ?? 0);
+      return valOf(a) - valOf(b);
+    });
+    return asc ? arr : arr.reverse();
+  }, [positions, sortKey, asc, totalMv]);
+  const onSort = (k: typeof sortKey) => { if (sortKey === k) setAsc((v) => !v); else { setSortKey(k); setAsc(false); } };
+  const sortableHead = (label: string, k: typeof sortKey, cls?: string) => (
+    <TableHead className={cls} onClick={() => onSort(k)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      {label}{sortKey === k ? (asc ? " ▲" : " ▼") : ""}
+    </TableHead>
+  );
+  /** 仓位进度条颜色：<60% 安全绿 / <85% 警告琥珀 / ≥85% 危险红（memo mt2lzbcw） */
+  const barColor = (pct: number): string => (pct < 60 ? "#059669" : pct < 85 ? "#d97706" : "#dc2626");
   return positions.length === 0 ? (
     <Card><CardContent style={{ padding: "1.5rem", textAlign: "center", color: C.muted, fontSize: "0.85rem" }}>暂无持仓（仓位明细由交易自动派生）。</CardContent></Card>
   ) : (
@@ -756,7 +785,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
             {sortableHead("未实现", "unrealizedPnl", "text-right")}
             {sortableHead("未实现%", "unrealizedPnl", "text-right")}
             {sortableHead("总盈亏", "totalPnl", "text-right")}
-            <TableHead className="text-right">总盈亏%</TableHead>
+            {sortableHead("总盈亏%", "totalPnlPct", "text-right")}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -848,7 +877,7 @@ function positionsFromGlobal(entries: TradeV2Entry[]): TradeV2Position[] {
 
 // ---------- 交易绩效（复盘深度：盈亏比 / 期望 / 持有天数对比） ----------
 
-function PerformanceCard({ deals }: { deals: TradeV2Deal[] }) {
+function PerformanceCard({ deals, metrics }: { deals: TradeV2Deal[]; metrics?: TradeV2Metrics }) {
   const closed = deals.filter((d) => d.status === "closed");
   if (closed.length === 0) return null;
   const wins = closed.filter((d) => (d.pnl ?? 0) > 0);
@@ -883,6 +912,17 @@ function PerformanceCard({ deals }: { deals: TradeV2Deal[] }) {
         {item("亏损笔平均持仓", lossDays !== undefined ? lossDays.toFixed(1) + " 天" : "—")}
         {holdNote && <span style={{ color: holdNote.startsWith("✅") ? C.loss : C.gain, fontWeight: 600, fontSize: "0.82rem" }}>{holdNote}</span>}
       </div>
+      {metrics && (metrics.annualVol !== undefined || metrics.sharpe !== undefined || metrics.maxDrawdown !== undefined) && (
+        <>
+          <div style={{ borderTop: `1px dashed ${C.border}`, margin: "10px 0 8px" }} />
+          <div style={{ fontSize: "0.72rem", color: C.muted, marginBottom: 4 }}>风险指标（memo mt4hl5g9：基于日市值序列，成本口径近似）</div>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+            {item("年化波动率", metrics.annualVol !== undefined ? metrics.annualVol.toFixed(1) + "%" : "—", C.sub)}
+            {item("夏普比率", metrics.sharpe !== undefined ? metrics.sharpe.toFixed(2) : "—", metrics.sharpe !== undefined && metrics.sharpe >= 1 ? C.gain : C.text)}
+            {item("最大回撤", metrics.maxDrawdown !== undefined ? metrics.maxDrawdown.toFixed(1) + "%" : "—", C.loss)}
+          </div>
+        </>
+      )}
     </CardContent></Card>
   );
 }
@@ -1085,6 +1125,19 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
   const [date, setDate] = useState(nextTradingDay());
   const [rows, setRows] = useState<OrderRow[]>([newRow()]);
   const [result, setResult] = useState<TradeV2CheckResult | null>(null);
+  // 空白补全：接口获取当前分组的标的列表（与提交交易单一致）
+  const [groupStocks, setGroupStocks] = useState<{ code: string; name?: string }[]>([]);
+  useEffect(() => {
+    if (!groupId) { setGroupStocks([]); return; }
+    let live = true;
+    void (async () => {
+      try {
+        const r = await api.tradeV2GroupStocks(groupId);
+        if (live && r.ok) setGroupStocks(r.stocks ?? []);
+      } catch { if (live) setGroupStocks([]); }
+    })();
+    return () => { live = false; };
+  }, [groupId]);
   const [summary, setSummary] = useState<TradeV2DayOrderSummary | null>(null);
   const [busy, setBusy] = useState<"check" | "submit" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -1245,7 +1298,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
             {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Input type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
+        <Input autoComplete="off" type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
         <Button variant="outline" size="sm" onClick={() => { setPasteOpen(true); setPasteText(""); }}>📥 粘贴批量</Button>
         <Button variant="ghost" size="sm" onClick={clear}>🧹 清空</Button>
         <div style={{ flex: 1 }} />
@@ -1282,7 +1335,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
           {rows.map((r) => (
             <TableRow key={r.key}>
               <TableCell style={{ minWidth: 190 }}>
-                <StockSearchInput value={{ code: r.code, name: r.name }} onPick={(v) => onPickStock(r.key, v)} inputRef={setRef(r.key, "code")} onEnter={() => handleEnter(r.key, "code")} />
+                <StockSearchInput value={{ code: r.code, name: r.name }} onPick={(v) => onPickStock(r.key, v)} inputRef={setRef(r.key, "code")} onEnter={() => handleEnter(r.key, "code")} placeholder="代码或名称" suggestions={groupStocks} />
               </TableCell>
               <TableCell>
                 <Select value={r.action} onValueChange={(v: string | null) => setRow(r.key, { action: (v ?? "buy") as "buy" | "sell" })}>
@@ -1293,15 +1346,15 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
                   </SelectContent>
                 </Select>
               </TableCell>
-              <TableCell><Input ref={setRef(r.key, "qty")} type="number" min={0} step={1} className="h-8" value={r.quantity || ""} placeholder="0" onChange={(e) => setRow(r.key, { quantity: numInput(e.target.value) })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "qty"); }} /></TableCell>
+              <TableCell><Input autoComplete="off" ref={setRef(r.key, "qty")} type="number" min={0} step={1} className="h-8" value={r.quantity || ""} placeholder="0" onChange={(e) => setRow(r.key, { quantity: numInput(e.target.value) })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "qty"); }} /></TableCell>
               <TableCell>
                 <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                  <Input ref={setRef(r.key, "price")} type="number" min={0} step={0.01} className="h-8" value={r.price || ""} placeholder="0.00" onChange={(e) => setRow(r.key, { price: Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "price"); }} />
+                  <Input autoComplete="off" ref={setRef(r.key, "price")} type="number" min={0} step={0.01} className="h-8" value={r.price || ""} placeholder="0.00" onChange={(e) => setRow(r.key, { price: Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "price"); }} />
                   <Button variant="ghost" size="icon" className="h-8 w-7 shrink-0" title="填入最新价" disabled={!r.code.trim() || priceBusy === r.code.trim()} onClick={() => void fillLivePrice(r.key, r.code.trim())}>{priceBusy === r.code.trim() ? "…" : "⚡"}</Button>
                 </span>
               </TableCell>
-              <TableCell><Input ref={setRef(r.key, "fee")} type="number" min={0} step={0.01} className="h-8" value={rowFee(r) ?? ""} placeholder="0" onChange={(e) => setRow(r.key, { fee: e.target.value === "" ? undefined : Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "fee"); }} title={rowFee(r) !== r.fee ? "自动按佣金规则计算（ETF 万1 最低0.1 / 个股 万1.154 最低5）；手填可覆盖" : undefined} /></TableCell>
-              <TableCell><Input ref={setRef(r.key, "note")} className="h-8" value={r.note ?? ""} onChange={(e) => setRow(r.key, { note: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "note"); }} /></TableCell>
+              <TableCell><Input autoComplete="off" ref={setRef(r.key, "fee")} type="number" min={0} step={0.01} className="h-8" value={rowFee(r) ?? ""} placeholder="0" onChange={(e) => setRow(r.key, { fee: e.target.value === "" ? undefined : Number(e.target.value) || 0 })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "fee"); }} title={rowFee(r) !== r.fee ? "自动按佣金规则计算（ETF 万1 最低0.1 / 个股 万1.154 最低5）；手填可覆盖" : undefined} /></TableCell>
+              <TableCell><Input autoComplete="off" ref={setRef(r.key, "note")} className="h-8" value={r.note ?? ""} onChange={(e) => setRow(r.key, { note: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") handleEnter(r.key, "note"); }} /></TableCell>
               <TableCell><Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => setRows((p) => (p.length > 1 ? p.filter((x) => x.key !== r.key) : p))}>✕</Button></TableCell>
             </TableRow>
           ))}
@@ -1513,7 +1566,7 @@ function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV
             const rate = cost > 0 ? (g.totalPnl / cost) * 100 : undefined;
             return (
               <TableRow key={g.id} onClick={() => onSelect(g.id)} style={{ cursor: "pointer" }}>
-                <TableCell><span style={{ fontWeight: 600 }}>{g.name}</span></TableCell>
+                <TableCell><span style={{ fontWeight: 600 }}>{g.name}</span>{g.infoType && <span style={{ marginLeft: 6, fontSize: "0.68rem", padding: "0.05rem 0.4rem", borderRadius: 999, background: g.infoType === "info" ? C.indigoBg : C.amberBg, color: g.infoType === "info" ? C.indigo : C.amber, fontWeight: 600 }}>{g.infoType === "info" ? "有信息" : "无信息"}</span>}</TableCell>
                 <TableCell className="text-right">{g.riskCount ? <span style={{ color: "#b45309", fontWeight: 700 }}>⚠️{g.riskCount}</span> : "—"}</TableCell>
                 <TableCell className="text-right">{g.openCount}</TableCell>
                 <TableCell className="text-right">{cny2(g.totalMv)}</TableCell>
@@ -1547,11 +1600,46 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
 }) {
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
+  const [limitPct, setLimitPct] = useState<string>("");
+  const [savingLimit, setSavingLimit] = useState(false);
   const codeEntries = entries.filter((e) => e.code === code);
   const sortedEntries = [...codeEntries].sort((a, b) => (a.date < b.date ? 1 : -1));
   const pos = positions.find((p) => p.code === code);
   const codeDeals = deals.filter((d) => d.code === code);
   const fromGroupId = codeEntries[0]?.groupId ?? "";
+  // 加载该标的分组限制（memo mt4hgp8b：标的下沉页直接配置"标的限制"）
+  useEffect(() => {
+    if (!open || !fromGroupId) return;
+    void (async () => {
+      try {
+        const g = await api.tradeV2Group(fromGroupId);
+        const lim = (g.group?.stockLimits ?? []).find((s) => s.code === code);
+        setLimitPct(lim && lim.maxWeightPct !== undefined ? String(lim.maxWeightPct) : "");
+      } catch { /* 静默 */ }
+    })();
+  }, [open, fromGroupId, code]);
+  const saveLimit = async () => {
+    if (!fromGroupId) return;
+    setSavingLimit(true);
+    try {
+      const g = await api.tradeV2Group(fromGroupId);
+      const limits = [...(g.group?.stockLimits ?? [])];
+      const n = Number(limitPct);
+      const i = limits.findIndex((s) => s.code === code);
+      if (n > 0 && Number.isFinite(n)) {
+        if (i >= 0) limits[i] = { ...limits[i]!, maxWeightPct: n };
+        else limits.push({ code, name: name ?? code, maxWeightPct: n });
+      } else if (i >= 0) {
+        limits.splice(i, 1); // 空/0 → 移除该标的限制
+      }
+      await api.tradeV2SaveGroup(fromGroupId, { stockLimits: limits });
+      onMoved();
+    } catch (e) {
+      alert("❌ " + errMsg(e));
+    } finally {
+      setSavingLimit(false);
+    }
+  };
   const move = async () => {
     if (!fromGroupId || !moveTo) return;
     if (!window.confirm(`把「${name ?? code}」在本分组的 ${codeEntries.length} 笔交易全部移动到「${groups.find((g) => g.id === moveTo)?.name}」？`)) return;
@@ -1584,6 +1672,14 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
               </SelectContent>
             </Select>
             <Button size="sm" variant="outline" disabled={!moveTo || moving} onClick={() => void move()}>{moving ? "移动中…" : "移动"}</Button>
+          </div>
+        )}
+        {fromGroupId && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", color: C.sub, flexWrap: "wrap" }}>
+            <span>该标的限制（占分组总仓位上限 %）：</span>
+            <Input autoComplete="off" type="number" min={0} max={100} value={limitPct} onChange={(e) => setLimitPct(e.target.value)} placeholder="不限" style={{ width: 80, height: 30 }} />
+            <Button size="sm" variant="outline" disabled={savingLimit} onClick={() => void saveLimit()}>{savingLimit ? "保存中…" : "保存"}</Button>
+            {limitPct === "" && <span style={{ color: C.muted, fontSize: "0.72rem" }}>（空/0 表示不限）</span>}
           </div>
         )}
 
@@ -2135,7 +2231,7 @@ export default function TradeV2Tool() {
                     <MonthlyTable monthlySeries={analysis!.monthlySeries} />
                     <AttributionTable attribution={analysis!.pnlAttribution} onRowClick={(a) => setStockDlg({ code: a.code, name: a.name })} />
                   </div>
-                  <PerformanceCard deals={analysis!.deals} />
+                  <PerformanceCard deals={analysis!.deals} metrics={analysis!.metrics} />
                   <DealsTable deals={analysis!.deals} />
                   </>
                   )}
@@ -2188,10 +2284,10 @@ export default function TradeV2Tool() {
                       <SelectItem value="sell">卖出</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Input className="h-8 w-36" placeholder="名称/代码过滤" value={fCode} onChange={(e) => setFCode(e.target.value)} />
-                  <Input type="date" className="h-8 w-36" value={fFrom} onChange={(e) => setFFrom(e.target.value)} />
+                  <Input autoComplete="off" className="h-8 w-36" placeholder="名称/代码过滤" value={fCode} onChange={(e) => setFCode(e.target.value)} />
+                  <Input autoComplete="off" type="date" className="h-8 w-36" value={fFrom} onChange={(e) => setFFrom(e.target.value)} />
                   <span style={{ color: C.muted, fontSize: "0.8rem" }}>至</span>
-                  <Input type="date" className="h-8 w-36" value={fTo} onChange={(e) => setFTo(e.target.value)} />
+                  <Input autoComplete="off" type="date" className="h-8 w-36" value={fTo} onChange={(e) => setFTo(e.target.value)} />
                   <span style={{ color: C.sub, fontSize: "0.8rem" }}>共 {filteredEntries.length} 笔</span>
                   <div style={{ flex: 1 }} />
                   <Button size="sm" variant="outline" onClick={() => downloadCSV("交易流水.csv", ["日期", "分组", "代码", "名称", "操作", "数量", "价格", "金额", "手续费", "备注"], filteredEntries.map((e) => [e.date, groupById.get(e.groupId)?.name ?? "", e.code, e.name ?? "", e.action === "buy" ? "买入" : "卖出", e.quantity, e.price, Math.round(e.quantity * e.price * 100) / 100, e.fee ?? "", e.note ?? ""]))}>📤 导出 CSV</Button>

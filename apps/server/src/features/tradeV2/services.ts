@@ -145,11 +145,11 @@ export class TradeV2GroupService extends Service {
     return getGroup(id);
   }
 
-  create(name: string): TradeV2Group {
-    return createGroup(name);
+  create(name: string, infoType?: "info" | "noinfo"): TradeV2Group {
+    return createGroup(name, infoType);
   }
 
-  update(id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean }): TradeV2Group | null {
+  update(id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null }): TradeV2Group | null {
     return updateGroup(id, patch);
   }
 
@@ -175,6 +175,22 @@ export class TradeV2LedgerService extends Service {
   /** 组内交易（日期升序，重放顺序） */
   listByGroup(groupId: string): TradeV2Entry[] {
     return listEntriesByGroup(groupId);
+  }
+
+  /** 组内标的列表（去重；供提交交易单空白补全——memo 补充：直接接口获取，前端不过滤） */
+  async stocksOfGroup(groupId: string): Promise<{ code: string; name?: string }[]> {
+    const map = new Map<string, { code: string; name?: string }>();
+    for (const e of listEntriesByGroup(groupId)) {
+      if (!map.has(e.code)) map.set(e.code, { code: e.code, name: e.name });
+    }
+    const unknown = [...map.values()].filter((s) => !s.name);
+    if (unknown.length > 0) {
+      const resolved = await Promise.all(unknown.map(async (s) => [s.code, await resolveStockNameCached(s.code)] as const));
+      for (const [code, n] of resolved) {
+        if (n && map.has(code)) map.get(code)!.name = n;
+      }
+    }
+    return [...map.values()];
   }
 
   get(id: string): TradeV2Entry | null {

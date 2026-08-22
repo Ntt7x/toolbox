@@ -1827,6 +1827,8 @@ export interface TradeV2Group {
   stockLimits: TradeV2StockLimit[];
   /** 允许做空（卖出可超持仓 → 负持仓）。默认 false：卖出超持仓视为异常 */
   allowShort?: boolean;
+  /** 信息分类（memo mt4hl5g9）：有信息（info）/无信息（noinfo）——交易噪声是否携带信息的策略定位 */
+  infoType?: "info" | "noinfo";
   createdAt: string;
   updatedAt: string;
 }
@@ -1949,6 +1951,20 @@ export interface TradeV2PnlAttribution {
 }
 
 /** 组分析（详情接口附：仓位明细 + 复盘 + 汇总 + 收益时间/空间/每日动态） */
+/** 综合交易指标（memo mt4hl5g9：收益分析波动率/夏普/回撤/盈亏比/期望） */
+export interface TradeV2Metrics {
+  /** 年化波动率 %（日收益标准差 × √252） */
+  annualVol?: number;
+  /** 夏普比率（年化收益 − 2% 无风险 ÷ 年化波动） */
+  sharpe?: number;
+  /** 最大回撤 %（日市值序列峰值到谷底最大跌幅，负值） */
+  maxDrawdown?: number;
+  /** 盈亏比（平均盈利 ÷ 平均亏损，按已平仓段） */
+  profitFactor?: number;
+  /** 单笔期望（平均每笔段盈亏，元） */
+  expectancy?: number;
+}
+
 export interface TradeV2GroupAnalysis {
   groupId: string;
   name: string;
@@ -1990,6 +2006,8 @@ export interface TradeV2GroupAnalysis {
   monthlySeries: TradeV2MonthlyPoint[];
   /** 收益·空间：按标的归因（已实现+未实现贡献） */
   pnlAttribution: TradeV2PnlAttribution[];
+  /** 综合交易指标（memo mt4hl5g9：波动率/夏普/回撤/盈亏比/期望） */
+  metrics?: TradeV2Metrics;
 }
 
 /** 交易单净归并：逐标的当日买卖净效果 */
@@ -2034,6 +2052,8 @@ export interface TradeV2GroupSummary {
   totalCapital: number;
   dailyAddLimit: number;
   stockLimitCount: number;
+  /** 信息分类（memo mt4hl5g9） */
+  infoType?: "info" | "noinfo";
   /** 交易笔数 */
   entryCount: number;
   /** 在仓标的数 */
