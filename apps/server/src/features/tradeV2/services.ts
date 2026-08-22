@@ -17,6 +17,7 @@ import type {
 } from "@toolbox/shared";
 import { kvGet } from "../../core/kvStore.js";
 import { fetchKlinesForCodes } from "../../core/kline.js";
+import { getStockVolatilities } from "../../core/volatilityStore.js";
 
 // ---------- 名称解析（交易员可读性：代码 → 名称） ----------
 
@@ -277,7 +278,16 @@ export class TradeV2AnalysisService extends Service {
     const prices = await this.latestPrices(entries);
     // 历史日 K（收益曲线真实市值口径）：组内全部标的并发拉取；无行情静默回退成本口径
     const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
-    return { group, analysis: analyzeGroup(group, entries, prices, klines) };
+    const analysis = analyzeGroup(group, entries, prices, klines);
+    // 附加标的市场波动率（公共数据工程 core/volatilityStore：行情日K 流水线，与交易无关）
+    if (analysis.positions.length > 0) {
+      const vols = await getStockVolatilities(analysis.positions.map((p) => p.code));
+      analysis.positions = analysis.positions.map((p) => {
+        const v = vols.get(p.code);
+        return v && v.vol !== undefined ? { ...p, volatility: Math.round(v.vol * 100) / 100, volLevel: v.level } : p;
+      });
+    }
+    return { group, analysis };
   }
 
   /** 约束校验（allEntries = 目标条目最终形态所在的全量列表） */

@@ -77,6 +77,73 @@ const pnlColor = (v: number | undefined | null): string => {
   if (typeof v !== "number" || !isFinite(v) || v === 0) return C.sub;
   return v > 0 ? C.gain : C.loss;
 };
+
+/** 信息分类徽章（memo mt4hl5g9 强化 UI：有信息📡/无信息📊） */
+function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {
+  if (!infoType) return null;
+  return (
+    <span
+      title="信息分类：交易噪声是否携带信息（有信息=基于信息/逻辑判断，无信息=纯执行/统计规律）"
+      style={{
+        marginLeft: 6, fontSize: "0.72rem", padding: "0.08rem 0.45rem", borderRadius: 999,
+        background: infoType === "info" ? C.indigoBg : C.amberBg,
+        color: infoType === "info" ? C.indigo : C.amber,
+        fontWeight: 700, whiteSpace: "nowrap", verticalAlign: "middle",
+      }}
+    >
+      {infoType === "info" ? "📡 有信息" : "📊 无信息"}
+    </span>
+  );
+}
+
+/** 信息-风险提醒（标的市场波动口径——memo：无信息→低波运行/高波风险放大；有信息→控仓+信息-波动比） */
+function InfoRiskAlert({ infoType, positions, currentStock }: {
+  infoType?: "info" | "noinfo";
+  /** 分组持仓（带 volatility/volLevel）——用于点名高波标的 */
+  positions?: (TradeV2Position & { volatility?: number; volLevel?: "low" | "mid" | "high" | "extreme" })[];
+  /** 提交标的（EntryEditor）——单标的波动提醒 */
+  currentStock?: { name?: string; volatility?: number; volLevel?: "low" | "mid" | "high" | "extreme" };
+}) {
+  if (!infoType) return null;
+  const box: React.CSSProperties = { display: "flex", alignItems: "flex-start", gap: 8, padding: "0.6rem 0.8rem", borderRadius: 10, fontSize: "0.82rem", lineHeight: 1.5, marginBottom: 10 };
+  const fmtVol = (v?: number) => (v !== undefined ? v.toFixed(1) + "%" : "");
+  // 分组维度：点名高波（volLevel === "high"）标的
+  const highVols = (positions ?? []).filter((p) => p.volLevel === "high" && p.volatility !== undefined);
+  const highText = highVols.length
+    ? `：${highVols.map((p) => `${p.name ?? p.code}（${fmtVol(p.volatility)}）`).slice(0, 5).join("、")}${highVols.length > 5 ? " 等" : ""}`
+    : "";
+  // 单标的维度（EntryEditor 优先展示当前标的）
+  const curLevel = currentStock?.volLevel;
+  const curVol = fmtVol(currentStock?.volatility);
+
+  if (infoType === "noinfo") {
+    if (currentStock) {
+      const style = curLevel === "extreme" ? { ...box, background: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5", fontWeight: 700 }
+        : curLevel === "high" ? { ...box, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }
+        : curLevel === "mid" ? { ...box, background: C.amberBg, color: "#92400e", border: "1px solid #fde68a" }
+        : { ...box, background: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0" };
+      const text = curLevel === undefined ? `📊 无信息策略：噪声不携带信息，应在低波动环境执行（${currentStock.name ?? "该标的"}暂无波动数据）`
+        : curLevel === "low" ? `✅ ${currentStock.name ?? "该标的"}低波（${curVol}）：适合无信息策略`
+        : curLevel === "mid" ? `⚠️ ${currentStock.name ?? "该标的"}中波（${curVol}）：噪声增大，注意控制风险`
+        : curLevel === "high" ? `🔴 ${currentStock.name ?? "该标的"}高波（${curVol}）：已偏离无信息策略适用域——建议暂停交易；如继续需大幅降仓`
+        : `🔴🔴 ${currentStock.name ?? "该标的"}极波（${curVol}）：严重偏离无信息策略适用域——建议暂停交易，等待低波回归`;
+      return <div style={style}>{text}</div>;
+    }
+    if (highVols.length > 0) {
+      return <div style={{ ...box, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>🔴 高波标的{highText}——已偏离无信息策略适用域（高波），建议暂停交易，等低波回归</div>;
+    }
+    return <div style={{ ...box, background: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0" }}>✅ 该组无高波标的——适配无信息策略的低波动运行要求</div>;
+  }
+
+  // 有信息
+  const style = { ...box, background: C.indigoBg, color: C.indigo, border: "1px solid #c7d2fe" };
+  if (currentStock) {
+    const extra = curLevel === "high" || curLevel === "extreme" ? `；⚠️ 该标的高波（${curVol}）：信息-波动比偏低——建议降仓（信息优势仍在，无需清仓）` : "";
+    return <div style={style}>📡 有信息也要控仓——信息优势有限，仓位过大即赌博{extra}</div>;
+  }
+  const highNote = highVols.length ? `；高波标的${highText}——信息-波动比偏低，建议降仓（信息优势仍在）` : "";
+  return <div style={style}>📡 有信息也要控仓——信息优势有限，仓位过大即赌博{highNote}</div>;
+}
 /** 盈亏文本：▲/▼ + 金额（红涨绿跌；undefined/非数 → —；0 → ¥0.00 表示确为零） */
 const pnlText = (v: number | undefined | null): string => {
   if (typeof v !== "number" || !isFinite(v)) return "—";
@@ -379,14 +446,18 @@ function EntryEditor({ open, onClose, groups, initial, onSaved }: {
   const [stock, setStock] = useState<{ code: string; name?: string }>({ code: "" });
 // 空白补全：接口获取当前分组的标的列表（memo 补充：直接接口，前端不过滤）
 const [groupStocks, setGroupStocks] = useState<{ code: string; name?: string }[]>([]);
+// 当前分组持仓（信息-风险提醒：提交标的波动）
+const [groupPositions, setGroupPositions] = useState<TradeV2Position[]>([]);
 useEffect(() => {
-  if (!open || !draft.groupId) { setGroupStocks([]); return; }
+  if (!open || !draft.groupId) { setGroupStocks([]); setGroupPositions([]); return; }
   let live = true;
   void (async () => {
     try {
-      const r = await api.tradeV2GroupStocks(draft.groupId);
-      if (live && r.ok) setGroupStocks(r.stocks ?? []);
-    } catch { if (live) setGroupStocks([]); }
+      const [s, g] = await Promise.all([api.tradeV2GroupStocks(draft.groupId), api.tradeV2Group(draft.groupId)]);
+      if (!live) return;
+      if (s.ok) setGroupStocks(s.stocks ?? []);
+      setGroupPositions(g.analysis?.positions ?? []);
+    } catch { if (live) { setGroupStocks([]); setGroupPositions([]); } }
   })();
   return () => { live = false; };
 }, [open, draft.groupId]);
@@ -466,13 +537,15 @@ useEffect(() => {
           <DialogDescription>一笔交易进入账本后，仓位/盈亏/复盘全部自动重算（单一数据源）。</DialogDescription>
         </DialogHeader>
 
+        <InfoRiskAlert infoType={groups.find((g) => g.id === draft.groupId)?.infoType} currentStock={groupPositions.find((p) => p.code === draft.code) ?? undefined} />
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">所属分组</label>
             <Select value={draft.groupId} onValueChange={(v: string | null) => set("groupId", v ?? "")}>
               <SelectTrigger className="w-full"><SelectValue>{groups.find((g) => g.id === draft.groupId)?.name ?? "选择分组"}</SelectValue></SelectTrigger>
               <SelectContent>
-                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}<InfoTypeBadge infoType={g.infoType} /></SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1295,7 +1368,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
         <Select value={groupId} onValueChange={(v: string | null) => setGroupId(v ?? groupId)}>
           <SelectTrigger className="w-40"><SelectValue>{groups.find((g) => g.id === groupId)?.name ?? "选择分组"}</SelectValue></SelectTrigger>
           <SelectContent>
-            {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+            {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}<InfoTypeBadge infoType={g.infoType} /></SelectItem>)}
           </SelectContent>
         </Select>
         <Input autoComplete="off" type="date" className="h-8 w-40" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -1566,7 +1639,7 @@ function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV
             const rate = cost > 0 ? (g.totalPnl / cost) * 100 : undefined;
             return (
               <TableRow key={g.id} onClick={() => onSelect(g.id)} style={{ cursor: "pointer" }}>
-                <TableCell><span style={{ fontWeight: 600 }}>{g.name}</span>{g.infoType && <span style={{ marginLeft: 6, fontSize: "0.68rem", padding: "0.05rem 0.4rem", borderRadius: 999, background: g.infoType === "info" ? C.indigoBg : C.amberBg, color: g.infoType === "info" ? C.indigo : C.amber, fontWeight: 600 }}>{g.infoType === "info" ? "有信息" : "无信息"}</span>}</TableCell>
+                <TableCell><span style={{ fontWeight: 600 }}>{g.name}</span><InfoTypeBadge infoType={g.infoType} /></TableCell>
                 <TableCell className="text-right">{g.riskCount ? <span style={{ color: "#b45309", fontWeight: 700 }}>⚠️{g.riskCount}</span> : "—"}</TableCell>
                 <TableCell className="text-right">{g.openCount}</TableCell>
                 <TableCell className="text-right">{cny2(g.totalMv)}</TableCell>
@@ -1668,7 +1741,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
             <Select value={moveTo} onValueChange={(v: string | null) => setMoveTo(v ?? "")}>
               <SelectTrigger style={{ width: 200, height: 30 }}><SelectValue placeholder="选择目标分组" /></SelectTrigger>
               <SelectContent>
-                {groups.filter((g) => g.id !== fromGroupId).map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                {groups.filter((g) => g.id !== fromGroupId).map((g) => <SelectItem key={g.id} value={g.id}>{g.name}<InfoTypeBadge infoType={g.infoType} /></SelectItem>)}
               </SelectContent>
             </Select>
             <Button size="sm" variant="outline" disabled={!moveTo || moving} onClick={() => void move()}>{moving ? "移动中…" : "移动"}</Button>
@@ -2114,6 +2187,7 @@ export default function TradeV2Tool() {
               return (
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id)}>
                   {g.name}
+                  <InfoTypeBadge infoType={g.infoType} />
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
                 </button>
@@ -2248,6 +2322,7 @@ export default function TradeV2Tool() {
             ) : null}
 
             <TabsContent value="positions">
+              {isGroupView && selectedGroup && <InfoRiskAlert infoType={selectedGroup.infoType} positions={analysis?.positions} />}
               <PositionsTable
                 positions={isGroupView && analysis ? analysis.positions : (global?.positions ?? positionsFromGlobal(entries))}
                 groupView={isGroupView}

@@ -1874,6 +1874,10 @@ export interface TradeV2Position {
   costValue: number;
   /** 最新价（行情可得时） */
   latestPrice?: number;
+  /** 标的市场年化波动率 %（行情日K，近60交易日；与交易无关） */
+  volatility?: number;
+  /** 波动分级：low/mid/high（相对该标的历史波动分布 z-score） */
+  volLevel?: "low" | "mid" | "high" | "extreme";
   /** 市值（行情可得：quantity × latestPrice；否则按成本计；空头为负） */
   marketValue: number;
   /** 未实现盈亏（= marketValue − costValue；空头：价格下跌为正盈利） */
