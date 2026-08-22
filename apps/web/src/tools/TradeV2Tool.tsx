@@ -2322,7 +2322,6 @@ export default function TradeV2Tool() {
             ) : null}
 
             <TabsContent value="positions">
-              {isGroupView && selectedGroup && <InfoRiskAlert infoType={selectedGroup.infoType} positions={analysis?.positions} />}
               <PositionsTable
                 positions={isGroupView && analysis ? analysis.positions : (global?.positions ?? positionsFromGlobal(entries))}
                 groupView={isGroupView}
@@ -2334,6 +2333,8 @@ export default function TradeV2Tool() {
 
 
             <TabsContent value="ledger">
+              {/* 信息-风险提醒（memo：无信息高波暂停/有信息降仓；放交易流水 tab） */}
+              {isGroupView && selectedGroup && <InfoRiskAlert infoType={selectedGroup.infoType} positions={analysis?.positions} />}
               {/* 日度交易汇总：流水 tab 最上方（memo mt2tzfw3） */}
               <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
               {/* 分组视图：交易流水整合录入（记一笔/批量提交 → 流水下方即时可见） */}
