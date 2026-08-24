@@ -14,10 +14,32 @@ import type {
   TradeV2EntryDraft,
   TradeV2GlobalAnalysis,
   TradeV2Group,
+  TradeV2Position,
 } from "@toolbox/shared";
 import { kvGet } from "../../core/kvStore.js";
 import { fetchKlinesForCodes } from "../../core/kline.js";
 import { getStockVolatilities } from "../../core/volatilityStore.js";
+
+/** 公共：positions 附加行情字段（涨跌幅/今日盈亏/波动率分级）——分组/全局共用（DRY） */
+async function enrichPositions(positions: TradeV2Position[]): Promise<TradeV2Position[]> {
+  if (positions.length === 0) return positions;
+  const codes = positions.map((p) => p.code);
+  const vols = await getStockVolatilities(codes);
+  const quotes = await getQuoteSnapshots(codes);
+  const quoteOf = (code: string) => quotes.find((q) => q.code === code || q.code.endsWith(code) || code.endsWith(q.code.replace(/^[a-z]{2}/, "")));
+  return positions.map((p) => {
+    const v = vols.get(p.code);
+    const q = quoteOf(p.code);
+    const pct = typeof q?.pct === "number" ? Math.round(q.pct * 100) / 100 : undefined;
+    const todayPnl = typeof q?.change === "number" ? Math.round(q.change * Math.abs(p.quantity) * 100) / 100 : undefined;
+    return {
+      ...p,
+      ...(v && v.vol !== undefined ? { volatility: Math.round(v.vol * 100) / 100, volLevel: v.level } : {}),
+      ...(pct !== undefined ? { changePct: pct } : {}),
+      ...(todayPnl !== undefined ? { todayPnl } : {}),
+    };
+  });
+}
 
 // ---------- 名称解析（交易员可读性：代码 → 名称） ----------
 
@@ -38,7 +60,7 @@ export async function resolveStockNameCached(code: string): Promise<string> {
     return "";
   }
 }
-import { getQuoteSnapshot } from "../../core/quote.js";
+import { getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
 import {
   analyzeGroup,
   buildGlobalAnalysis,
@@ -279,14 +301,8 @@ export class TradeV2AnalysisService extends Service {
     // 历史日 K（收益曲线真实市值口径）：组内全部标的并发拉取；无行情静默回退成本口径
     const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
     const analysis = analyzeGroup(group, entries, prices, klines);
-    // 附加标的市场波动率（公共数据工程 core/volatilityStore：行情日K 流水线，与交易无关）
-    if (analysis.positions.length > 0) {
-      const vols = await getStockVolatilities(analysis.positions.map((p) => p.code));
-      analysis.positions = analysis.positions.map((p) => {
-        const v = vols.get(p.code);
-        return v && v.vol !== undefined ? { ...p, volatility: Math.round(v.vol * 100) / 100, volLevel: v.level } : p;
-      });
-    }
+    // 附加行情字段（涨跌幅/今日盈亏/波动率——公共 enrichPositions，与全局共用）
+    analysis.positions = await enrichPositions(analysis.positions);
     return { group, analysis };
   }
 
@@ -312,7 +328,29 @@ export class TradeV2AnalysisService extends Service {
         return { group: g, entries, latestPrices, klines };
       }),
     );
-    return buildGlobalAnalysis(inputs);
+    const analysis = buildGlobalAnalysis(inputs);
+    // 全局组合复用一般组合能力：positions 附加行情字段（公共 enrichPositions，与分组共用）
+    analysis.positions = await enrichPositions(analysis.positions ?? []);
+    // 全部组合首先是一般组合（mt52hjgp）：与分组同一数据结构 analyzeGroup 输出——
+    // 合成组（无约束）+ 全部标的 entries，positions/dailySeries/monthlySeries/归因/指标/deals 全齐，零强转
+    const allEntries: TradeV2Entry[] = [];
+    const allLatest: Record<string, number> = {};
+    const allKlines = new Map<string, Map<string, number>>();
+    for (const { entries, latestPrices, klines } of inputs) {
+      allEntries.push(...entries);
+      Object.assign(allLatest, latestPrices);
+      if (klines) for (const [code, m] of klines) allKlines.set(code, m);
+    }
+    const synthetic: TradeV2Group = {
+      id: "all", name: "全部组合",
+      totalCapital: Number.MAX_SAFE_INTEGER, dailyAddLimit: Number.MAX_SAFE_INTEGER,
+      stockLimits: [], allowShort: true,
+      createdAt: "", updatedAt: "",
+    };
+    const ga = analyzeGroup(synthetic, allEntries, allLatest, allKlines);
+    ga.positions = analysis.positions ?? ga.positions; // 复用已附加行情字段的（避免二次行情）
+    analysis.analysis = ga;
+    return analysis;
   }
 
   /** 组摘要（列表接口用） */

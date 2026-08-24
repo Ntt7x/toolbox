@@ -227,67 +227,96 @@ function xueqiuUrl(code: string): string {
 
 function EChart({ option, height = 280, style }: { option: echarts.EChartsOption; height?: number; style?: React.CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const chart = echarts.init(el);
     chart.setOption(option);
+    chartRef.current = chart;
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
       chart.dispose();
+      chartRef.current = null;
     };
   }, [option]);
-  return <div ref={ref} style={{ width: "100%", height, ...style }} />;
-}
-
-/** 组合净值曲线（现金+市值口径）：净值 = 期初本金 + (市值−累计净投入)；双 y 轴（左金额 + 右累计收益率%）；支持自定义日期范围（memo msvvmbl0） */
-function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
-  const option = useMemo<echarts.EChartsOption>(() => {
-    if (filtered.length === 0) return {};
-    let cum = 0;
-    const cumRealized = filtered.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
-    let inv = 0;
-    const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
-    const p0 = investedSeries[0] ?? 0;
-    const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
-    const base = navSeries[0] || 1;
-    const pctSeries = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
-    return {
-      tooltip: { trigger: "axis" },
-      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "累计收益率%"], top: 0, textStyle: { fontSize: 11 } },
-      grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
-      xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
-      yAxis: [
-        { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
-        { type: "value", axisLabel: { fontSize: 10, formatter: "{value}%" }, splitLine: { show: false } },
-      ],
-      series: [
-        { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
-        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
-        { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
-        { name: "累计收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
-      ],
-    };
-  }, [filtered]);
+  // 有图例（series 带 name）才显示 全选/全不选 开关
+  const hasLegend = !!(option.legend && ((option.series as any[]) ?? []).some((x) => x?.name));
+  const all = (v: boolean) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    // legendSelectAll/UnSelectAll 实测无效（memo）——手动逐个 dispatch，最可靠
+    const names = ((option.series as any[]) ?? []).map((s) => s?.name).filter(Boolean);
+    try {
+      for (const n of names) chart.dispatchAction({ type: v ? "legendSelect" : "legendUnSelect", name: n });
+    } catch { /* 静默 */ }
+  };
+  const btnStyle: React.CSSProperties = {
+    fontSize: "0.7rem", lineHeight: 1, padding: "0.18rem 0.5rem", borderRadius: 999,
+    border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer",
+  };
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.75rem", color: C.muted }}>区间</span>
-        <Input autoComplete="off" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
-        <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
-        <Input autoComplete="off" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
-        {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
-        <span style={{ fontSize: "0.7rem", color: C.muted, marginLeft: "auto" }}>收益率以区间起点净值为 100% 基准</span>
-      </div>
-      <EChart option={option} height={height} />
+    <div style={{ position: "relative", width: "100%", height, ...style }}>
+      <div ref={ref} style={{ width: "100%", height: "100%" }} />
+      {hasLegend && (
+        <div style={{ position: "absolute", top: 3, right: 6, display: "flex", gap: 4, zIndex: 9999 }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <button title="全部显示" onClick={(e) => { e.stopPropagation(); all(true); }} style={btnStyle}>全选</button>
+          <button title="全部隐藏" onClick={(e) => { e.stopPropagation(); all(false); }} style={btnStyle}>全不选</button>
+        </div>
+      )}
     </div>
   );
 }
+
+function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
+  const option = useMemo<echarts.EChartsOption>(() => {
+    if (filtered.length === 0) return {};
+    let cum = 0;
+    const cumRealized = filtered.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
+    let inv = 0;
+    const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
+    const p0 = investedSeries[0] ?? 0;
+    const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
+    const base = navSeries[0] || 1;
+    const pctSeries = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
+    return {
+      tooltip: { trigger: "axis" },
+      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "累计收益率%"], top: 0, textStyle: { fontSize: 11 } },
+      grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
+      xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
+      yAxis: [
+        { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
+        { type: "value", axisLabel: { fontSize: 10, formatter: "{value}%" }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
+        { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
+        { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
+        { name: "累计收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
+      ],
+    };
+  }, [filtered]);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.75rem", color: C.muted }}>区间</span>
+        <Input autoComplete="off" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
+        <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
+        <Input autoComplete="off" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
+        {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
+        <span style={{ fontSize: "0.7rem", color: C.muted, marginLeft: "auto" }}>收益率以区间起点净值为 100% 基准</span>
+      </div>
+      <EChart option={option} height={height} />
+    </div>
+  );
+}
+
+
 
 // ---------- 标的搜索输入 ----------
 
@@ -789,7 +818,7 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 // ---------- 仓位明细表 ----------
 
 function PositionsTable({ positions, groupView, onRowClick, exportName, positionPct }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string; positionPct?: number }) {
-  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "totalPnlPct" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
+  const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "changePct" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "totalPnlPct" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
   const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
   const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
@@ -847,10 +876,11 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
         <TableHeader>
           <TableRow>
             <TableHead>标的（点击行看交易历史）</TableHead>
+            {sortableHead("涨跌幅", "changePct", "text-right")}
+            <TableHead className="text-right">今日盈亏</TableHead>
             {sortableHead("数量", "quantity", "text-right")}
             {sortableHead("买入均价", "avgCost", "text-right")}
             {sortableHead("成本均价", "costAvg", "text-right")}
-            <TableHead className="text-right">最新价</TableHead>
             <TableHead className="text-right">成本</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
             {sortableHead("占总仓位", "weightPct", "text-right")}
@@ -865,10 +895,11 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
           {sorted.map((p) => (
             <TableRow key={p.code} onClick={() => onRowClick?.(p)} style={onRowClick ? { cursor: "pointer" } : undefined} title={onRowClick ? "查看交易历史" : undefined}>
               <TableCell><NameCode name={p.name} code={p.code} />{p.quantity < 0 ? <Badge style={{ marginLeft: 6, background: "#fff7ed", color: "#c2410c" }} title="空头（做空）：数量为负，价格下跌盈利">空头</Badge> : p.avgCost < 0 ? <Badge style={{ marginLeft: 6, background: "#faf5ff", color: "#7c3aed" }} title="负成本（已回本/做空记账）：盈亏率无意义">负成本</Badge> : null}</TableCell>
+              <TableCell className="text-right" style={{ color: p.changePct === undefined ? C.sub : p.changePct > 0 ? C.gain : p.changePct < 0 ? C.loss : C.sub, fontWeight: 600 }}>{p.changePct !== undefined ? `${p.changePct > 0 ? "+" : ""}${p.changePct}%` : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: pnlColor(p.todayPnl) }}>{p.todayPnl !== undefined ? cny2(p.todayPnl) : "—"}</TableCell>
               <TableCell className="text-right">{qtyFmt(Math.abs(p.quantity))}{p.quantity < 0 ? <span style={{ color: "#c2410c", fontSize: "0.72rem", marginLeft: 4 }}>卖</span> : null}</TableCell>
               <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
               <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降" : "未持仓"}>{p.costAvg !== undefined ? costFmt(p.costAvg) : "—"}</TableCell>
-              <TableCell className="text-right">{p.latestPrice ? costFmt(p.latestPrice) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
@@ -2038,10 +2069,11 @@ export default function TradeV2Tool() {
 
   // 组合净值曲线（现金+市值口径）：净值 = 期初本金 P0 + (市值 − 累计净投入)
   const donutOption = useMemo<echarts.EChartsOption>(() => {
-    if (!analysis) return {};
+    const src = isGroupView ? analysis : (global?.analysis ?? null);
+      if (!src) return {};
     const data = [
-      { name: "已实现", value: Math.abs(Math.round(analysis!.realizedPnl)), signed: analysis!.realizedPnl, color: C.accent },
-      { name: "未实现", value: Math.abs(Math.round(analysis!.unrealizedPnl)), signed: analysis!.unrealizedPnl, color: "#93c5fd" },
+      { name: "已实现", value: Math.abs(Math.round(src.realizedPnl)), signed: src.realizedPnl, color: C.accent },
+      { name: "未实现", value: Math.abs(Math.round(src.unrealizedPnl)), signed: src.unrealizedPnl, color: "#93c5fd" },
     ].filter((d) => d.value > 0);
     return {
       tooltip: { trigger: "item", formatter: (p: unknown) => {
@@ -2051,11 +2083,12 @@ export default function TradeV2Tool() {
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       series: [{ type: "pie", radius: ["45%", "70%"], center: ["50%", "44%"], data, label: { fontSize: 11, formatter: "{b}: {d}%" } }],
     };
-  }, [analysis]);
+  }, [analysis, global, isGroupView]);
 
   const attrOption = useMemo<echarts.EChartsOption>(() => {
-    if (!analysis) return {};
-    const top = analysis!.pnlAttribution.slice(0, 10);
+    const src = isGroupView ? analysis : (global?.analysis ?? null);
+      if (!src) return {};
+    const top = src.pnlAttribution.slice(0, 10);
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, formatter: (p: unknown) => {
         const arr = (p as { name: string; value: unknown }[]);
@@ -2067,7 +2100,7 @@ export default function TradeV2Tool() {
       yAxis: { type: "category", data: [...top].reverse().map((a) => a.name ?? a.code), axisLabel: { fontSize: 10 } },
       series: [{ type: "bar", data: [...top].reverse().map((a) => ({ value: Math.round(a.totalPnl), itemStyle: { color: a.totalPnl >= 0 ? C.gain : C.loss, borderRadius: 3 } })), barMaxWidth: 16 }],
     };
-  }, [analysis]);
+  }, [analysis, global, isGroupView]);
 
   const scaleOption = useMemo<echarts.EChartsOption>(() => {
     if (!analysis) return {};
@@ -2092,9 +2125,28 @@ export default function TradeV2Tool() {
     };
   }, [analysis]);
 
+  /** 日度买卖量（股数）柱状图（memo mt72jjg7 补充图表） */
+  const dailyVolOption = useMemo<echarts.EChartsOption>(() => {
+    const src = isGroupView ? analysis : (global?.analysis ?? null);
+      if (!src) return {};
+    const days = src.dailySeries.slice(-20);
+    return {
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v: unknown) => cny2(typeof v === "number" ? Math.abs(v) : 0) },
+      legend: { data: ["买入", "卖出"], top: 0, textStyle: { fontSize: 11 } },
+      grid: { left: 8, right: 8, bottom: 0, top: 28, containLabel: true },
+      xAxis: { type: "category", data: days.map((d) => d.date.slice(5)), axisLabel: { fontSize: 9, rotate: 45 } },
+      yAxis: { type: "value", name: "金额", nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9, formatter: (v: number) => (Math.abs(v) >= 10000 ? Math.round(Math.abs(v) / 10000) + "万" : String(Math.round(Math.abs(v)))) } },
+      series: [
+        { name: "买入", type: "bar", stack: "amt", data: days.map((d) => d.buyAmount), itemStyle: { color: C.gain } },
+        { name: "卖出", type: "bar", stack: "amt", data: days.map((d) => -d.sellAmount), itemStyle: { color: C.loss } },
+      ],
+    };
+  }, [analysis, global, isGroupView]);
+
   const monthOption = useMemo<echarts.EChartsOption>(() => {
-    if (!analysis) return {};
-    const months = analysis!.monthlySeries.map((m) => m.month);
+    const src = isGroupView ? analysis : (global?.analysis ?? null);
+      if (!src) return {};
+    const months = src.monthlySeries.map((m) => m.month);
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       legend: { data: ["买入", "卖出回款", "已实现"], top: 0, textStyle: { fontSize: 11 } },
@@ -2102,12 +2154,12 @@ export default function TradeV2Tool() {
       xAxis: { type: "category", data: months, axisLabel: { fontSize: 10 } },
       yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
       series: [
-        { name: "买入", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.buyAmount)), itemStyle: { color: "#93c5fd" }, barMaxWidth: 18 },
-        { name: "卖出回款", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.sellAmount)), itemStyle: { color: "#c4b5fd" }, barMaxWidth: 18 },
-        { name: "已实现", type: "bar", data: analysis!.monthlySeries.map((m) => Math.round(m.realizedPnl)), itemStyle: { color: "#f59e0b" }, barMaxWidth: 18 },
+        { name: "买入", type: "bar", data: src.monthlySeries.map((m) => Math.round(m.buyAmount)), itemStyle: { color: "#93c5fd" }, barMaxWidth: 18 },
+        { name: "卖出回款", type: "bar", data: src.monthlySeries.map((m) => Math.round(m.sellAmount)), itemStyle: { color: "#c4b5fd" }, barMaxWidth: 18 },
+        { name: "已实现", type: "bar", data: src.monthlySeries.map((m) => Math.round(m.realizedPnl)), itemStyle: { color: "#f59e0b" }, barMaxWidth: 18 },
       ],
     };
-  }, [analysis]);
+  }, [analysis, global, isGroupView]);
 
   const filteredEntries = useMemo(() => {
     // 分组过滤跟随顶部选中分组（selectedId；memo msx4rs60：功能区 tab 不再单独选分组）
@@ -2144,6 +2196,10 @@ export default function TradeV2Tool() {
   const totalRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.totalPnl / cur.totalCost) * 100 : undefined;
   const realizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.realizedPnl / cur.totalCost) * 100 : undefined;
   const unrealizedRate = cur && cur.totalCost > 0 && !cur.negCount ? (cur.unrealizedPnl / cur.totalCost) * 100 : undefined;
+  // 交易量按金额统计（memo：统计对象是金额不是股数）——从每日动态汇总累计买入/卖出金额
+  const srcD = isGroupView ? analysis : global;
+  const buyAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { buyAmount?: number }) => t + (d.buyAmount ?? 0), 0));
+  const sellAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { sellAmount?: number }) => t + (d.sellAmount ?? 0), 0));
 
   const groupTabStyle = (sel: boolean, hover = false): React.CSSProperties => ({
     padding: "0.4rem 0.85rem",
@@ -2223,24 +2279,34 @@ export default function TradeV2Tool() {
                 { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: cur.unrealizedPnl !== 0 && unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
                 { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
               ]} />
+              {/* 交易量统计（memo mt72jjg7）：累计买卖量 + 净买入 */}
+              <StatGroup title="交易量" icon="🔄" tone="indigo" items={[
+                { label: "累计买入", value: cny(buyAmt) },
+                { label: "累计卖出", value: cny(sellAmt) },
+                { label: "净买入", value: cny(buyAmt - sellAmt), color: buyAmt - sellAmt >= 0 ? C.gain : C.loss },
+              ]} />
               {isGroupView ? (
                 <StatGroup title="仓位" icon="🏦" tone="emerald" items={[
                   { label: "今日加仓", value: cny(cur.todayAdd ?? 0) },
                   { label: "剩余可用", value: cny(cur.remaining ?? 0) },
                   { label: "累计净投入", value: cny(cur.invested) },
                 ]} />
-              ) : (
-                <StatGroup title="组合整体" icon="🧩" tone="amber" items={[
-                  { label: "组合数", value: `${groups.length} 组`, sub: `在途 ${cur.openCount} 笔` },
-                  { label: "组合盈亏", value: pnlText(global?.totalPnl), color: pnlColor(global?.totalPnl), sub: globalRate !== undefined ? `盈亏率 ${pctSigned(globalRate)}` : undefined },
-                  { label: "集中度", value: maxGroup ? pct(maxGroup.pct) : "—", sub: maxGroup ? `最大：${maxGroup.name}` : undefined },
-                ]} />
-              )}
+              ) : null}
             </div>
           )}
 
             {!isGroupView && (
               <TabsContent value="analysis-global">
+          {/* 全部视图：组合整体（组合逻辑与展示单独抽出——mt52hjgp） */}
+          {!isGroupView && global && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginBottom: 12 }}>
+              <StatGroup title="组合整体" icon="🧩" tone="amber" items={[
+                { label: "组合数", value: `${groups.length} 组`, sub: `在途 ${global.openCount} 笔` },
+                { label: "组合盈亏", value: pnlText(global.totalPnl), color: pnlColor(global.totalPnl), sub: globalRate !== undefined ? `盈亏率 ${pctSigned(globalRate)}` : undefined },
+                { label: "集中度", value: maxGroup ? pct(maxGroup.pct) : "—", sub: maxGroup ? `最大：${maxGroup.name}` : undefined },
+              ]} />
+            </div>
+          )}
           {/* 全部视图：分组贡献明细（点击行跳转该组） */}
           {!isGroupView && global && (
             <GroupContributionTable groups={groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
@@ -2271,53 +2337,51 @@ export default function TradeV2Tool() {
 
             {(isGroupView && analysis) || (!isGroupView && global) ? (
               <TabsContent value="analysis">
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {isGroupView && analysis && (
-                  <>
-                  {analysis!.dailySeries.length === 0 && (
-                    <Card><CardContent style={{ padding: "1.2rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "1.6rem", marginBottom: 6 }}>🗒️</div>
-                      <div style={{ fontSize: "0.9rem", fontWeight: 600, color: C.text, marginBottom: 4 }}>该分组还没有任何交易</div>
-                      <div style={{ fontSize: "0.8rem", color: C.muted, marginBottom: 10 }}>去「💼 交易单」记入第一笔买入（期初建仓），仓位明细与收益分析会自动生成。</div>
-                      <Button size="sm" onClick={() => setTab("order")}>💼 去记一笔交易</Button>
-                    </CardContent></Card>
-                  )}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <Card><CardContent>
-                      <SectionTitle icon="🍩" color={C.accent}>收益构成（已实现 vs 未实现）</SectionTitle>
-                      {Math.abs(analysis!.realizedPnl) + Math.abs(analysis!.unrealizedPnl) > 0 ? <EChart option={donutOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无收益</div>}
-                    </CardContent></Card>
-                    <Card><CardContent>
-                      <SectionTitle icon="🏆" color={C.accent}>收益归因（Top 10 标的，红涨绿跌）</SectionTitle>
-                      {analysis!.pnlAttribution.length > 0 ? <EChart option={attrOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无交易</div>}
-                    </CardContent></Card>
-                    <Card style={{ gridColumn: "1 / -1" }}><CardContent>
-                      <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 历史价时间性）</SectionTitle>
-                      <NetValueChart daily={analysis!.dailySeries} />
-                    </CardContent></Card>
-                    <Card style={{ gridColumn: "1 / -1" }}><CardContent>
-                      <SectionTitle icon="🗓️" color={C.accent}>月度买入/卖出/已实现（时间性）</SectionTitle>
-                      <EChart option={monthOption} height={220} />
-                    </CardContent></Card>
-                  </div>
-                  <DailyTable dailySeries={analysis!.dailySeries} />
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <MonthlyTable monthlySeries={analysis!.monthlySeries} />
-                    <AttributionTable attribution={analysis!.pnlAttribution} onRowClick={(a) => setStockDlg({ code: a.code, name: a.name })} />
-                  </div>
-                  <PerformanceCard deals={analysis!.deals} metrics={analysis!.metrics} />
-                  <DealsTable deals={analysis!.deals} />
-                  </>
-                  )}
-                </div>
-                  {!isGroupView && global && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                      <Card style={{ gridColumn: "1 / -1" }}><CardContent>
-                        <SectionTitle icon="📅" color={C.accent}>组合每日动态（历史价口径 · 跨组合合并）</SectionTitle>
-                        <DailyTable dailySeries={global.dailySeries} />
-                      </CardContent></Card>
+                {(() => {
+                  // 全部组合首先是一般组合：收益分析 tab 与分组完全一致（mt52hjgp），仅数据源不同
+                  const src = isGroupView ? analysis : (global?.analysis ?? null);
+                  if (!src) return null;
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {isGroupView && src.dailySeries.length === 0 && (
+                        <Card><CardContent style={{ padding: "1.2rem", textAlign: "center" }}>
+                          <div style={{ fontSize: "1.6rem", marginBottom: 6 }}>🗒️</div>
+                          <div style={{ fontSize: "0.9rem", fontWeight: 600, color: C.text, marginBottom: 4 }}>该分组还没有任何交易</div>
+                          <div style={{ fontSize: "0.8rem", color: C.muted, marginBottom: 10 }}>去「💼 交易单」记入第一笔买入（期初建仓），仓位明细与收益分析会自动生成。</div>
+                          <Button size="sm" onClick={() => setTab("order")}>💼 去记一笔交易</Button>
+                        </CardContent></Card>
+                      )}
+                      <div style={{ fontSize: "0.75rem", color: C.muted, marginBottom: 2 }}>💡 图例操作：点击图例项切换单个系列；右上角「全选 / 全不选」批量控制</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <Card><CardContent>
+                          <SectionTitle icon="🍩" color={C.accent}>收益构成（已实现 vs 未实现）</SectionTitle>
+                          {Math.abs(src.realizedPnl) + Math.abs(src.unrealizedPnl) > 0 ? <EChart option={donutOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无收益</div>}
+                        </CardContent></Card>
+                        <Card><CardContent>
+                          <SectionTitle icon="🏆" color={C.accent}>收益归因（Top 10 标的，红涨绿跌）</SectionTitle>
+                          {src.pnlAttribution.length > 0 ? <EChart option={attrOption} height={220} /> : <div style={{ color: C.muted, fontSize: "0.8rem", padding: "2rem 0", textAlign: "center" }}>暂无交易</div>}
+                        </CardContent></Card>
+                        <Card style={{ gridColumn: "1 / -1" }}><CardContent>
+                          <SectionTitle icon="📊" color={C.accent}>组合净值曲线（现金+市值口径 · 历史价时间性）</SectionTitle>
+                          <NetValueChart daily={src.dailySeries} />
+                        </CardContent></Card>
+                        <Card style={{ gridColumn: "1 / -1" }}><CardContent>
+                          <SectionTitle icon="🗓️" color={C.accent}>月度买入/卖出/已实现（时间性）</SectionTitle>
+                          <EChart option={monthOption} height={220} />
+                          <SectionTitle icon="🔄" color={C.accent}>日度买卖量（近 20 交易日，金额）</SectionTitle>
+                          <EChart option={dailyVolOption} height={200} />
+                        </CardContent></Card>
+                      </div>
+                      <DailyTable dailySeries={src.dailySeries} />
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <MonthlyTable monthlySeries={src.monthlySeries} />
+                        <AttributionTable attribution={src.pnlAttribution} onRowClick={(a) => setStockDlg({ code: a.code, name: a.name })} />
+                      </div>
+                      <PerformanceCard deals={src.deals} metrics={src.metrics} />
+                      <DealsTable deals={src.deals} />
                     </div>
-                  )}
+                  );
+                })()}
               </TabsContent>
             ) : null}
 

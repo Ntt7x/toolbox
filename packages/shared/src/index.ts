@@ -1874,6 +1874,10 @@ export interface TradeV2Position {
   costValue: number;
   /** 最新价（行情可得时） */
   latestPrice?: number;
+  /** 实时涨跌幅 %（最新价 vs 昨收，行情可得时） */
+  changePct?: number;
+  /** 今日盈亏（涨跌额 × 持仓数量，行情可得时） */
+  todayPnl?: number;
   /** 标的市场年化波动率 %（行情日K，近60交易日；与交易无关） */
   volatility?: number;
   /** 波动分级：low/mid/high（相对该标的历史波动分布 z-score） */
@@ -1923,6 +1927,10 @@ export interface TradeV2DailyPoint {
   buyAmount: number;
   /** 当日卖出回款（扣手续费） */
   sellAmount: number;
+  /** 当日买入量（股） */
+  buyQty: number;
+  /** 当日卖出量（股） */
+  sellQty: number;
   /** 当日已实现盈亏（卖出时按摊余成本结算） */
   realizedPnl: number;
   /** 当日收盘持仓市值（成本口径 Σ qty×avgCost） */
@@ -1994,6 +2002,10 @@ export interface TradeV2GroupAnalysis {
   remaining: number;
   /** 当日加仓金额合计 */
   todayAdd: number;
+  /** 累计买入量（股，全部交易） */
+  buyQty: number;
+  /** 累计卖出量（股，全部交易） */
+  sellQty: number;
   /** 在仓标的数 */
   openCount: number;
   /** 负成本（已回本/做空记账）标的数——存在时盈亏率无意义（显示 —） */
@@ -2128,6 +2140,16 @@ export interface TradeV2GlobalAnalysis {
   realizedTimeline: { date: string; cumulative: number }[];
   /** 组合每日动态（跨组合按日合并市值/买入/卖出/已实现/持仓数；成本口径） */
   dailySeries: TradeV2DailyPoint[];
+  /** 全部组合作为一般组合的分析（与分组同一数据结构 analyzeGroup 输出——mt52hjgp） */
+  analysis?: TradeV2GroupAnalysis;
+  /** 组合分析（收益分析能力对齐一般分组）：累计买卖量 / 月度 / 归因 / 综合指标 */
+  buyQty?: number;
+  sellQty?: number;
+  monthlySeries?: TradeV2MonthlyPoint[];
+  pnlAttribution?: TradeV2PnlAttribution[];
+  metrics?: TradeV2Metrics;
+  /** 全部交易段（收益分析 PerformanceCard/DealsTable 复用一般分组渲染） */
+  deals?: TradeV2Deal[];
 }
 
 // ---------- 响应 ----------

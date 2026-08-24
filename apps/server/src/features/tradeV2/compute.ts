@@ -278,6 +278,12 @@ export function analyzeGroup(
   let invested = 0;
   let todayAdd = 0;
   const today = todayStr();
+  // 买卖量统计（memo mt72jjg7）
+  let buyQty = 0; let sellQty = 0;
+  for (const e of entries) {
+    const q = Math.abs(e.quantity);
+    if (e.action === "buy") buyQty += q; else sellQty += q;
+  }
 
   // 已实现盈亏：从重放状态累计（含已清仓标的——positions 只含 qty>0，会漏掉清仓标的历史已实现）
   const states = replayEntries(entries);
@@ -336,6 +342,8 @@ export function analyzeGroup(
     ...(group.totalCapital > 0 ? { positionPct: Math.round((totalMv / group.totalCapital) * 1000) / 10 } : {}),
     remaining: group.totalCapital - totalMv,
     todayAdd,
+    buyQty,
+    sellQty,
     openCount: positions.length,
     negCount,
     closedCount: closed.length,
@@ -368,6 +376,8 @@ export function buildDailySeries(
     date: string;
     buyAmount: number;
     sellAmount: number;
+    buyQty: number;
+    sellQty: number;
     cumRealized: number;
     marketValue: number;
     openCount: number;
@@ -382,6 +392,8 @@ export function buildDailySeries(
         date: e.date,
         buyAmount: 0,
         sellAmount: 0,
+        buyQty: 0,
+        sellQty: 0,
         cumRealized: prev?.cumRealized ?? 0,
         marketValue: prev?.marketValue ?? 0,
         openCount: prev?.openCount ?? 0,
@@ -393,8 +405,8 @@ export function buildDailySeries(
     const amount = e.quantity * e.price;
     // 做空感知重放（与 replayEntries 同一数学）；卖出超持仓=开空（组 allowShort 才合法）
     applyEntry(st, e);
-    if (e.action === "buy") row.buyAmount += amount + fee;
-    else row.sellAmount += amount - fee;
+    if (e.action === "buy") { row.buyAmount += amount + fee; row.buyQty += e.quantity; }
+    else { row.sellAmount += amount - fee; row.sellQty += Math.abs(e.quantity); }
     state.set(e.code, st);
     // 收盘口径重算（该日最后一条后即是当日收盘）；空头 qty<0 计入 openCount
     // 市值：有历史日 K 用「当日收盘价 × qty」真实市值；无则回退成本基数（负=空头占用）
@@ -438,6 +450,8 @@ function priceOnOrBefore(hist: Map<string, number>, date: string): number | unde
       date: r.date,
       buyAmount: Math.round(r.buyAmount * 100) / 100,
       sellAmount: Math.round(r.sellAmount * 100) / 100,
+      buyQty: r.buyQty,
+      sellQty: r.sellQty,
       realizedPnl,
       marketValue: Math.round(r.marketValue * 100) / 100,
       openCount: r.openCount,
@@ -701,6 +715,10 @@ export function buildGlobalAnalysis(
   let winTotal = 0;
   let daysTotal = 0;
   const timeline: { date: string; amount: number }[] = [];
+  /** 组合分析数据（跨组合聚合——memo mt52hjgp：全部组合复用一般组合的收益分析能力） */
+  const allEntries: TradeV2Entry[] = [];
+  const allLatest: Record<string, number> = {};
+  const allDeals: TradeV2Deal[] = [];
   /** 跨组合按 code 合并持仓（成本摊薄口径，服务端权威——memo mt1zg3xk） */
   const posMap = new Map<string, TradeV2Position>();
 
@@ -742,6 +760,9 @@ export function buildGlobalAnalysis(
       winTotal += Math.round((a.winRate / 100) * a.closedCount);
     }
     daysTotal += (a.avgDays ?? 0) * a.closedCount;
+    allEntries.push(...entries);
+    Object.assign(allLatest, latestPrices);
+    allDeals.push(...a.deals);
     for (const d of a.deals) {
       if (d.status === "closed" && d.exitDate && d.pnl !== undefined) {
         timeline.push({ date: d.exitDate, amount: d.pnl });
@@ -760,9 +781,11 @@ export function buildGlobalAnalysis(
   const dailyByDate = new Map<string, TradeV2DailyPoint>();
   for (const { entries, klines } of groups) {
     for (const d of buildDailySeries(entries, klines)) {
-      const row = dailyByDate.get(d.date) ?? { date: d.date, buyAmount: 0, sellAmount: 0, realizedPnl: 0, marketValue: 0, openCount: 0 };
+      const row = dailyByDate.get(d.date) ?? { date: d.date, buyAmount: 0, sellAmount: 0, buyQty: 0, sellQty: 0, realizedPnl: 0, marketValue: 0, openCount: 0 };
       row.buyAmount = Math.round((row.buyAmount + d.buyAmount) * 100) / 100;
       row.sellAmount = Math.round((row.sellAmount + d.sellAmount) * 100) / 100;
+      row.buyQty += d.buyQty;
+      row.sellQty += d.sellQty;
       row.realizedPnl = Math.round((row.realizedPnl + d.realizedPnl) * 100) / 100;
       row.marketValue = Math.round((row.marketValue + d.marketValue) * 100) / 100;
       row.openCount += d.openCount;
@@ -783,6 +806,13 @@ export function buildGlobalAnalysis(
     openCount,
     negCount,
     closedCount,
+    // 组合分析（收益分析能力对齐一般分组——mt52hjgp）
+    buyQty: dailySeries.reduce((t, d) => t + d.buyQty, 0),
+    sellQty: dailySeries.reduce((t, d) => t + d.sellQty, 0),
+    monthlySeries: buildMonthlySeries(allEntries),
+    pnlAttribution: buildPnlAttribution(allEntries, allLatest),
+    metrics: computeMetrics(dailySeries, allDeals),
+    deals: allDeals,
     ...(closedCount > 0 ? { winRate: Math.round((winTotal / closedCount) * 1000) / 10 } : {}),
     ...(closedCount > 0 ? { avgDays: Math.round((daysTotal / closedCount) * 10) / 10 } : {}),
     realizedTimeline,

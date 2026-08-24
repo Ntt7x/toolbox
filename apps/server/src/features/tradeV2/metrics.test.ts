@@ -9,6 +9,8 @@ const daily = (mvs: number[]): TradeV2DailyPoint[] =>
     date: `2026-08-${String(i + 1).padStart(2, "0")}`,
     buyAmount: 0,
     sellAmount: 0,
+    buyQty: 0,
+    sellQty: 0,
     realizedPnl: 0,
     marketValue,
     openCount: 0,
