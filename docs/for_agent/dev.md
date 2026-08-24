@@ -8,6 +8,7 @@
 > - **按需**：§7 领域索引（涉足对应领域时）、§8 历史/备忘录（新会话查进度时）
 > - **命令速查**：`docs/for_agent/commands.md`（toolbox 统一入口）
 
+- 收益率口径：`docs/for_agent/domains/return-metrics.md`（净值收益率 TWR 默认 / 最大成本收益率可切换——trade-v2 净值曲线）
 ## ⛔ 最深刻的教训（每个会话开工先扫一眼，血泪换来的）
 
 | # | 教训 | 一句话 | 详情 |

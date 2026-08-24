@@ -270,23 +270,31 @@ function EChart({ option, height = 280, style }: { option: echarts.EChartsOption
   );
 }
 
-function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
-  const option = useMemo<echarts.EChartsOption>(() => {
-    if (filtered.length === 0) return {};
-    let cum = 0;
-    const cumRealized = filtered.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
-    let inv = 0;
-    const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
-    const p0 = investedSeries[0] ?? 0;
-    const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
-    const base = navSeries[0] || 1;
-    const pctSeries = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
+function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  // 收益率口径（memo：行业两种标准——净值收益率 TWR 默认 / 最大成本收益率 可切换）
+  const [retMode, setRetMode] = useState<"nav" | "maxCost">("nav");
+  const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
+  const option = useMemo<echarts.EChartsOption>(() => {
+    if (filtered.length === 0) return {};
+    let cum = 0;
+    const cumRealized = filtered.map((d) => { cum += d.realizedPnl; return Math.round(cum * 100) / 100; });
+    let inv = 0;
+    const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
+    const p0 = investedSeries[0] ?? 0;
+    const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
+    // ① 净值收益率（时间加权 TWR，默认）：区间起点净值归一，r=∏(1+日收益率)−1=NAV末/NAV初−1
+    const base = navSeries[0] || 1;
+    const navPct = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
+    // ② 最大成本收益率：累计收益(NAV−期初本金) ÷ 历史最大净投入成本 C_max（保守口径）
+    const cMax = Math.max(...investedSeries, 0);
+    const mcPct = navSeries.map((v) => (cMax > 0 ? Math.round(((v - p0) / cMax) * 10000) / 100 : 0));
+    const pctSeries = retMode === "nav" ? navPct : mcPct;
+    const pctName = retMode === "nav" ? "净值收益率%" : "最大成本收益率%";
     return {
       tooltip: { trigger: "axis" },
-      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "累计收益率%"], top: 0, textStyle: { fontSize: 11 } },
+      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", pctName], top: 0, textStyle: { fontSize: 11 } },
       grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
       xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
       yAxis: [
@@ -297,10 +305,10 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
         { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
         { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
         { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
-        { name: "累计收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
-      ],
-    };
-  }, [filtered]);
+        { name: pctName, type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
+      ],
+    };
+  }, [filtered, retMode]);
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
@@ -308,8 +316,28 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
         <Input autoComplete="off" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
         <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
         <Input autoComplete="off" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
-        {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
-        <span style={{ fontSize: "0.7rem", color: C.muted, marginLeft: "auto" }}>收益率以区间起点净值为 100% 基准</span>
+        {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
+        <div style={{ display: "flex", gap: 4, marginLeft: "auto", alignItems: "center" }}>
+          <span style={{ fontSize: "0.7rem", color: C.muted }}>收益率口径</span>
+          {(["nav", "maxCost"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setRetMode(m)}
+              style={{
+                fontSize: "0.72rem", padding: "0.16rem 0.55rem", borderRadius: 999, cursor: "pointer",
+                border: "1px solid " + (retMode === m ? C.accent : "#e2e8f0"),
+                background: retMode === m ? C.accentBg : "#fff",
+                color: retMode === m ? "#1d4ed8" : "#64748b",
+                fontWeight: retMode === m ? 700 : 500,
+              }}
+            >
+              {m === "nav" ? "净值收益率" : "最大成本收益率"}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: "0.7rem", color: C.muted, width: "100%" }}>
+          {retMode === "nav" ? "净值收益率（时间加权 TWR）：区间起点净值归一 100%，r = ∏(1+日收益率) − 1，剔除资金进出影响" : "最大成本收益率：累计收益 ÷ 历史最大净投入成本，保守反映实际赚钱效率"}
+        </span>
       </div>
       <EChart option={option} height={height} />
     </div>
