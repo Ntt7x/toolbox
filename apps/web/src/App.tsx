@@ -23,6 +23,7 @@ import ExperimentFrameworkTool from "./tools/ExperimentFrameworkTool";
 import ExperimentEcTool from "./tools/ExperimentEcTool";
 import ExperimentBmpiTool from "./tools/ExperimentBmpiTool";
 import MemoTool from "./settings/MemoTool";
+import { DataInfraTool } from "./settings/DataInfraTool";
 import LlmSettings from "./settings/LlmSettings";
 import LocalData from "./settings/LocalData";
 import AgentSessions from "./settings/AgentSessions";
@@ -68,6 +69,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { name: "LLM 用量", path: "/settings/llm", icon: "🤖" },
       { name: "LLM 会话", path: "/settings/agent-sessions", icon: "💬" },
       { name: "改进备忘录", path: "/settings/memo", icon: "📝" },
+      { name: "数据基础设施", path: "/settings/data-infra", icon: "⚙️" },
     ],
   },
   { label: "交易", toolIds: ["grid-plan", "kelly", "cb-rate", "treasury-fx", "reverse-repo", "watchlist", "trade-v2"] },
@@ -386,6 +388,7 @@ export default function App() {
               <Route path="/settings/arch-graph" element={<ArchGraph />} />
               <Route path="/settings/local-data" element={<LocalData />} />
               <Route path="/settings/memo" element={<MemoTool />} />
+              <Route path="/settings/data-infra" element={<DataInfraTool />} />
               {tools.map((t) => (
                 <Route key={t.id} path={t.path} element={<ToolPage t={t} />} />
               ))}

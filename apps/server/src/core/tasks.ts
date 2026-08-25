@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { kvGet, kvListRaw, kvSet } from "./kvStore.js";
+import { recordExternalRun, registerExternalTask } from "./data-infra/index.js";
 import type { AsyncTaskResult, AsyncTaskStatus, TaskHistoryEntry } from "@toolbox/shared";
 
 interface TaskHandle<T = unknown> {
@@ -40,9 +41,21 @@ const HISTORY_PREFIX = "taskHistory:";
 /** 每个模块历史保留条数（超出截断最旧） */
 const HISTORY_LIMIT = 50;
 
-/** 任务进入终态：记录结束时间并归档到历史 KV（module 提供时） */
+/** 任务进入终态：记录结束时间并归档到历史 KV（module 提供时）；同步 data-infra 生命周期（登记模式） */
 function finalizeTask(handle: TaskHandle): void {
   handle.finishedAt = Date.now();
+  if (handle.module) {
+    // 数据工程登记模式：同步外部托管任务生命周期到 data-infra（运管可见 + 历史）
+    try {
+      const st = handle.status === "done" ? "done" : handle.status === "cancelled" ? "paused" : "failed";
+      recordExternalRun(handle.module, st as "done" | "failed" | "paused", {
+        ok: handle.status === "done",
+        message: handle.message ?? (handle.status === "done" ? "ok" : ""),
+      });
+    } catch {
+      // 同步失败静默（不影响主流程）
+    }
+  }
   if (!handle.module) return;
   try {
     const key = `${HISTORY_PREFIX}${handle.module}`;
@@ -87,6 +100,16 @@ export function createTask<T>(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const handle: TaskHandle<T> = { id, status: "pending", createdAt: Date.now(), controller, ...(opts.module ? { module: opts.module } : {}), ...(opts.name ? { name: opts.name } : {}) };
   tasks.set(id, handle);
+
+  // 数据工程登记模式：module 提供时登记外部托管任务（运管可见）+ 标记 running
+  if (opts.module) {
+    try {
+      registerExternalTask({ id: opts.module, name: opts.name ?? `${opts.module} 分析` });
+      recordExternalRun(opts.module, "running");
+    } catch {
+      // 登记失败静默（不影响任务主流程）
+    }
+  }
 
   // 超时保护：超时未完成 → 自动终止
   if (timeoutMs > 0) {

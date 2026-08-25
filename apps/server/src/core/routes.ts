@@ -17,7 +17,9 @@ import { DEFAULT_MODEL, chat, clearApiKey, getDeepSeekBalance, getLlmUsageSummar
 import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./prompts.js";
 import { generateDependencyGraph } from "./dependencyGraph.js";
 import { getQuoteSnapshot } from "./quote.js";
-import { registerDataSource } from "./dataRegistry.js";
+import { registerDataSource, unmarkedKvEntries } from "./dataRegistry.js";
+import { deleteTask, listConsumers, listDerivators, listQueues, listTaskHistory, listTasks, orphanQueues, peekQueue, queueAudit, queueStats, requeueStale, runTask, scheduleTask, setTaskStatus, triggerDerivator } from "./data-infra/index.js";
+import { clearQueue } from "./data-infra/queue.js";
 
 // 注册数据源：LLM 用量日志（本地数据管理可见）
 registerDataSource({
@@ -144,5 +146,138 @@ export function registerPromptRoutes(app: Hono): void {
       return c.json({ ok: false, message: "未知提示词 id" }, 404);
     }
     return c.json({ ok: true, id: c.req.param("id") });
+  });
+}
+
+// ============================================================
+// 数据工程基础设施运管 HTTP 出口：/api/data-infra/*
+// 统一观察数据/消息/任务/调度四层生命周期，提供任务触发/暂停/回溯能力
+// ============================================================
+export function registerDataInfraRoutes(app: Hono): void {
+  // 任务清单（运管：状态/上次/下次执行）
+  app.get(`${API_PREFIX}/data-infra/tasks`, (c) => c.json({ ok: true, tasks: listTasks() }));
+
+  // 任务执行历史
+  app.get(`${API_PREFIX}/data-infra/tasks/:id/history`, (c) => c.json({ ok: true, entries: listTaskHistory(c.req.param("id")) }));
+
+  // 立即触发（手动）
+  app.post(`${API_PREFIX}/data-infra/tasks/:id/trigger`, async (c) => {
+    const r = await runTask(c.req.param("id"), { trigger: "manual" });
+    return c.json({ ok: r.ok, message: r.message ?? "ok" }, r.ok ? 200 : 400);
+  });
+
+  // 暂停 / 恢复（恢复后重新排调度）
+  app.post(`${API_PREFIX}/data-infra/tasks/:id/pause`, (c) => c.json({ ok: setTaskStatus(c.req.param("id"), "paused") }));
+  app.post(`${API_PREFIX}/data-infra/tasks/:id/resume`, (c) => {
+    const ok = setTaskStatus(c.req.param("id"), "queued");
+    if (ok) scheduleTask(c.req.param("id"));
+    return c.json({ ok });
+  });
+
+  // 删除任务（定义 + 状态 + 历史）
+  app.delete(`${API_PREFIX}/data-infra/tasks/:id`, (c) => c.json({ ok: deleteTask(c.req.param("id")) }));
+
+  // 数据回溯（backfill）：幂等重跑重建派生数据（handler 必须幂等）
+  app.post(`${API_PREFIX}/data-infra/backfill`, async (c) => {
+    const raw = (await c.req.json().catch(() => null)) as { task?: string; range?: { from?: string; to?: string }; force?: boolean } | null;
+    if (!raw?.task) return c.json({ ok: false, message: "task 必填" }, 400);
+    const r = await runTask(raw.task, { trigger: "backfill", range: raw.range, force: raw.force });
+    return c.json({ ok: r.ok, message: r.message ?? "ok" }, r.ok ? 200 : 400);
+  });
+
+  // 消息队列统计（积压/处理中/失败）
+  app.get(`${API_PREFIX}/data-infra/queues`, (c) => c.json({ ok: true, queues: listQueues().map((q) => queueStats(q)) }));
+
+  // 清空队列（运管/孤儿队列清理）
+  app.delete(`${API_PREFIX}/data-infra/queues/:name`, (c) => {
+    const name = c.req.param("name");
+    if (!name || !name.startsWith("dataInfra:q:")) clearQueue(name);
+    return c.json({ ok: true });
+  });
+
+  // 查看队列消息（运管诊断；不改变状态）
+  app.get(`${API_PREFIX}/data-infra/queues/:name/messages`, (c) => {
+    const name = c.req.param("name");
+    const limit = Number(c.req.query("limit") ?? 20);
+    return c.json({ ok: true, messages: peekQueue(name, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 20) });
+  });
+
+  // 队列消费审计（事件日志理念：消息处理可追溯——最近 done/failed 记录）
+  app.get(`${API_PREFIX}/data-infra/queues/:name/audit`, (c) => {
+    const name = c.req.param("name");
+    const limit = Number(c.req.query("limit") ?? 50);
+    return c.json({ ok: true, entries: queueAudit(name, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 50) });
+  });
+
+  // 恢复处理超时的 processing 消息（消费者崩溃/进程重启兜底）
+  app.post(`${API_PREFIX}/data-infra/queues/:name/requeue-stale`, (c) => {
+    const name = c.req.param("name");
+    const ageMs = Number(c.req.query("ageMs") ?? 5 * 60 * 1000);
+    const n = requeueStale(name, Number.isFinite(ageMs) ? ageMs : 5 * 60 * 1000);
+    return c.json({ ok: true, restored: n, message: `已恢复 ${n} 条处理超时消息` });
+  });
+
+  // 派生器清单（含运行记录）
+  app.get(`${API_PREFIX}/data-infra/derivators`, (c) => c.json({ ok: true, derivators: listDerivators() }));
+
+  // 手动触发派生器（运管/测试）
+  app.post(`${API_PREFIX}/data-infra/derivators/:id/trigger`, async (c) => {
+    const r = await triggerDerivator(c.req.param("id"));
+    return c.json({ ok: r.ok, message: r.message }, r.ok ? 200 : 400);
+  });
+
+  // 消费者清单（含运行状态/最近错误）
+  app.get(`${API_PREFIX}/data-infra/consumers`, (c) => c.json({ ok: true, consumers: listConsumers() }));
+
+  // 全景（运管页一次拉全）：任务 + 派生器 + 消费者 + 队列积压 + 孤儿队列
+  app.get(`${API_PREFIX}/data-infra/overview`, (c) =>
+    c.json({
+      ok: true,
+      tasks: listTasks(),
+      derivators: listDerivators().map((d) => ({ id: d.id, queue: d.queue, when: d.when, runs: d.runs.slice(-5) })),
+      consumers: listConsumers(),
+      queues: listQueues().map((q) => queueStats(q)),
+      orphanQueues: orphanQueues(),
+    }),
+  );
+
+  // 健康检查（一键体检）：任务失败/队列积压/孤儿队列/消费者未运行/派生失败/未标记 KV
+  app.get(`${API_PREFIX}/data-infra/health`, (c) => {
+    const tasks = listTasks();
+    const queues = listQueues().map((q) => queueStats(q));
+    const consumers = listConsumers();
+    const derivators = listDerivators();
+    const problems: string[] = [];
+    const failedTasks = tasks.filter((t) => t.status === "failed");
+    const pausedTasks = tasks.filter((t) => t.status === "paused");
+    if (failedTasks.length) problems.push(`${failedTasks.length} 个任务失败：${failedTasks.map((t) => t.id).join("、")}`);
+    const backlog = queues.filter((q) => q.pending > 0);
+    if (backlog.length) problems.push(`${backlog.length} 个队列积压：${backlog.map((q) => `${q.name}(${q.pending})`).join("、")}`);
+    const orphan = orphanQueues();
+    if (orphan.length) problems.push(`孤儿队列（有消息无消费者）：${orphan.join("、")}`);
+    const notRunning = consumers.filter((c) => !c.running);
+    if (notRunning.length) problems.push(`${notRunning.length} 个消费者未运行：${notRunning.map((c) => c.queue).join("、")}`);
+    const derivFailed = derivators.filter((d) => d.runs.some((r) => !r.ok));
+    if (derivFailed.length) problems.push(`${derivFailed.length} 个派生器有失败记录：${derivFailed.map((d) => d.id).join("、")}`);
+    const unmarked = unmarkedKvEntries().length;
+    if (unmarked > 0) problems.push(`${unmarked} 条未标记 KV（数据源治理缺失）`);
+    return c.json({
+      ok: true,
+      healthy: problems.length === 0,
+      problems,
+      summary: {
+        tasks: tasks.length,
+        failedTasks: failedTasks.length,
+        pausedTasks: pausedTasks.length,
+        queues: queues.length,
+        backlog: backlog.length,
+        orphanQueues: orphan.length,
+        consumers: consumers.length,
+        notRunning: notRunning.length,
+        derivators: derivators.length,
+        derivFailed: derivFailed.length,
+        unmarkedKv: unmarked,
+      },
+    });
   });
 }

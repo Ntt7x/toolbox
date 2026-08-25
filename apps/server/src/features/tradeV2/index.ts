@@ -8,6 +8,7 @@ import type { Context } from "hono";
 import { API_PREFIX, type ToolMeta, type TradeV2CheckResult, type TradeV2Entry } from "@toolbox/shared";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getTradeV2Ctx } from "./context.js";
+import { registerSnapshotTask } from "./snapshotTask.js";
 import { parseEntryInput, parseStockLimits, resolveStockNameCached, type TradeV2EntryInput } from "./services.js";
 import { listGroups } from "./store.js";
 import { summarizeOrder, todayStr } from "./compute.js";
@@ -32,6 +33,9 @@ export function registerTradeV2Feature(app: Hono) {
     tag: "交易数据",
     description: "仓位管理 v2：分组（tradeV2:group:）与逐笔交易（tradeV2:trade:）",
   });
+
+  // 净值快照任务（数据工程集成运用）：每日收盘后调度生成日终快照序列
+  registerSnapshotTask(getTradeV2Ctx);
 
   // ---------- 总览：分组摘要 + 全部交易 ----------
 

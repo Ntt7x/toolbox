@@ -3,6 +3,7 @@
 // 不触网（知乎风控/需要登录态，真实抓取留待用户 cookie 后验收）
 // ============================================================
 import { test } from "node:test";
+import { deriveZhihuStats } from "./index.js";
 import assert from "node:assert/strict";
 import { extractUrlToken, htmlToMarkdown, parseZhihuComment, parseZhihuTarget } from "./service.js";
 
@@ -110,4 +111,25 @@ test("parseZhihuTarget：zhuanlan 专栏文章链接（含分享文本）识别�
   const r2 = parseZhihuTarget("https://zhuanlan.zhihu.com/p/123456");
   assert.equal(r2.kind, "article");
   assert.equal(r2.url, "https://zhuanlan.zhihu.com/p/123456");
+});
+
+test("deriveZhihuStats：类型分布/平均长度/日期范围聚合", () => {
+  const items = [
+    { kind: "answer", content: "答一答一", createdAt: "2026-08-01T00:00:00Z", url: "u1", title: "t1" },
+    { kind: "answer", content: "答二答二答二", createdAt: "2026-08-02T00:00:00Z", url: "u2", title: "t2" },
+    { kind: "pin", content: "想法一", createdAt: "2026-08-03T00:00:00Z", url: "u3", title: "t3" },
+  ] as any;
+  const st = deriveZhihuStats(items);
+  assert.equal(st.total, 3);
+  assert.deepEqual(st.byKind, { answer: 2, pin: 1 });
+  assert.equal(st.avgContentLen, 4); // (4+6+3)/3 ≈ 4
+  assert.deepEqual(st.dateRange, { from: "2026-08-01", to: "2026-08-03" });
+});
+
+test("deriveZhihuStats：空列表", () => {
+  const st = deriveZhihuStats([]);
+  assert.equal(st.total, 0);
+  assert.deepEqual(st.byKind, {});
+  assert.equal(st.avgContentLen, 0);
+  assert.equal(st.dateRange, undefined);
 });

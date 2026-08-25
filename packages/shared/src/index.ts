@@ -2261,3 +2261,32 @@ export interface ExperimentBmpiResponse {
   cachedAt?: string;
   model?: string;
 }
+
+// ---------- 数据工程基础设施（data-infra 运管） ----------
+export interface DataInfraTaskSummary {
+  id: string;
+  type: string;
+  name: string;
+  cron?: string;
+  status: "queued" | "running" | "done" | "failed" | "paused";
+  lastRunAt?: number;
+  lastResult?: string;
+  nextRunAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface DataInfraTaskHistoryEntry {
+  at: number;
+  trigger?: string;
+  status: string;
+  message?: string;
+  durationMs?: number;
+}
+export interface DataInfraQueueStats {
+  name: string;
+  pending: number;
+  processing: number;
+  done: number;
+  failed: number;
+  total: number;
+}

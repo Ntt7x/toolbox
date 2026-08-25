@@ -225,7 +225,7 @@ function xueqiuUrl(code: string): string {
 
 // ---------- ECharts 容器 ----------
 
-function EChart({ option, height = 280, style }: { option: echarts.EChartsOption; height?: number; style?: React.CSSProperties }) {
+function EChart({ option, height = 280, style, emptyText }: { option: echarts.EChartsOption; height?: number; style?: React.CSSProperties; emptyText?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   useEffect(() => {
@@ -259,12 +259,18 @@ function EChart({ option, height = 280, style }: { option: echarts.EChartsOption
   };
   return (
     <div style={{ position: "relative", width: "100%", height, ...style }}>
-      <div ref={ref} style={{ width: "100%", height: "100%" }} />
-      {hasLegend && (
-        <div style={{ position: "absolute", top: 3, right: 6, display: "flex", gap: 4, zIndex: 9999 }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-          <button title="全部显示" onClick={(e) => { e.stopPropagation(); all(true); }} style={btnStyle}>全选</button>
-          <button title="全部隐藏" onClick={(e) => { e.stopPropagation(); all(false); }} style={btnStyle}>全不选</button>
-        </div>
+      {emptyText ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: "0.8rem", textAlign: "center", padding: "0 1rem" }}>{emptyText}</div>
+      ) : (
+        <>
+          <div ref={ref} style={{ width: "100%", height: "100%" }} />
+          {hasLegend && (
+            <div style={{ position: "absolute", top: 3, right: 6, display: "flex", gap: 4, zIndex: 9999 }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <button title="全部显示" onClick={(e) => { e.stopPropagation(); all(true); }} style={btnStyle}>全选</button>
+              <button title="全部隐藏" onClick={(e) => { e.stopPropagation(); all(false); }} style={btnStyle}>全不选</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -339,10 +345,10 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
           {retMode === "nav" ? "净值收益率（时间加权 TWR）：区间起点净值归一 100%，r = ∏(1+日收益率) − 1，剔除资金进出影响" : "最大成本收益率：累计收益 ÷ 历史最大净投入成本，保守反映实际赚钱效率"}
         </span>
       </div>
-      <EChart option={option} height={height} />
-    </div>
-  );
-}
+      <EChart option={option} height={height} emptyText={filtered.length === 0 ? "暂无交易数据——录入交易后生成净值曲线" : filtered.length === 1 ? "仅 1 个交易日（单点，暂无法成曲线）" : undefined} />
+    </div>
+  );
+}
 
 
 

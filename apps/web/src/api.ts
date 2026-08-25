@@ -482,4 +482,23 @@ export const api = {
     request<{ ok: boolean; items: import("@toolbox/shared").KnowledgeImportRecordItem[]; totalImported: number; distribution?: Record<string, number>; message?: string }>(`/tools/knowledge-hub/virt/${encodeURIComponent(name)}/import-batch`, jsonInit("POST", { urls })),
   knowledgeHubImportHistory: () => request<{ ok: boolean; items: import("@toolbox/shared").KnowledgeImportRecord[] }>("/tools/knowledge-hub/import-history"),
   knowledgeHubClearImportHistory: () => request<{ ok: boolean }>("/tools/knowledge-hub/import-history", jsonInit("DELETE", {})),
+
+  // ---------- 数据工程基础设施（data-infra 运管） ----------
+  dataInfraTasks: () => request<{ ok: boolean; tasks: import("@toolbox/shared").DataInfraTaskSummary[] }>("/data-infra/tasks"),
+  dataInfraHistory: (id: string) => request<{ ok: boolean; entries: import("@toolbox/shared").DataInfraTaskHistoryEntry[] }>(`/data-infra/tasks/${encodeURIComponent(id)}/history`),
+  dataInfraTrigger: (id: string) => request<{ ok: boolean; message?: string }>(`/data-infra/tasks/${encodeURIComponent(id)}/trigger`, jsonInit("POST", {})),
+  dataInfraPause: (id: string) => request<{ ok: boolean }>(`/data-infra/tasks/${encodeURIComponent(id)}/pause`, jsonInit("POST", {})),
+  dataInfraResume: (id: string) => request<{ ok: boolean }>(`/data-infra/tasks/${encodeURIComponent(id)}/resume`, jsonInit("POST", {})),
+  dataInfraDelete: (id: string) => request<{ ok: boolean }>(`/data-infra/tasks/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  dataInfraBackfill: (task: string, opts?: { range?: { from?: string; to?: string }; force?: boolean }) =>
+    request<{ ok: boolean; message?: string }>("/data-infra/backfill", jsonInit("POST", { task, ...opts })),
+  dataInfraQueues: () => request<{ ok: boolean; queues: import("@toolbox/shared").DataInfraQueueStats[] }>("/data-infra/queues"),
+  dataInfraQueueMessages: (name: string) => request<{ ok: boolean; messages: any[] }>(`/data-infra/queues/${encodeURIComponent(name)}/messages`),
+  dataInfraQueueAudit: (name: string) => request<{ ok: boolean; entries: any[] }>(`/data-infra/queues/${encodeURIComponent(name)}/audit`),
+  dataInfraQueueRequeueStale: (name: string) => request<{ ok: boolean; restored: number; message: string }>(`/data-infra/queues/${encodeURIComponent(name)}/requeue-stale`, jsonInit("POST", {})),
+  dataInfraOverview: () => request<{ ok: boolean; orphanQueues: string[] }>("/data-infra/overview"),
+  dataInfraHealth: () => request<{ ok: boolean; healthy: boolean; problems: string[]; summary: Record<string, number> }>("/data-infra/health"),
+  dataInfraDerivators: () => request<{ ok: boolean; derivators: any[] }>("/data-infra/derivators"),
+  dataInfraConsumers: () => request<{ ok: boolean; consumers: any[] }>("/data-infra/consumers"),
+  dataInfraDerivatorTrigger: (id: string) => request<{ ok: boolean; message: string }>(`/data-infra/derivators/${id}/trigger`, jsonInit("POST", {})),
 };

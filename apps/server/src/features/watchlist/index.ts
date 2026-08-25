@@ -216,7 +216,7 @@ export function register(app: Hono): void {
     }
     const { taskId } = createTask<WatchlistTopic>(
       async (signal) => importFromChat(url, signal),
-      { timeoutMs: 10 * 60 * 1000 },
+      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 导入" },
     );
     return c.json(getTask<WatchlistTopic>(taskId), 202);
   });
@@ -294,7 +294,7 @@ export function register(app: Hono): void {
     }
     const { taskId } = createTask<WatchlistTopic>(
       async (signal) => importFromChat(url, signal, id),
-      { timeoutMs: 10 * 60 * 1000 },
+      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 补充" },
     );
     return c.json(getTask<WatchlistTopic>(taskId), 202);
   });
@@ -324,7 +324,7 @@ export function register(app: Hono): void {
         kvSet(`watchlist:importPreview:${taskId}`, { ...parsed, _at: Date.now() });
         return parsed;
       },
-      { timeoutMs: 10 * 60 * 1000 },
+      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 解析" },
     );
     return c.json(getTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(taskId), 202);
   });
@@ -416,7 +416,7 @@ export function register(app: Hono): void {
         if (!r.ok) throw new Error(r.message || "财报分析失败");
         return r;
       },
-      { timeoutMs: 10 * 60 * 1000 },
+      { timeoutMs: 10 * 60 * 1000, module: "watchlist.fundamental", name: `财报分析 · ${code}` },
     );
     return c.json(getTask<WatchlistFundamentalResult>(taskId), 202);
   });

@@ -383,7 +383,7 @@ test("每日动态：逐日买入/卖出/当日已实现/收盘市值（成本�
     mkEntry({ code: "300750", date: "2026-01-06", action: "buy", quantity: 3, price: 60 }),
   ];
   const d = buildDailySeries(entries);
-  assert.equal(d.length, 3);
+  assert.ok(d.length >= 3, "dailySeries 按日展开到今天");
   // 01-02：买入 1000+250，收盘市值 1250，2 标的
   assert.equal(d[0]!.date, "2026-01-02");
   assert.equal(d[0]!.buyAmount, 1250);
@@ -392,14 +392,15 @@ test("每日动态：逐日买入/卖出/当日已实现/收盘市值（成本�
   assert.equal(d[0]!.marketValue, 1250);
   assert.equal(d[0]!.openCount, 2);
   // 01-05：卖出 4×130−5=515，已实现 (130−100)×4−5=115，收盘市值 = 600×? -> 600519 剩 6×100=600 + 300750 250 = 850
-  assert.equal(d[1]!.date, "2026-01-05");
-  assert.equal(d[1]!.sellAmount, 515);
-  assert.equal(d[1]!.realizedPnl, 115);
-  assert.equal(d[1]!.marketValue, 850);
+  const d5 = d.find((x) => x.date === "2026-01-05")!;
+  assert.equal(d5.sellAmount, 515);
+  assert.equal(d5.realizedPnl, 115);
+  assert.equal(d5.marketValue, 850);
   // 01-06：买入 180，收盘市值 850+180=1030
-  assert.equal(d[2]!.buyAmount, 180);
-  assert.equal(d[2]!.marketValue, 1030);
-  assert.equal(d[2]!.realizedPnl, 0);
+  const d6 = d.find((x) => x.date === "2026-01-06")!;
+  assert.equal(d6.buyAmount, 180);
+  assert.equal(d6.marketValue, 1030);
+  assert.equal(d6.realizedPnl, 0);
 });
 
 test("月度汇总：按月份聚合买入/卖出/已实现，月末市值取当月最后交易日", () => {
@@ -409,7 +410,7 @@ test("月度汇总：按月份聚合买入/卖出/已实现，月末市值取当
     mkEntry({ code: "600519", date: "2026-02-03", action: "buy", quantity: 5, price: 110 }),
   ];
   const m = buildMonthlySeries(entries);
-  assert.equal(m.length, 2);
+  assert.ok(m.length >= 2, "月度含展开后月份");
   assert.equal(m[0]!.month, "2026-01");
   assert.equal(m[0]!.buyAmount, 1000);
   assert.equal(m[0]!.sellAmount, 520);
@@ -466,8 +467,8 @@ test("交易单归并：净买/净卖/持平 + 当日已实现（基于前日仓
 test("组分析包含收益三序列（daily/monthly/attribution）", () => {
   const entries = [mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 })];
   const a = analyzeGroup(group, entries, {});
-  assert.equal(a.dailySeries.length, 1);
-  assert.equal(a.monthlySeries.length, 1);
+  assert.ok(a.dailySeries.length >= 1);
+  assert.ok(a.monthlySeries.length >= 1);
   assert.equal(a.pnlAttribution.length, 1);
 });
 // ---------- 月收益率 / 组合日序列 / 风险计数 ----------
@@ -480,7 +481,7 @@ test("月度收益率（成本口径）：月PnL = 已实现 + 市值变动 − 
     mkEntry({ code: "600519", date: "2026-02-05", action: "buy", quantity: 5, price: 110 }),
   ];
   const m = buildMonthlySeries(entries);
-  assert.equal(m.length, 2);
+  assert.ok(m.length >= 2, "月度含展开后月份");
   assert.equal(m[0]!.month, "2026-01");
   assert.equal(m[0]!.pnlPct, undefined); // 首月无月初市值
   // 2月：月初市值 1000；已实现 120；净流入 = 买550 − 卖520 = 30；月末市值 1150
@@ -496,7 +497,7 @@ test("全局分析：组合每日动态（跨组合按日合并市值/持仓数�
     { group, entries: entriesA, latestPrices: {} },
     { group: { ...group, id: "g2" }, entries: entriesB, latestPrices: {} },
   ]);
-  assert.equal(g.dailySeries.length, 1);
+  assert.ok(g.dailySeries.length >= 1);
   assert.equal(g.dailySeries[0]!.marketValue, 1250); // 1000 + 250
   assert.equal(g.dailySeries[0]!.openCount, 2);
 });
@@ -670,8 +671,8 @@ test("每日动态：传入历史日 K → 市值用真实收盘价（有行情�
   ]);
   const ds = buildDailySeries(entries, klines);
   const last = ds[ds.length - 1]!;
-  // 600519: 10×120(真实) = 1200；000001: 5×10(成本) = 50 → 合计 1250
-  assert.equal(last.marketValue, 1250);
+  // 600519: 10×125(01-03 收盘，priceOnOrBefore 取最近) = 1250；000001: 5×10(成本) = 50 → 合计 1300
+  assert.equal(last.marketValue, 1300);
 });
 
 test("每日动态：历史价下市值随时间变化（价格波动反映到曲线）", () => {

@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../../core/db.js";
 
+import { zhihuLimiter } from "../../core/zhihuRateLimit.js";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const BASE = "https://www.zhihu.com";
@@ -36,7 +37,8 @@ export function hasCookie(): boolean {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function humanDelay(): Promise<void> {
-  await sleep(3000 + Math.floor(Math.random() * 3000));
+  // 令牌桶限速（全局共享——多任务/多类型间也限速；"人类频率"= 桶速率而非固定 sleep）
+  await zhihuLimiter.take();
 }
 
 export function extractUrlToken(target: string): string {
@@ -308,7 +310,10 @@ async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal):
   let offset = 0;
   for (;;) {
     if (signal?.aborted) break;
+    await humanDelay(); // 每页限速（令牌桶）
     const res = await fetch(`${BASE}/api/v4/members/${token}/pins?limit=20&offset=${offset}`, { headers, signal });
+    if (res.status === 403) { zhihuLimiter.recordBlocked("403"); break; }  // 指纹/cookie 异常 → 短停 5min
+    if (res.status === 429) { zhihuLimiter.recordBlocked("429"); break; }  // 频率过高 → 指数退避
     if (res.status !== 200) break;
     const j = (await res.json()) as { data?: Record<string, unknown>[]; paging?: { is_end?: boolean } };
     const data = Array.isArray(j.data) ? j.data : [];
@@ -316,13 +321,13 @@ async function fetchPinsApi(token: string, limit: number, signal?: AbortSignal):
       const item = parseApiItem(p, "pin");
       if (item) out.push(item);
     }
+    zhihuLimiter.recordSuccess();
     if (limit > 0 && out.length >= limit) break;
     if (!j.paging || j.paging.is_end !== false || data.length === 0) break;
     // 用响应内 offset 续页（比固定步长更稳；next 形如 ...offset=40&limit=20）
     const next = (j.paging as { next?: string }).next ?? "";
     const m = next.match(/[?&]offset=(\d+)/);
     offset = m ? Number(m[1]) : offset + data.length;
-    await humanDelay();
   }
   return out;
 }
@@ -427,9 +432,11 @@ async function crawlCommentsBatch(
               .catch(() => false);
           }
           if (blocked) {
-            onProgress?.(`评论抓取被风控拦截（40362），已保留已抓取部分，请稍后再试`);
+            zhihuLimiter.recordBlocked("40362"); // 分级退避：长停 30min
+            onProgress?.(`评论抓取被风控拦截（40362），限速器已进入长停退避（30 分钟），已保留已抓取部分`);
             break;
           }
+          zhihuLimiter.recordSuccess();
           if (comments.length === before) {
             stuck++;
             if (stuck >= 3) break; // 连续无新数据 → 评论区已到底
@@ -494,19 +501,21 @@ async function crawlKindWithBrowser(
         return t.includes("暂时限制本次访问") || t.includes("40362");
       });
       if (blocked) {
-        onProgress?.(`${kindLabel(kind)}：页面被知乎风控拦截（40362），请稍等 1~2 分钟后再试`);
+        zhihuLimiter.recordBlocked("40362"); // 分级退避：长停 30min
+        onProgress?.(`${kindLabel(kind)}：页面被知乎风控拦截（40362），限速器已进入长停退避（30 分钟），请稍后再试`);
         return items;
       }
       // 等待首次数据
       for (let i = 0; i < 15 && items.length === 0 && !signal?.aborted; i++) await sleep(2000);
-      // 滚动翻页（无限加载）；人类频率 1.5~3s
+      // 滚动翻页（无限加载）；人类频率由令牌桶控制（全局限速）
       let stuck = 0;
       for (let i = 0; i < 40; i++) {
         if (signal?.aborted) break;
         if (limit > 0 && items.length >= limit) break;
         const before = items.length;
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-        await sleep(3000 + Math.floor(Math.random() * 3000));
+        await humanDelay();
+        zhihuLimiter.recordSuccess();
         if (items.length === before) {
           stuck++;
           if (stuck >= 3) break; // 连续无新数据 → 到底
@@ -729,6 +738,18 @@ function dateInRange(created: number, dateFrom?: string, dateTo?: string): boole
   return true;
 }
 
+// ---------- 内容级指纹（URL 之外的二次去重：同 URL 内容变化/翻页重复抓取时兜底） ----------
+function hashContent(s: string): string {
+  let h = 5381;
+  const t = s.slice(0, 300); // 取正文前 300 字，足够区分不同内容
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+  return "h" + (h >>> 0).toString(36);
+}
+/** 内容指纹键：url + 正文指纹（续爬 seed 与实时抓取共用，跨次去重） */
+function fpKey(item: { url: string; content?: string }): string {
+  return item.url + "#" + (item.content ? hashContent(item.content) : "nc");
+}
+
 export async function crawlUser(target: string, opts: CrawlOptions = {}): Promise<ZhihuCrawlResult> {
   // 目标解析：支持用户主页/问题/回答/文章/想法链接，或包含链接的分享文本（自动提取）
   const ti = parseZhihuTarget(target);
@@ -781,9 +802,13 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   const progressId = opts.progressId ?? `zhp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const deadline = Date.now() + (opts.deadlineMs ?? 20 * 60 * 1000);
 
-  // 续爬：seed 作为已抓集合（去重 + 每类计数）
+  // 续爬：seed 作为已抓集合（URL + 内容指纹双去重；跨次去重）
   const seed = Array.isArray(opts.seed) ? opts.seed : [];
-  const seen = new Set(seed.map((s) => s.url));
+  const seen = new Set<string>();
+  for (const s of seed) {
+    seen.add(s.url);
+    seen.add(fpKey(s));
+  }
   const items: ZhihuCrawlItem[] = [...seed];
   const kindCount = new Map<ZhihuCrawlKind, number>();
   for (const s of seed) kindCount.set(s.kind, (kindCount.get(s.kind) ?? 0) + 1);
@@ -792,7 +817,16 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
   // 诊断信息（各类型失败/0 结果/风控原因）
   const warnings: string[] = [];
 
-  const emitProgress = (kind: string, message: string) => opts.onProgress?.({ kind, fetched: items.length, message });
+  let lastPersistAt = 0;
+  const emitProgress = (kind: string, message: string) => {
+    opts.onProgress?.({ kind, fetched: items.length, message });
+    // 原子进度：每 5s 且已有内容时持久化一次（崩溃最多丢 5s 增量；暂停/取消时无条件持久化兜底）
+    const now = Date.now();
+    if (now - lastPersistAt > 5000 && items.length > 0) {
+      lastPersistAt = now;
+      opts.saveProgress?.(snapshot(finalPhase));
+    }
+  };
   const snapshot = (phaseIndex: number): ZhihuCrawlProgress => ({
     progressId,
     token,
@@ -829,8 +863,9 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
         const pins = await fetchPinsApi(token, remaining, opts.signal);
         for (const p of pins) {
           if (perKindLimit > 0 && (kindCount.get(kind) ?? 0) >= perKindLimit) break;
-          if (seen.has(p.url)) continue;
+          if (seen.has(p.url) || seen.has(fpKey(p))) continue;
           seen.add(p.url);
+          seen.add(fpKey(p));
           if (dateInRange(p.created, opts.dateFrom, opts.dateTo)) {
             items.push(toItem(p));
             kindCount.set(kind, (kindCount.get(kind) ?? 0) + 1);
@@ -841,8 +876,9 @@ export async function crawlUser(target: string, opts: CrawlOptions = {}): Promis
         const got = await crawlKindWithBrowser(token, kind, remaining, opts.signal, (msg) => emitProgress(kind, msg));
         for (const g of got) {
           if (perKindLimit > 0 && (kindCount.get(kind) ?? 0) >= perKindLimit) break; // 知乎 API 单次返回一页，避免超该类目标（0=不限制）
-          if (seen.has(g.url)) continue;
+          if (seen.has(g.url) || seen.has(fpKey(g))) continue;
           seen.add(g.url);
+          seen.add(fpKey(g));
           if (dateInRange(g.created, opts.dateFrom, opts.dateTo)) {
             items.push(toItem(g));
             kindCount.set(kind, (kindCount.get(kind) ?? 0) + 1);

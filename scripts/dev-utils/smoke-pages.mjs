@@ -49,6 +49,7 @@ const PAGES = [
   { path: "/settings/memo", expect: "改进备忘录" },
   { path: "/settings/arch-graph", expect: "项目架构依赖图" },
   { path: "/settings/agent-sessions", expect: "会话" },
+  { path: "/settings/data-infra", expect: "数据工程基础设施" },
 ];
 const NOT_FOUND_TEXT = "页面不存在";
 

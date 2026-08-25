@@ -9,6 +9,7 @@ import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, 
 import { createTask } from "../../core/tasks.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
+import { enqueue, registerConsumer } from "../../core/data-infra/index.js";
 import { kbListInstances, kbSet, matchDomain } from "../../core/knowledge.js";
 import { listVirtKbs, getVirtKb, getDomainMeta } from "../../core/knowledgeHub.js";
 import { crawlUser, saveCookie, hasCookie, getUserInfo, authViaBrowser, extractUrlToken, resolveLink } from "./service.js";
@@ -22,7 +23,7 @@ registerDataSource({
   name: "zhihuCrawl:",
   page: "知乎爬虫",
   tag: "爬取数据",
-  description: "知乎爬虫数据：history（抓取历史）/ progress（断点续爬进度）/ favorites（收藏目标）/ result（完整结果）",
+  description: "知乎爬虫数据：history（抓取历史）/ progress（断点续爬进度）/ favorites（收藏目标）/ result（完整结果）/ stats（消费者衍生聚合统计）",
 });
 
 export const meta: ToolMeta = {
@@ -274,8 +275,59 @@ function finishCrawl(r: ZhihuCrawlResult, target: string): ZhihuCrawlResult {
   recordHistory(target, r.user?.name ?? "", r.total ?? 0, resultId);
   // 清理进度（若续爬残留）
   if (r.progressId) kvDelete(`zhihuCrawl:progress:${r.progressId}`);
+  // 数据工程接入：爬取完成 → 衍生消息（消息驱动工作流：源数据 → 消息 → FaaS 消费者聚合）
+  enqueue("zhihuCrawl:done", {
+    type: "crawl-done",
+    resultId,
+    target,
+    name: r.user?.name ?? "",
+    total: r.total ?? 0,
+    warnings: r.warnings ?? [],
+  });
   return { ...r, resultId };
 }
+
+// ---------- 数据工程接入：爬取完成 → 消费者聚合衍生（幂等，按 resultId） ----------
+/** 内容聚合统计（纯函数，供单测）：类型分布/日期分布/平均长度 */
+export function deriveZhihuStats(items: ZhihuCrawlItem[]): {
+  total: number;
+  byKind: Record<string, number>;
+  avgContentLen: number;
+  dateRange?: { from: string; to: string };
+} {
+  const byKind: Record<string, number> = {};
+  let sumLen = 0;
+  let minDate: string | undefined;
+  let maxDate: string | undefined;
+  for (const it of items) {
+    byKind[it.kind] = (byKind[it.kind] ?? 0) + 1;
+    sumLen += it.content?.length ?? 0;
+    if (it.createdAt) {
+      const d = it.createdAt.slice(0, 10);
+      if (!minDate || d < minDate) minDate = d;
+      if (!maxDate || d > maxDate) maxDate = d;
+    }
+  }
+  return {
+    total: items.length,
+    byKind,
+    avgContentLen: items.length ? Math.round(sumLen / items.length) : 0,
+    ...(minDate && maxDate ? { dateRange: { from: minDate, to: maxDate } } : {}),
+  };
+}
+
+registerConsumer({
+  queue: "zhihuCrawl:done",
+  name: "爬取完成衍生（聚合统计）",
+  handler: async (msg) => {
+    const p = (msg.payload ?? {}) as { resultId?: string };
+    if (!p.resultId) return;
+    const r = kvGet<ZhihuCrawlResult>(`zhihuCrawl:result:${p.resultId}`);
+    if (!r || !Array.isArray(r.items)) return;
+    const stats = deriveZhihuStats(r.items);
+    kvSet(`zhihuCrawl:stats:${p.resultId}`, { ...stats, derivedAt: new Date().toISOString() });
+  },
+});
 
 interface HistoryEntry {
   id: string;

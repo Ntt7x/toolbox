@@ -6,6 +6,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { deleteTask, listTasks } from "./data-infra/index.js";
+import { kvDelete, kvListRaw } from "./kvStore.js";
 import { cancelTask, createTask, getTask } from "./tasks.js";
 import type { AsyncTaskResult } from "@toolbox/shared";
 
@@ -92,4 +94,31 @@ test("取消后 fn 迟到返回 → 终态保持 cancelled", async () => {
 
 test("取消不存在的任务 → false", () => {
   assert.equal(cancelTask("no-such-task"), false);
+});
+
+test("登记模式：createTask 传 module → data-infra 外部任务自动登记（running→done + 历史）", async () => {
+  const module = "test-register-" + Date.now();
+  const { taskId } = createTask<number>(async () => 42, { timeoutMs: 5000, module, name: "登记测试" });
+  assert.ok(taskId);
+  // data-infra 任务已登记且 running
+  const t0 = listTasks().find((x) => x.id === module);
+  assert.ok(t0, "module 应登记为 data-infra 外部任务");
+  assert.equal(t0?.status, "running");
+  // 完成后 → done + lastResult
+  await sleep(300);
+  const t1 = listTasks().find((x) => x.id === module);
+  assert.equal(t1?.status, "done");
+  assert.equal(t1?.lastResult, "ok");
+  // 清理
+  deleteTask(module);
+  kvDelete("dataInfra:taskHist:" + module);
+});
+
+// 兜底清理：任何 test-register-* 残留（防中途被杀污染生产 KV）
+import { after } from "node:test";
+after(() => {
+  for (const r of kvListRaw("dataInfra:task:test-register-")) {
+    deleteTask(r.key.slice("dataInfra:task:".length));
+    kvDelete("dataInfra:taskHist:" + r.key.slice("dataInfra:task:".length));
+  }
 });

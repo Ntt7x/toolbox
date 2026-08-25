@@ -366,6 +366,14 @@ export function analyzeGroup(
  * 市值口径：传入 klinePrices（历史日 K）时用「当日真实收盘价 × 持仓数」= 市值口径；
  *   无历史价标的回退成本口径（Σ qty×avgCost 含费基数）——向后兼容。
  */
+export function addDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + n); // 本地日期运算（避免 toISOString 的 UTC 偏移导致死循环）
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${dt.getFullYear()}-${mm}-${dd}`;
+}
+
 export function buildDailySeries(
   entries: TradeV2Entry[],
   klinePrices?: Map<string, Map<string, number>>,
@@ -384,7 +392,47 @@ export function buildDailySeries(
   }
   const state = new Map<string, ReplayState>();
   const rows: DailyRow[] = [];
+  // 收盘口径重算（市值/持仓数/累计已实现）——每日行复用；市值=持仓×当日收盘（无行情回退成本基数）
+  const calcRow = (date: string): Pick<DailyRow, "cumRealized" | "marketValue" | "openCount"> => {
+    let mv = 0;
+    let oc = 0;
+    let cum = 0;
+    for (const [code, st] of state) {
+      if (st.qty !== 0) {
+        const hist = klinePrices?.get(code);
+        const px = hist && hist.size > 0 ? priceOnOrBefore(hist, date) : undefined;
+        mv += typeof px === "number" && px > 0 ? st.qty * px : st.costBasis;
+        oc++;
+      }
+      cum += st.realized;
+    }
+    return { cumRealized: cum, marketValue: mv, openCount: oc };
+  };
+  // 补一个"无交易延续行"：持仓延续、买卖 0、市值按当日行情重估（净值曲线按日延伸的核心）
+  const pushCarryRow = (date: string) => {
+    const prev = rows[rows.length - 1] ?? null;
+    rows.push({
+      date,
+      buyAmount: 0,
+      sellAmount: 0,
+      buyQty: 0,
+      sellQty: 0,
+      cumRealized: prev?.cumRealized ?? 0,
+      marketValue: prev?.marketValue ?? 0,
+      openCount: prev?.openCount ?? 0,
+    });
+    const c = calcRow(date);
+    const r = rows[rows.length - 1]!;
+    r.cumRealized = c.cumRealized;
+    r.marketValue = c.marketValue;
+    r.openCount = c.openCount;
+  };
   for (const e of sorted) {
+    // 展开：补 上一行日期+1 .. e.date-1 的自然日（无交易日期延续，市值按当日行情重估）
+    if (rows.length > 0) {
+      let d = addDays(rows[rows.length - 1]!.date, 1);
+      while (d < e.date) { pushCarryRow(d); d = addDays(d, 1); }
+    }
     const isNewDay = rows.length === 0 || rows[rows.length - 1]!.date !== e.date;
     if (isNewDay) {
       const prev = rows.length > 0 ? rows[rows.length - 1]! : null;
@@ -408,40 +456,19 @@ export function buildDailySeries(
     if (e.action === "buy") { row.buyAmount += amount + fee; row.buyQty += e.quantity; }
     else { row.sellAmount += amount - fee; row.sellQty += Math.abs(e.quantity); }
     state.set(e.code, st);
-    // 收盘口径重算（该日最后一条后即是当日收盘）；空头 qty<0 计入 openCount
-    // 市值：有历史日 K 用「当日收盘价 × qty」真实市值；无则回退成本基数（负=空头占用）
-    let mv = 0;
-    let oc = 0;
-    let cum = 0;
-    for (const [code, s] of state) {
-      if (s.qty !== 0) {
-        const hist = klinePrices?.get(code);
-        const px = hist && hist.size > 0 ? priceOnOrBefore(hist, e.date) : undefined;
-        mv += typeof px === "number" && px > 0 ? s.qty * px : s.costBasis;
-        oc++;
-      }
-      cum += s.realized;
-    }
-    row.cumRealized = cum;
-    row.marketValue = mv;
-    row.openCount = oc;
+    // 该日收盘口径重算
+    const c = calcRow(e.date);
+    row.cumRealized = c.cumRealized;
+    row.marketValue = c.marketValue;
+    row.openCount = c.openCount;
   }
-
-/** 取某标的历史日 K 中 <= 目标日期最近收盘价（无则 undefined）；供 buildDailySeries 用 */
-function priceOnOrBefore(hist: Map<string, number>, date: string): number | undefined {
-  const direct = hist.get(date);
-  if (direct !== undefined) return direct;
-  let best: number | undefined;
-  let bestDate = "";
-  for (const [d, close] of hist) {
-    if (d <= date && d > bestDate) {
-      bestDate = d;
-      best = close;
-    }
+  // 末尾展开：最后交易日之后到今天（自然日；净值曲线持续到"今天"）
+  if (rows.length > 0) {
+    const today = todayStr();
+    let d = addDays(rows[rows.length - 1]!.date, 1);
+    while (d <= today) { pushCarryRow(d); d = addDays(d, 1); }
   }
-  return best;
-}
-  // 累计已实现 → 每日增量
+  // 累计已实现 → 每日增量（realizedPnl）
   let prevCum = 0;
   return rows.map((r) => {
     const realizedPnl = Math.round((r.cumRealized - prevCum) * 100) / 100;
@@ -457,6 +484,21 @@ function priceOnOrBefore(hist: Map<string, number>, date: string): number | unde
       openCount: r.openCount,
     };
   });
+}
+
+/** 取某标的历史日 K 中 <= 目标日期最近收盘价（无则 undefined）；供 buildDailySeries 用 */
+function priceOnOrBefore(hist: Map<string, number>, date: string): number | undefined {
+  const direct = hist.get(date);
+  if (direct !== undefined) return direct;
+  let best: number | undefined;
+  let bestDate = "";
+  for (const [d, close] of hist) {
+    if (d <= date && d > bestDate) {
+      bestDate = d;
+      best = close;
+    }
+  }
+  return best;
 }
 
 /** 月度汇总（由每日动态聚合；月末市值 = 该月最后交易日的收盘市值）。

@@ -25,6 +25,13 @@ registerDataSource({
   description: "BMPI 结果缓存（TTL 7 天）+ 用户补全数据（experiment:bmpi:supplement）",
   deps: ["tencent.quote", "user.supplement"],
 });
+registerDataSource({
+  kind: "kv",
+  name: "experiment:window:",
+  page: "实验·BMPI 化债牛市",
+  tag: "分析缓存",
+  description: "实验窗口数据（experiment:window:<module>：数据工程窗口快照，自动触发更新）",
+});
 
 const CACHE_KEY = "experiment:bmpi:v2";          // v2：数据源直采版（旧 LLM 采集缓存失效）
 const SUPP_KEY = "experiment:bmpi:supplement";   // 用户补全（无 API 字段）
@@ -179,7 +186,7 @@ export function registerExperimentBmpi(app: Hono): void {
   app.post(`${API_PREFIX}/tools/experiment/bmpi`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as Partial<ExperimentBmpiRequest> | null;
     const opts: ExperimentBmpiRequest = { force: raw?.force === true, useSearch: raw?.useSearch !== false };
-    const created = createTask((signal) => runBmpi(opts, signal), { timeoutMs: 10 * 60 * 1000, name: `${today()} · BMPI 化债牛市` });
+    const created = createTask((signal) => runBmpi(opts, signal), { timeoutMs: 10 * 60 * 1000, module: "experiment.bmpi", name: `${today()} · BMPI 化债牛市` });
     return c.json({ ok: true, taskId: created.taskId } as AsyncTaskResult<unknown>);
   });
 

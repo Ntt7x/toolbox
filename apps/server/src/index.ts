@@ -16,7 +16,8 @@ import {
   type ToolListResponse,
   type ToolMeta,
 } from "@toolbox/shared";
-import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes } from "./core/routes.js";
+import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes, registerDataInfraRoutes } from "./core/routes.js";
+import { initDataInfra, startDataInfraRuntime } from "./core/data-infra/index.js";
 import { registerTaskRoutes } from "./core/sse.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
@@ -82,6 +83,7 @@ registerLlmUsageRoutes(app);
 registerPromptRoutes(app);
 registerQuoteRoutes(app);
 registerTaskRoutes(app);
+registerDataInfraRoutes(app);
 
 // 上层业务路由
 gridPlanFeature.register(app);
@@ -113,6 +115,9 @@ newsCenterFeature.register(app);
 // 导出 app 供集成测试（app.request 免端口调用）
 export { app };
 
+// 数据工程基础设施：数据源注册（无条件执行——注册表完整性，测试断言"未标记应为 0"依赖）
+initDataInfra();
+
 const port = Number(process.env.PORT ?? 8787);
 // 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
 if (process.env.TOOLBOX_TEST !== "1") {
@@ -133,5 +138,7 @@ if (process.env.TOOLBOX_TEST !== "1") {
       }
     });
   };
-  listenWithRetry(0);
+    listenWithRetry(0);
+  // 测试环境（app.integration 免端口装配）不启动调度器/消费者运行时——否则定时器/循环卡测试进程
+  startDataInfraRuntime(); // 调度器 + 消费者（消息驱动工作流运行时）
 }

@@ -15,6 +15,7 @@ import {
   type ToolMeta,
 } from "@toolbox/shared";
 import { createTask, getTask } from "../../core/tasks.js";
+import { registerScheduledTask } from "../../core/data-infra/index.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getMonthlyData, getUpdateState, missingMonths, probeDaily, runMonthlyUpdate, UPDATE_STATE_KEY } from "./service.js";
@@ -40,6 +41,24 @@ registerDataSource({
   page: "买断式逆回购余额",
   tag: "运行状态",
   description: "月度数据触发式更新状态（running/done/failed，可手动重置）",
+});
+
+// 月度数据更新改为统一数据基建调度任务（data-infra）：cron 每日检查缺失月份，有缺失才执行 LLM 补更（成本可控）；
+// 运管页可手动触发 / 回溯重建；原先的 POST /monthly/refresh 手动触发保留为兼容入口
+registerScheduledTask({
+  id: "reverseRepo-monthly",
+  type: "reverse-repo",
+  name: "买断式逆回购月度更新",
+  cron: "0 0 9 * * *",
+  handler: async () => {
+    const body = getMonthlyData();
+    const stale = missingMonths(body.rows);
+    if (stale.length === 0) return { ok: true, message: "月度数据已是最新，无需更新" };
+    // 双轨防并发：手动入口（POST /monthly/refresh 的 createTask）可能正在跑——状态锁跳过本次调度，避免重复 LLM 调用
+    if (getUpdateState().state === "running") return { ok: true, message: "已有更新任务进行中，本次调度跳过" };
+    await runMonthlyUpdate(stale);
+    return { ok: true, message: `已补更 ${stale.length} 个月份（${stale.join(",")}）` };
+  },
 });
 
 export const meta: ToolMeta = {

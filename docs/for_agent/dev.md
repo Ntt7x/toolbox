@@ -9,6 +9,7 @@
 > - **命令速查**：`docs/for_agent/commands.md`（toolbox 统一入口）
 
 - 收益率口径：`docs/for_agent/domains/return-metrics.md`（净值收益率 TWR 默认 / 最大成本收益率可切换——trade-v2 净值曲线）
+- 数据工程：`docs/for_agent/domains/data-infra.md`（六层：数据/消息/任务/调度/派生器/消费者；**业务接入规范 §9：决策树/注册三件套/SSE 双轨/改造清单**——涉足"定时任务/消息队列/衍生数据/自动更新"时必读）
 ## ⛔ 最深刻的教训（每个会话开工先扫一眼，血泪换来的）
 
 | # | 教训 | 一句话 | 详情 |
@@ -431,7 +432,16 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - **数据管道**：采集→规范化→指标纯函数→存储（窗口/缓存/历史）→服务；新分析页照 `features/experiment/datahub.ts` 模板（窗口 `experiment:window:*` + 每日结果 `experiment:<page>:history:<date>` + 可选回测）。
 - **血缘**：`dataRegistry.registerDataSource` 加 `deps: string[]`（源→采集→指标→页面 四层链）；本地数据管理页展示。
 - **质量标注**：每条数据带 `meta.source`（api/llm/user/kv）；用户补全=kind:user，API 直采=kind:api；降级标注 degraded 而非删数据；缺失=null + caveats。
-- **红线**：不引入编排器/队列/物化 gold 层；不做 LRU；不引入 OpenMetadata/DataHub。
+- **红线**：不引入**外部**编排器/队列/物化 gold 层（自研 `core/data-infra` 已覆盖队列/任务/调度/派生器/消费者）；不做 LRU；不引入 OpenMetadata/DataHub；**有基建就用**（勿重复手写 Ad-hoc 定时/消息/任务）。
+
+**数据工程改造检查清单（涉足"定时/消息/衍生数据/自动更新"时先过一遍，完整决策树见 `domains/data-infra.md` §9）**：
+1. 要定时/每日/定期更新？→ `registerScheduledTask`（cron，可手动/回溯）
+2. A 完成要自动触发 B？→ 派生器（taskDone 钩子）+ 消息 + 消费者——**不要 A 直接调 B**
+3. 要排队/限速/重试/崩溃恢复？→ 队列 + 消费者（至少一次 + requeueStale）
+4. 用户交互的实时进度任务？→ 前台 SSE（core/tasks）+ **登记** data-infra（双轨，运管可见 + 历史）
+5. 结果要聚合/衍生？→ 消费者幂等写衍生 KV（勿请求时实时重算）
+6. 新 KV 前缀？→ **必须 `registerDataSource`**（"未标记应为 0"断言会拦）
+7. handler/derive 必须幂等（backfill/崩溃恢复依赖）
 
 ## 7. 领域经验索引（按需加载）
 
@@ -447,6 +457,7 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 | 策略仓位管理（trade-plan / trade-v2） | `domains/features.md` | 改 trade-plan / trade-v2（仓位管理 v2） |
 | 数据可信度（cbRate 结构化输出） | `domains/features.md` | 改 LLM 结构化输出业务 |
 | 外部数据源（知乎/知识库中心/行情/分享/快讯） | `domains/data-sources.md` | 涉足外部数据源 |
+| 数据工程（队列/任务/调度/派生器/消费者 + 接入规范） | `domains/data-infra.md` | 涉足定时任务/消息队列/自动更新/衍生数据 |
 | Cordis 框架（@deepseek-ai/cordis） | `domains/cordis.md` | 涉足 Cordis 服务化（todoV3/docs 同模式） |
 
 ### 7.1 Reasonix ACP
