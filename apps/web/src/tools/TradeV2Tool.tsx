@@ -30,6 +30,7 @@ import { numInput, parseBatchText, type OrderRow } from "./tradeV2Parse";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { match } from "pinyin-pro";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -871,10 +872,19 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
     return `${t > 0 ? "+" : ""}${t.toFixed(1)}%`;
   };
   const sorted = useMemo(() => {
-    // 先模糊搜索过滤（memo mta4nkop），再排序
+    // 先模糊搜索过滤（memo mta4nkop：代码/名称 + 拼音模糊 pinyin-pro），再排序
     const q = search.trim().toLowerCase();
     const list = q
-      ? positions.filter((p) => (p.code ?? "").toLowerCase().includes(q) || (p.name ?? "").toLowerCase().includes(q))
+      ? positions.filter((p) => {
+          const code = (p.code ?? "").toLowerCase();
+          const name = p.name ?? "";
+          if (code.includes(q) || name.toLowerCase().includes(q)) return true;
+          try {
+            return !!match(name, q); // 拼音匹配：首字母/全拼/混合（如 gzmt / guizhoumaotai）
+          } catch {
+            return false;
+          }
+        })
       : positions;
     if (!sortKey) return list;
     const arr = [...list].sort((a, b) => {

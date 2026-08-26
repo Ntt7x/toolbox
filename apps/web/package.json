@@ -17,6 +17,7 @@
     "echarts": "^6.1.0",
     "katex": "0.16.47",
     "lucide-react": "^1.30.0",
+    "pinyin-pro": "^3.29.3",
     "react": "^19",
     "react-dom": "^19",
     "react-markdown": "^10.1.0",
