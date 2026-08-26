@@ -3,7 +3,7 @@
 // tab 展示区（默认）：按启用源合并拉取新闻（时间降序）
 // tab 配置区：配置新闻源（东财等，可拓展；配置存本地设置数据）
 // ============================================================
-import { useCallback, useEffect, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
 import { openDeepSeekChat } from "../deepseekChat";
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
@@ -128,6 +128,21 @@ export default function NewsCenterTool() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 无限滚动（memo mt94j7yw）：sentinel 进入视口自动加载下一页，替代"加载更多"按钮
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loadingMore && !loading) void loadMore();
+      },
+      { rootMargin: "160px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadingMore, loading, loadMore]);
+
   const saveConfig = async () => {
     setSaving(true);
     setConfigMsg(null);
@@ -244,14 +259,12 @@ export default function NewsCenterTool() {
               })}
             </div>
             {hasMore && (
-              <button
-                onClick={() => void loadMore()}
-                disabled={loadingMore}
-                style={{ marginTop: "0.7rem", alignSelf: "center", padding: "0.4rem 1.2rem", borderRadius: 8, border: "1px solid #bfdbfe", background: loadingMore ? "#eff6ff" : "#fff", color: "#2563eb", fontSize: "0.82rem", cursor: "pointer" }}
-                type="button"
+              <div
+                ref={sentinelRef}
+                style={{ marginTop: "0.7rem", alignSelf: "center", padding: "0.5rem 1.2rem", color: "#2563eb", fontSize: "0.82rem", textAlign: "center" }}
               >
-                {loadingMore ? "加载中…" : `⬇ 加载更多（第 ${page + 1} 页）`}
-              </button>
+                {loadingMore ? "加载中…" : "继续滚动加载更多…"}
+              </div>
             )}
             </>
           )}

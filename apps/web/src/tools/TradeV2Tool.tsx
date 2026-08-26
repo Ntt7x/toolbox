@@ -854,6 +854,7 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 function PositionsTable({ positions, groupView, onRowClick, exportName, positionPct }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string; positionPct?: number }) {
   const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "changePct" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "totalPnlPct" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
   const [asc, setAsc] = useState(false);
+  const [search, setSearch] = useState("");   // 标的模糊搜索（memo mta4nkop：按代码/名称过滤）
   const totalMv = positions.reduce((a, p) => a + Math.abs(p.marketValue), 0);   // 占比分母（含空头绝对值）
   const weightOf = (p: TradeV2Position): number | undefined => (p.weightPct !== undefined ? p.weightPct : totalMv > 0 ? (Math.abs(p.marketValue) / totalMv) * 100 : undefined);
   /** 成本金额（成本均价 × 数量；全部视图无 costAvg 时用买入均价成本口径） */
@@ -870,14 +871,19 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
     return `${t > 0 ? "+" : ""}${t.toFixed(1)}%`;
   };
   const sorted = useMemo(() => {
-    if (!sortKey) return positions;
-    const arr = [...positions].sort((a, b) => {
+    // 先模糊搜索过滤（memo mta4nkop），再排序
+    const q = search.trim().toLowerCase();
+    const list = q
+      ? positions.filter((p) => (p.code ?? "").toLowerCase().includes(q) || (p.name ?? "").toLowerCase().includes(q))
+      : positions;
+    if (!sortKey) return list;
+    const arr = [...list].sort((a, b) => {
       // weightPct 排序：组视图用服务端值；全局视图用市值绝对值；totalPnl = 已实现+未实现；totalPnlPct 按百分比数值
       const valOf = (x: TradeV2Position): number => sortKey === "weightPct" ? (weightOf(x) ?? 0) : sortKey === "totalPnl" ? (x.realizedPnl ?? 0) + (x.unrealizedPnl ?? 0) : sortKey === "totalPnlPct" ? parseFloat(totalPnlPctOf(x)) || 0 : (x[sortKey] ?? 0);
       return valOf(a) - valOf(b);
     });
     return asc ? arr : arr.reverse();
-  }, [positions, sortKey, asc, totalMv]);
+  }, [positions, sortKey, asc, totalMv, search]);
   const onSort = (k: typeof sortKey) => { if (sortKey === k) setAsc((v) => !v); else { setSortKey(k); setAsc(false); } };
   const sortableHead = (label: string, k: typeof sortKey, cls?: string) => (
     <TableHead className={cls} onClick={() => onSort(k)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
@@ -891,7 +897,13 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
   ) : (
     <Card><CardContent>
       {exportName && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 }}>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="🔍 搜索标的（代码/名称）…"
+            style={{ maxWidth: 260, fontSize: "0.85rem", height: 32 }}
+          />
           <Button size="sm" variant="outline" onClick={() => downloadCSV(exportName, ["代码", "名称", "数量", "均价", "最新价", "市值", "占总仓位", "已实现", "未实现", "未实现%"], positions.map((p) => [p.code, p.name ?? "", p.quantity, +p.avgCost.toFixed(3), p.latestPrice ? +p.latestPrice.toFixed(3) : "", Math.round(p.marketValue * 100) / 100, weightOf(p) !== undefined ? Math.round(weightOf(p)! * 100) / 100 : "", Math.round(p.realizedPnl * 100) / 100, Math.round(p.unrealizedPnl * 100) / 100, p.unrealizedPnlPct ?? ""]))}>📤 导出 CSV</Button>
         </div>
       )}
@@ -913,6 +925,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
             {sortableHead("涨跌幅", "changePct", "text-right")}
             <TableHead className="text-right">今日盈亏</TableHead>
             {sortableHead("数量", "quantity", "text-right")}
+            <TableHead className="text-right">市价</TableHead>
             {sortableHead("买入均价", "avgCost", "text-right")}
             {sortableHead("成本均价", "costAvg", "text-right")}
             <TableHead className="text-right">成本</TableHead>
@@ -932,6 +945,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
               <TableCell className="text-right" style={{ color: p.changePct === undefined ? C.sub : p.changePct > 0 ? C.gain : p.changePct < 0 ? C.loss : C.sub, fontWeight: 600 }}>{p.changePct !== undefined ? `${p.changePct > 0 ? "+" : ""}${p.changePct}%` : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.todayPnl) }}>{p.todayPnl !== undefined ? cny2(p.todayPnl) : "—"}</TableCell>
               <TableCell className="text-right">{qtyFmt(Math.abs(p.quantity))}{p.quantity < 0 ? <span style={{ color: "#c2410c", fontSize: "0.72rem", marginLeft: 4 }}>卖</span> : null}</TableCell>
+              <TableCell className="text-right" style={{ color: p.latestPrice !== undefined && p.latestPrice > 0 ? C.text : C.sub, fontWeight: 600 }} title="实时市价">{p.latestPrice !== undefined && p.latestPrice > 0 ? costFmt(p.latestPrice) : "—"}</TableCell>
               <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
               <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降" : "未持仓"}>{p.costAvg !== undefined ? costFmt(p.costAvg) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
