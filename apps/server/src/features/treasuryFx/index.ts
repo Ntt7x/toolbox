@@ -8,7 +8,6 @@
 import { Hono } from "hono";
 import {
   API_PREFIX,
-  type AsyncTaskResult,
   type ToolMeta,
   type TreasuryFxRequest,
   type TreasuryFxResponse,
@@ -65,13 +64,7 @@ export function register(app: Hono): void {
       const cachedAtMs = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
       const fresh = cached && Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_TTL_MS;
       if (fresh) {
-        const hit: AsyncTaskResult<TreasuryFxResponse> = {
-          ok: true,
-          taskId: `cache-${treasuryFxCacheKey(req).replace(/[^a-z0-9]/gi, "")}`,
-          status: "done",
-          result: { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() },
-          createdAt: new Date().toISOString(),
-        };
+        const hit = { ok: true, result: { ...cached, fromCache: true, cachedAt: cached.cachedAt ?? new Date().toISOString() } };
         return c.json(hit, 200);
       }
     }

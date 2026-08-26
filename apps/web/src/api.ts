@@ -1,6 +1,5 @@
 import {
   API_PREFIX,
-  type AsyncTaskResult,
   type CbRateRequest,
   type CbRateResponse,
   type FundSnapshot,
@@ -17,8 +16,6 @@ import {
   type LlmStatusResponse,
   type LlmTestResult,
   type LlmBalanceResult,
-  type TaskHistoryEntry,
-  type TaskHistoryListResponse,
   type KnowledgeAskResult,
   type KnowledgeEntry,
   type KnowledgeImportResult,
@@ -123,6 +120,9 @@ export function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+export /** 任务创建响应（统一模式：立即返回 taskId；缓存命中直接带 result） */
+type TaskCreateResult<T = unknown> = { ok: boolean; taskId?: string; result?: T; message?: string; status?: string };
+
 export const api = {
   health: () => request<HealthResponse>("/health"),
   tools: () => request<ToolListResponse>("/tools"),
@@ -146,10 +146,10 @@ export const api = {
   shareExtract: (url: string) =>
     request<ShareExtractResult>("/tools/deepseek-share", jsonInit("POST", { url } satisfies ShareExtractRequest)),
   // 央行利率分析（异步任务）
-  cbRate: (req: CbRateRequest) => request<AsyncTaskResult<CbRateResponse>>("/tools/cb-rate", jsonInit("POST", req)),
+  cbRate: (req: CbRateRequest) => request<TaskCreateResult<CbRateResponse>>("/tools/cb-rate", jsonInit("POST", req)),
   // 国债汇率分析（异步任务）
   treasuryFx: (req: TreasuryFxRequest) =>
-    request<AsyncTaskResult<TreasuryFxResponse>>("/tools/treasury-fx", jsonInit("POST", req)),
+    request<TaskCreateResult<TreasuryFxResponse>>("/tools/treasury-fx", jsonInit("POST", req)),
   // 逆回购余额跟踪（存量月度数据 + 增量每日探查）
   reverseRepoMonthly: () => request<ReverseRepoMonthlyResult>("/tools/reverse-repo/monthly"),
   /** 月度数据触发式更新状态（stale 时后台自动触发，此接口查进度/结果） */
@@ -157,7 +157,7 @@ export const api = {
   /** 手动触发月度数据更新（幂等：running 中/已最新不重复） */
   reverseRepoMonthlyRefresh: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/refresh", jsonInit("POST", {})),
   reverseRepoDaily: (force = false) =>
-    request<AsyncTaskResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
+    request<TaskCreateResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
   // 专题自选股（专题 CRUD + 个股财报分析）
   watchlistList: () => request<WatchlistListResult>("/tools/watchlist"),
   watchlistCreate: (name: string, description?: string, group?: string) =>
@@ -169,36 +169,16 @@ export const api = {
   watchlistResolve: (code: string, kind?: string) =>
     request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
   /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
-  watchlistImport: (url: string) => request<AsyncTaskResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
-  watchlistImportTaskStatus: (taskId: string) => request<AsyncTaskResult<WatchlistTopic>>(`/data-infra/tasks/${encodeURIComponent(taskId)}`).then((r) => {
-    const t = (r as { task?: { status: string; result?: unknown; lastResult?: string } }).task;
-    if (!r.ok || !t) return { ok: false, message: "任务不存在" } as AsyncTaskResult<WatchlistTopic>;
-    return {
-      ok: true, taskId, status: t.status === "done" ? "done" : t.status === "failed" ? "error" : t.status === "cancelled" ? "cancelled" : "running",
-      ...(t.status === "done" ? { result: t.result as WatchlistTopic } : {}),
-      ...(t.status === "failed" || t.status === "cancelled" ? { message: t.lastResult ?? "任务失败" } : {}),
-    } as AsyncTaskResult<WatchlistTopic>;
-  }),
+  watchlistImport: (url: string) => request<TaskCreateResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
   /** Chat 补充：分享链接 → 追加个股到指定专题（后台任务） */
   watchlistAppend: (id: string, url: string) =>
-    request<AsyncTaskResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
+    request<TaskCreateResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
   /** Chat 补充预览：解析对话 → 候选个股（不落库，用户确认后导入） */
   watchlistAppendPreview: (id: string, url: string) =>
-    request<AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }>>(
+    request<TaskCreateResult<{ name: string; description?: string; stocks: WatchlistStock[] }>>(
       `/tools/watchlist/${encodeURIComponent(id)}/import/preview`,
       jsonInit("POST", { url }),
     ),
-  watchlistAppendPreviewStatus: (_id: string, taskId: string) => request<AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }> & { preview?: WatchlistStock[] | null }>(`/data-infra/tasks/${encodeURIComponent(taskId)}`).then((r) => {
-    const t = (r as { task?: { status: string; result?: unknown; lastResult?: string } }).task;
-    if (!r.ok || !t) return { ok: false, message: "任务不存在" } as AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }> & { preview?: WatchlistStock[] | null };
-    const result = t.status === "done" ? (t.result as { name?: string; description?: string; stocks?: WatchlistStock[] } | undefined) : undefined;
-    return {
-      ok: true, taskId, status: t.status === "done" ? "done" : t.status === "failed" ? "error" : t.status === "cancelled" ? "cancelled" : "running",
-      ...(t.status === "done" && result ? { result: result as { name: string; description?: string; stocks: WatchlistStock[] }, preview: result.stocks ?? null } : {}),
-      ...(t.status === "failed" || t.status === "cancelled" ? { message: t.lastResult ?? "任务失败" } : {}),
-    } as AsyncTaskResult<{ name: string; description?: string; stocks: WatchlistStock[] }> & { preview?: WatchlistStock[] | null };
-  }),
-  /** Chat 补充确认：勾选的候选个股批量加入专题 */
   watchlistAppendConfirm: (id: string, taskId: string, codes: string[]) =>
     request<{ ok: boolean; topic?: WatchlistTopic; imported?: number; message?: string }>(
       `/tools/watchlist/${encodeURIComponent(id)}/import/confirm`,
@@ -239,7 +219,7 @@ export const api = {
   chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   watchlistFundamental: (id: string, code: string, force = false) =>
-    request<AsyncTaskResult<WatchlistFundamentalResult>>(
+    request<TaskCreateResult<WatchlistFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
       jsonInit("POST", {}),
     ),
@@ -249,16 +229,6 @@ export const api = {
   /** 生成延续思路/扩展思考提示词（LLM；返回可粘贴 DeepSeek Chat 的提示词） */
   watchlistExtendPrompt: (id: string, force = false) =>
     request<{ ok: boolean; prompt?: string; fromCache?: boolean; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", { ...(force ? { force: true } : {}) })),
-  watchlistFundamentalTaskStatus: (_id: string, taskId: string) => request<AsyncTaskResult<WatchlistFundamentalResult>>(`/data-infra/tasks/${encodeURIComponent(taskId)}`).then((r) => {
-    const t = (r as { task?: { status: string; result?: unknown; lastResult?: string } }).task;
-    if (!r.ok || !t) return { ok: false, message: "任务不存在" } as AsyncTaskResult<WatchlistFundamentalResult>;
-    return {
-      ok: true, taskId, status: t.status === "done" ? "done" : t.status === "failed" ? "error" : t.status === "cancelled" ? "cancelled" : "running",
-      ...(t.status === "done" ? { result: t.result as WatchlistFundamentalResult } : {}),
-      ...(t.status === "failed" || t.status === "cancelled" ? { message: t.lastResult ?? "任务失败" } : {}),
-    } as AsyncTaskResult<WatchlistFundamentalResult>;
-  }),
-  // 新闻中心（多源配置 + 展示）
   newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
   newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
   newsItems: (sources?: string[], page = 1) =>
@@ -351,43 +321,6 @@ export const api = {
       `/data-infra/tasks/${encodeURIComponent(taskId)}/cancel`,
       jsonInit("POST", {}),
     ),
-  // 任务历史（KV 持久化，页面回看）：列表 + 单条详情
-  // 任务历史（统一模式：data-infra 任务记录按 type 过滤——core/tasks 已退役）
-  taskHistoryList: async (module: string) => {
-    const r = await request<{ ok: boolean; tasks?: { id: string; type: string; name: string; status: string; lastResult?: string; lastRunAt?: number; createdAt: number }[] }>(`/data-infra/tasks`).catch(() => null);
-    const tasks = (r?.tasks ?? []).filter((t) => t.type === module);
-    const entries: TaskHistoryEntry[] = tasks.map((t) => ({
-      taskId: t.id,
-      module,
-      name: t.name,
-      status: t.status === "failed" ? "error" : t.status === "queued" ? "pending" : t.status as TaskHistoryEntry["status"],
-      createdAt: new Date(t.createdAt).toISOString(),
-      ...(t.lastRunAt ? { finishedAt: new Date(t.lastRunAt).toISOString() } : {}),
-      message: t.lastResult,
-      durationMs: 0,
-    }));
-    return { ok: true, module, entries, total: entries.length } as TaskHistoryListResponse;
-  },
-  taskHistoryEntry: async (taskId: string) => {
-    const r = await request<{ ok: boolean; task?: { status: string; lastResult?: string; result?: unknown; lastRunAt?: number; createdAt: number } | null; message?: string }>(`/data-infra/tasks/${encodeURIComponent(taskId)}`).catch(() => null);
-    if (!r?.ok || !r.task) return { ok: false, message: r?.message ?? "任务不存在" };
-    const t = r.task;
-    return {
-      ok: true,
-      entry: {
-        taskId,
-        module: "",
-        status: t.status === "failed" ? "error" : t.status === "queued" ? "pending" : t.status as TaskHistoryEntry["status"],
-        createdAt: new Date(t.createdAt).toISOString(),
-        ...(t.lastRunAt ? { finishedAt: new Date(t.lastRunAt).toISOString() } : {}),
-        message: t.lastResult,
-        durationMs: 0,
-        ...(t.result !== undefined ? { result: t.result as never } : {}),
-      },
-    } as unknown as { ok: true; entry: TaskHistoryEntry };
-  },
-  // 任务实时状态（轮询兜底；SSE 优先）
-  // 统一模式：任务状态/取消走 data-infra（core/tasks 已退役）
   /** 统一读任务结果（done 后取 result；未完成抛错）——分析页 fetchResult 通用实现 */
   dataInfraResult: async <T = unknown>(taskId: string) => {
     const r = await request<{ ok: boolean; task?: { status: string; lastResult?: string; result?: unknown }; message?: string }>(
@@ -399,20 +332,11 @@ export const api = {
     }
     return r.task.result as T;
   },
-  taskStatus: async <T = unknown>(taskId: string) => {
-    const r = await request<{ ok: boolean; task?: { status: string; lastResult?: string; result?: unknown }; message?: string }>(
+  /** data-infra 任务详情（原始：状态 + 进度 + result）——轮询/恢复用 */
+  dataInfraTask: (taskId: string) =>
+    request<{ ok: boolean; task?: { id: string; type: string; name: string; status: string; lastResult?: string; result?: unknown; lastRunAt?: number; createdAt: number }; progress?: { progress: string; detail?: unknown; updatedAt: number }; message?: string }>(
       `/data-infra/tasks/${encodeURIComponent(taskId)}`,
-    );
-    if (!r.ok || !r.task) return { ok: false, message: r.message ?? "任务不存在" } as AsyncTaskResult<T>;
-    const t = r.task;
-    return {
-      ok: true,
-      taskId,
-      status: t.status === "done" ? "done" : t.status === "failed" ? "error" : t.status === "cancelled" ? "cancelled" : "running",
-      ...(t.status === "done" ? { result: t.result as T } : {}),
-      ...(t.status === "failed" || t.status === "cancelled" ? { message: t.lastResult ?? "任务失败" } : {}),
-    } as AsyncTaskResult<T>;
-  },
+    ),
   // 本地数据管理
   localSources: () => request<LocalDataResult>("/data/local/sources"),
   localEntries: (q: { source?: string; table?: string; search?: string; limit?: number; offset?: number }) => {
@@ -457,7 +381,7 @@ export const api = {
   agentSessionRestore: (id: string) =>
     request<{ ok: boolean; message: string }>(`/llm/agent-sessions/chat/${encodeURIComponent(id)}/restore`, jsonInit("POST", {})),
   agentSessionAsk: (kind: "chat" | "reasonix", id: string, text: string) =>
-    request<AsyncTaskResult<AgentSessionAskResult>>(
+    request<TaskCreateResult<AgentSessionAskResult>>(
       `/llm/agent-sessions/${kind}/${encodeURIComponent(id)}/ask`,
       jsonInit("POST", kind === "chat" ? { message: text } : { text }),
     ),
@@ -479,9 +403,9 @@ export const api = {
   // 项目架构依赖图（扫描源码自动生成）
   dependencyGraph: () => request<{ ok: boolean; generatedAt: string; nodes: unknown[]; edges: unknown[] }>("/dependency-graph"),
   // 实验分组（memo msvwslfq：投资框架 / ec 泡沫预警 / BMPI）
-  experimentFramework: (topic: string) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentFrameworkResponse>>("/tools/experiment/framework", jsonInit("POST", { topic })),
-  experimentEc: (force: boolean) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentEcResponse>>("/tools/experiment/ec", jsonInit("POST", { force })),
-  experimentBmpi: (force: boolean) => request<AsyncTaskResult<import("@toolbox/shared").ExperimentBmpiResponse>>("/tools/experiment/bmpi", jsonInit("POST", { force })),
+  experimentFramework: (topic: string) => request<TaskCreateResult<import("@toolbox/shared").ExperimentFrameworkResponse>>("/tools/experiment/framework", jsonInit("POST", { topic })),
+  experimentEc: (force: boolean) => request<TaskCreateResult<import("@toolbox/shared").ExperimentEcResponse>>("/tools/experiment/ec", jsonInit("POST", { force })),
+  experimentBmpi: (force: boolean) => request<TaskCreateResult<import("@toolbox/shared").ExperimentBmpiResponse>>("/tools/experiment/bmpi", jsonInit("POST", { force })),
   // 实验 · 用户补全数据（无 API 字段）
   experimentBmpiSupplement: () => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/bmpi/supplement"),
   experimentBmpiSaveSupplement: (data: Record<string, unknown>) => request<{ ok: boolean; supplement: Record<string, unknown> }>("/tools/experiment/bmpi/supplement", jsonInit("PUT", data)),

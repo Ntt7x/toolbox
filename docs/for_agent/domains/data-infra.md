@@ -178,6 +178,20 @@ return c.json({ ok: true, taskId: id }, 202);
 - **ephemeral trim 加固**：`registerTask(ephemeral)` 注册时即触发裁剪（不只 cleanupRun——防连续运行永不触发）
 - **P1-4 评估后不做**：`useAnalysisTask` 包装 hook 边际收益低（fetchResult/cancel 已一行化），避免过度抽象
 
+### 9.8 兼容层全清除（2026-08-26 收尾）——不留 AsyncTaskResult 兼容
+
+用户要求"别兼容了，都一块改了/重写"——彻底清除 core/tasks 时代遗留的所有兼容层：
+
+- **api.ts 兼容方法全删**：`taskStatus`/`taskHistoryList`/`taskHistoryEntry`/`watchlistImportTaskStatus`/`watchlistFundamentalTaskStatus`/`watchlistAppendPreviewStatus` 全部移除——前端改用：
+  - `dataInfraTask(taskId)`（data-infra 详情原始：状态/进度/result）
+  - `dataInfraResult<T>(taskId)`（done 后取 result）
+  - `dataInfraTasks()`（任务列表，TaskHistory 数据源）
+- **创建方法类型精确化**：`request<AsyncTaskResult<T>>` → 本地 `TaskCreateResult<T>`（`{ ok, taskId?, result?, message? }`）——缓存命中直接 `{ ok, result }`（无 taskId 假前缀）
+- **TaskHistory 组件重写**：读 data-infra 任务列表（按 type 过滤）+ result 展开（不再依赖 taskHistory KV/AsyncTaskResult 契约）
+- **调用方改原生**：AgentSessions waitTask、ZhihuCrawler auth 轮询、WatchlistTool 3 处轮询（import/preview/fundamental）全部改 `dataInfraTask` 详情直读
+- **shared 类型清除**：`AsyncTaskResult`/`AsyncTaskStatus`/`AsyncTaskResponse`/`AsyncTaskErrorResponse`/`TaskHistoryEntry`/`TaskHistoryListResponse` 全部删除（全库零引用）
+- **服务端缓存命中**：cbRate/treasuryFx/reverseRepo 缓存命中改 `{ ok, result }`（去掉 AsyncTaskResult 包装）
+
 ### 9.5 全项目改造梳理（2026-08-26 检查）
 
 **已接入 data-infra**：tradeV2-snapshot（任务+派生器+消费者）、reverseRepo-monthly（调度任务）、zhihuCrawler（消费者+衍生）；**登记模式已全覆盖**（cbRate/treasuryFx/watchlist/experiment/agentSessions/zhihuCrawler 的 createTask 均自动登记，运管页可见分析任务状态与历史）

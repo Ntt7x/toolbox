@@ -1110,57 +1110,8 @@ export type ReverseRepoDailyResult = ReverseRepoDailyResponse | ReverseRepoError
 // ============================================================
 
 /** 异步任务状态 */
-export type AsyncTaskStatus = "pending" | "running" | "done" | "error" | "cancelled";
-
 /** 异步任务响应（result 类型由业务方指定） */
-export interface AsyncTaskResponse<T = unknown> {
-  ok: true;
-  taskId: string;
-  status: AsyncTaskStatus;
-  /** done 时的任务结果 */
-  result?: T;
-  /** error 时的错误信息 */
-  message?: string;
-  /** 任务创建时间（ISO） */
-  createdAt: string;
-  /** 任务结束时间（ISO；终态时存在） */
-  finishedAt?: string;
-  /** 任务耗时（ms；终态时存在） */
-  durationMs?: number;
-  /** 任务归属模块（如 cb-rate），用于历史归档 */
-  module?: string;
-}
-
-export interface AsyncTaskErrorResponse {
-  ok: false;
-  message: string;
-}
-
-export type AsyncTaskResult<T = unknown> = AsyncTaskResponse<T> | AsyncTaskErrorResponse;
-
 /** 任务历史条目（持久化于 KV taskHistory:<module>，供页面回看） */
-export interface TaskHistoryEntry {
-  taskId: string;
-  module: string;
-  /** 用户可读任务名称（如「2026-08 · 央行利率分析（九大央行）」）；旧数据缺省 */
-  name?: string;
-  status: AsyncTaskStatus;
-  createdAt: string;
-  finishedAt?: string;
-  durationMs?: number;
-  /** done 时的结果（全量快照） */
-  result?: unknown;
-  /** error/cancelled 信息 */
-  message?: string;
-}
-
-export interface TaskHistoryListResponse {
-  ok: true;
-  module: string;
-  entries: TaskHistoryEntry[];
-  total: number;
-}
-
 // ============================================================
 // 本地数据管理（local-data）：查询/删改本地表与 KV 数据
 // ============================================================

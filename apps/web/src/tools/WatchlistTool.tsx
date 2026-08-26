@@ -8,7 +8,6 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, errMsg } from "../api";
 import { ErrorCard, PageHeader } from "../ui";
 import type {
-  AsyncTaskResult,
   FundSnapshot,
   QuoteSnapshot,
   WatchlistFundamentalResult,
@@ -570,24 +569,26 @@ export default function WatchlistTool() {
         let fail = 0;
         for (let i = 0; i < 120; i++) {
           await new Promise((r) => setTimeout(r, 3000));
-          const st = await api.watchlistAppendPreviewStatus(topic.id, t.taskId).catch((e) => ({ err: errMsg(e) }));
+          const st = await api.dataInfraTask(t.taskId).catch((e) => ({ err: errMsg(e) }));
           if (st && "err" in st) {
             // 连续 5 次失败才放弃（临时网络抖动容忍），避免卡死
             if (++fail >= 5) { setErr(st.err); return; }
             continue;
           }
           fail = 0;
-          if (st?.ok && st.status === "done") {
-            if (!st.preview || st.preview.length === 0) {
+          const dTask = st?.ok ? st.task : undefined;
+          if (dTask && dTask.status === "done") {
+            const previewStocks = (dTask.result as { stocks?: unknown[] } | undefined)?.stocks ?? [];
+            if (previewStocks.length === 0) {
               setErr("Chat 对话中未识别到可补充的个股");
               return;
             }
-            setAppendPreview({ taskId: t.taskId, stocks: st.preview });
-            setPreviewSelected(new Set(st.preview.map((s) => s.code)));
+            setAppendPreview({ taskId: t.taskId, stocks: previewStocks as never[] });
+            setPreviewSelected(new Set((previewStocks as { code: string }[]).map((s) => s.code)));
             return;
           }
-          if (st?.ok && (st.status === "error" || st.status === "cancelled")) {
-            setErr(st.message || "解析失败");
+          if (dTask && (dTask.status === "failed" || dTask.status === "cancelled")) {
+            setErr(dTask.lastResult || "解析失败");
             return;
           }
         }
@@ -657,16 +658,17 @@ export default function WatchlistTool() {
       if (t.taskId) {
         for (let i = 0; i < 120; i++) {
           await new Promise((r) => setTimeout(r, 3000));
-          const st = await api.watchlistImportTaskStatus(t.taskId).catch(() => null);
-          if (st?.ok && st.status === "done" && st.result) {
+          const st = await api.dataInfraTask(t.taskId).catch(() => null);
+          const dt = st?.ok ? st.task : undefined;
+          if (dt && dt.status === "done" && dt.result) {
             setImportUrl("");
             setShowCreate(false);
-            setSelectedId(st.result.id);
+            setSelectedId((dt.result as { id: string }).id);
             await refreshList();
             return;
           }
-          if (st?.ok && (st.status === "error" || st.status === "cancelled")) {
-            setErr(st.message || "导入失败");
+          if (dt && (dt.status === "failed" || dt.status === "cancelled")) {
+            setErr(dt.lastResult || "导入失败");
             return;
           }
         }
@@ -699,12 +701,15 @@ export default function WatchlistTool() {
     }
   };
 
-  const pollFundamental = async (taskId: string, tries = 60): Promise<AsyncTaskResult<WatchlistFundamentalResult>> => {
+  const pollFundamental = async (taskId: string, tries = 60): Promise<{ ok: boolean; result?: WatchlistFundamentalResult; message?: string }> => {
     if (!topic) return { ok: false, message: "专题不存在" };
     for (let i = 0; i < tries; i++) {
       await new Promise((res) => setTimeout(res, 3000));
-      const r = await api.watchlistFundamentalTaskStatus(topic.id, taskId).catch(() => null);
-      if (r && r.ok && (r.status === "done" || r.status === "error" || r.status === "cancelled")) return r;
+      const r = await api.dataInfraTask(taskId).catch(() => null);
+      const dt = r?.ok ? r.task : undefined;
+      if (dt && (dt.status === "done" || dt.status === "failed" || dt.status === "cancelled")) {
+        return dt.status === "done" ? { ok: true, result: dt.result as WatchlistFundamentalResult } : { ok: false, message: dt.lastResult ?? "分析失败" };
+      }
     }
     return { ok: false, message: "分析超时" };
   };

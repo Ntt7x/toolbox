@@ -316,9 +316,12 @@ useEffect(() => {
                 let final: { ok?: boolean; name?: string; message?: string } | null = null;
                 for (let i = 0; i < 180 && !final; i++) {
                   await new Promise((r) => setTimeout(r, 2000));
-                  const st = await api.taskStatus<{ ok?: boolean; name?: string; message?: string }>(t.taskId).catch(() => null);
-                  const body = st && "result" in st ? (st as { result?: unknown }).result : null;
-                  if (body && typeof body === "object" && "ok" in (body as object)) final = body as { ok?: boolean; name?: string; message?: string };
+                  const st = await api.dataInfraTask(t.taskId).catch(() => null);
+                  const dt = st?.ok ? st.task : undefined;
+                  if (dt && (dt.status === "done" || dt.status === "failed" || dt.status === "cancelled")) {
+                    const body = dt.status === "done" ? dt.result : undefined;
+                    final = body && typeof body === "object" ? body as { ok?: boolean; name?: string; message?: string } : { ok: false, message: dt.lastResult ?? "授权失败" };
+                  }
                 }
                 if (final?.ok) {
                   setAuthMsg(`✓ 授权成功${final.name ? `（${final.name}）` : ""}`);

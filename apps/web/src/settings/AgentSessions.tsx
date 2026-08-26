@@ -60,7 +60,7 @@ function SessionCard(props: {
     setLastResult(null);
     try {
       const task = await api.agentSessionAsk(kind, s.id, text);
-      if (!task.ok) {
+      if (!task.ok || !task.taskId) {
         setError(task.message ?? "任务创建失败");
         return;
       }
@@ -184,12 +184,14 @@ function SessionCard(props: {
   );
 }
 
-/** 轮询等待后台任务完成（页面简单场景够用） */
+/** 轮询等待后台任务完成（页面简单场景够用）——统一 data-infra 详情 */
 async function waitTask(taskId: string): Promise<{ ok: boolean; result?: AgentSessionAskResult; message?: string }> {
   for (let i = 0; i < 200; i++) {
-    const t = await api.taskStatus<AgentSessionAskResult>(taskId);
-    if (t.ok && t.status === "done" && t.result) return { ok: true, result: t.result };
-    if (!t.ok || t.status === "error" || t.status === "cancelled") return { ok: false, message: t.message ?? "任务失败" };
+    const r = await api.dataInfraTask(taskId).catch(() => null);
+    const t = r?.ok ? r.task : undefined;
+    if (t && t.status === "done" && t.result) return { ok: true, result: t.result as AgentSessionAskResult };
+    if (t && (t.status === "failed" || t.status === "cancelled")) return { ok: false, message: t.lastResult ?? "任务失败" };
+    if (!t) return { ok: false, message: "任务不存在" };
     await new Promise((r) => setTimeout(r, 1500));
   }
   return { ok: false, message: "等待超时" };

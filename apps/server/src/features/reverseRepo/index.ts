@@ -8,7 +8,6 @@
 import { Hono } from "hono";
 import {
   API_PREFIX,
-  type AsyncTaskResult,
   type ReverseRepoDailyResponse,
   type ReverseRepoDailyResult,
   type ReverseRepoMonthlyResult,
@@ -113,13 +112,7 @@ export function register(app: Hono): void {
       const cached = kvGet<ReverseRepoDailyResponse & { _at?: string }>(dailyCacheKey());
       const at = cached?._at ? Date.parse(cached._at) : NaN;
       if (cached && Number.isFinite(at) && Date.now() - at < DAILY_CACHE_TTL_MS) {
-        const hit: AsyncTaskResult<ReverseRepoDailyResult> = {
-          ok: true,
-          taskId: "reverse-repo-daily-cache",
-          status: "done",
-          result: { ...cached, fromCache: true },
-          createdAt: cached._at ?? new Date().toISOString(),
-        };
+        const hit = { ok: true, result: { ...cached, fromCache: true } };
         return c.json(hit, 200);
       }
     }
