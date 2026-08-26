@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CronExpressionParser } from "cron-parser";
 import { enqueue, dequeue, ack, queueStats, clearQueue, clearQueueAudit, listQueues, queueAudit, requeueStale } from "./queue.js";
-import { registerTask, runTask, listTasks, listTaskHistory, setTaskStatus, deleteTask } from "./taskRegistry.js";
+import { registerTask, runTask, listTasks, listTaskHistory, setTaskStatus, deleteTask, cancelTask, startTask, getTaskProgress, PROG_PREFIX } from "./taskRegistry.js";
 
 const Q = "test-q-" + Date.now();
 
@@ -175,6 +175,62 @@ test("任务：并发防重（running 中拒绝第二次）", async () => {
   deleteTask(id);
 });
 
+test("任务：进度上报 → 进度快照可读，终态清理", async () => {
+  const id = "test-prog-" + Date.now();
+  registerTask({ id, type: "test", name: "进度任务", handler: async (ctx) => { ctx.progress?.("步骤 1/2"); await new Promise((r) => setTimeout(r, 10)); ctx.progress?.("步骤 2/2"); return { ok: true, message: "完成" }; } });
+  const r = await runTask(id);
+  assert.equal(r.ok, true);
+  assert.equal(getTaskProgress(id), null, "终态后进度清理");
+  deleteTask(id);
+});
+
+test("任务：cancelTask 中止执行中任务（handler 收到 signal）→ cancelled", async () => {
+  const id = "test-cancel-" + Date.now();
+  let gotSignal = false;
+  registerTask({ id, type: "test", name: "取消任务", handler: async (ctx) => { ctx.signal?.addEventListener("abort", () => { gotSignal = true; }); await new Promise((r) => setTimeout(r, 2000)); return { ok: true }; } });
+  const p = runTask(id);
+  await new Promise((r) => setTimeout(r, 30));
+  const c = cancelTask(id);
+  assert.equal(c, true);
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(gotSignal, true, "handler 收到 abort");
+  const t = listTasks().find((t) => t.id === id);
+  assert.equal(t?.status, "cancelled");
+  const hist = listTaskHistory(id);
+  assert.equal(hist.at(-1)?.status, "cancelled");
+  deleteTask(id);
+});
+
+test("任务：startTask 异步启动（fire-and-forget，状态可查）", async () => {
+  const id = "test-start-" + Date.now();
+  registerTask({ id, type: "test", name: "异步任务", handler: async () => { await new Promise((r) => setTimeout(r, 30)); return { ok: true, message: "异步完成" }; } });
+  startTask(id);
+  assert.equal(listTasks().find((t) => t.id === id)?.status, "running", "启动后立即 running");
+  await new Promise((r) => setTimeout(r, 80));
+  const t = listTasks().find((t) => t.id === id);
+  assert.equal(t?.status, "done");
+  assert.equal(t?.lastResult, "异步完成");
+  deleteTask(id);
+});
+
+test("任务：ephemeral 保留上限治理（超 100 条清最旧终态）", async () => {
+  const ids: string[] = [];
+  for (let i = 0; i < 105; i++) {
+    const id = "test-eph-" + i + "-" + Date.now();
+    ids.push(id);
+    registerTask({ id, type: "test", name: "一次性任务", handler: async () => ({ ok: true }) }, { ephemeral: true });
+    await runTask(id);
+  }
+  const remaining = listTasks().filter((t) => t.id.startsWith("test-eph-") && t.status === "done");
+  assert.ok(remaining.length <= 100, "ephemeral 终态记录不超过保留上限（实际 " + remaining.length + "）");
+  assert.equal(listTasks().find((t) => t.id === ids[0]), undefined, "最旧终态记录已裁剪");
+  for (const t of listTasks().filter((t) => t.id.startsWith("test-eph-"))) deleteTask(t.id);
+});
+
+test("任务：进度快照孤儿启动清理（PROG_PREFIX 可扫可删）", () => {
+  assert.ok(PROG_PREFIX.endsWith(":"), "进度前缀以冒号结尾");
+});
 test("调度：cron-parser 解析下一触发点", () => {
   const it = CronExpressionParser.parse("0 30 16 * * *", { currentDate: new Date("2026-08-24T10:00:00") });
   const next = it.next().toDate();

@@ -3,14 +3,14 @@
 // 管理两类有状态 LLM 会话：
 //   模式 2 自研 Cache 会话（core/chatSession）——可看历史/续问/恢复归档
 //   模式 3 Reasonix 会话（core/reasonix）——可续问/关闭
-// 依赖下层公共模块：core/chatSession、core/reasonix、core/tasks
+// 依赖下层公共模块：core/chatSession、core/reasonix、core/data-infra
 // ============================================================
 import { Hono } from "hono";
 import { API_PREFIX, type AgentSessionAskResult, type AgentSessionCreateResult, type AgentSessionCreateRequest, type AgentSessionsResult, type ChatSessionDetail, type ToolMeta } from "@toolbox/shared";
 import { createChatSession, chatSessionAsk, listChatSessions, deleteChatSession, getChatSessionDetail, restoreArchivedSession } from "../../core/chatSession.js";
 import { createReasonixSession, reasonixAsk, closeReasonixSession, listReasonixSessions, getReasonixHistory, backfillReasonixHistory, getAcpStatus, ensureAcpRunning, stopAcp } from "../../core/reasonix.js";
 import { getMcpServers, setMcpServers, type McpServerConfig } from "../../core/mcpConfig.js";
-import { createTask } from "../../core/tasks.js";
+import { getTask, newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 
 export const meta: ToolMeta = {
   id: "agent-sessions",
@@ -116,11 +116,16 @@ export function register(app: Hono): void {
     const message = typeof raw?.message === "string" ? raw.message.trim() : "";
     if (!message) return c.json({ ok: false, message: "缺少 message" }, 400);
     const id = c.req.param("id");
-    const { taskId } = createTask<AgentSessionAskResult>(async (signal) => {
-      const r = await chatSessionAsk(id, message, { signal });
-      if (!r.ok) return { ok: false, message: r.message };
-      return { ok: true, content: r.content, usage: r.usage };
-    }, { timeoutMs: 5 * 60 * 1000, module: "agent-session.chat", name: `会话续问 · ${message.slice(0, 24)}` });
+    const taskId = newTaskId("agent-session-chat");
+    registerTask({
+      id: taskId, type: "agent-session", name: `会话续问 · ${message.slice(0, 24)}`,
+      handler: async (ctx) => {
+        const r = await chatSessionAsk(id, message, { signal: ctx.signal ?? new AbortController().signal });
+        if (!r.ok) throw new Error(r.message);
+        return { ok: true, message: "续问完成", result: { ok: true, content: r.content, usage: r.usage } };
+      },
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 
@@ -184,11 +189,16 @@ export function register(app: Hono): void {
     if (!text) return c.json({ ok: false, message: "缺少 text" }, 400);
     const id = c.req.param("id");
     // 注：ACP 请求无法中途取消（rpc 无 abort），取消仅置任务态，reasonix 侧继续执行（2026-08-14 说明）
-    const { taskId } = createTask<AgentSessionAskResult>(async (signal) => {
-      const r = await reasonixAsk(id, text, { signal });
-      if (!r.ok) return { ok: false, message: r.message };
-      return { ok: true, content: r.content, usage: r.usage as AgentSessionAskResult["usage"] };
-    }, { timeoutMs: 8 * 60 * 1000, module: "agent-session.reasonix", name: `Reasonix 续问 · ${text.slice(0, 24)}` });
+    const taskId = newTaskId("agent-session-reasonix");
+    registerTask({
+      id: taskId, type: "agent-session", name: `Reasonix 续问 · ${text.slice(0, 24)}`,
+      handler: async (ctx) => {
+        const r = await reasonixAsk(id, text, { signal: ctx.signal ?? new AbortController().signal });
+        if (!r.ok) throw new Error(r.message);
+        return { ok: true, message: "续问完成", result: { ok: true, content: r.content, usage: r.usage as AgentSessionAskResult["usage"] } };
+      },
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 

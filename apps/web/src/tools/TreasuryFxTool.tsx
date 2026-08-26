@@ -1,7 +1,7 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { openDeepSeekChat } from "../deepseekChat";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { TaskHistory } from "../components/TaskHistory";
 import type { TreasuryFxResponse, TreasuryFxRow } from "@toolbox/shared";
@@ -55,14 +55,29 @@ export default function TreasuryFxTool() {
   const [chatBusy, setChatBusy] = useState(false);
   const [promptText, setPromptText] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
-  const task = useAsyncTask<TreasuryFxResponse>("treasuryFxTaskId", api.treasuryFxTaskStatus, api.cancelTask);
-  const result = task.result;
-  const err = task.error ?? localErr;
-  const taskRunning = task.running;
-  const taskId = task.taskId;
+  const reqRef = useRef<{ days: number; search: boolean; useCache: boolean } | null>(null);
+  // 后台异步任务（统一模式：data-infra 任务——SSE 状态/进度 + 轮询兜底 + sessionStorage 恢复 + 停止）
+  const task = useDataInfraTask<TreasuryFxResponse>({
+    storageKey: "treasuryFxTaskId",
+    create: async () => {
+      const t = await api.treasuryFx(reqRef.current!);
+      if (!t.ok) throw new Error(t.message);
+      if (t.result) return { result: t.result as TreasuryFxResponse };
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<TreasuryFxResponse>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const running = task.state.status === "running";
+  const result = task.state.result;
+  const err = task.state.error ?? localErr;
+  const taskRunning = running;
+  const taskId = task.state.taskId;
 
   // 任务运行计时（任务信息：已运行时长）
   const [runSec, setRunSec] = useState(0);
+  // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { task.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   useEffect(() => {
     if (!taskRunning) {
       setRunSec(0);
@@ -75,16 +90,9 @@ export default function TreasuryFxTool() {
   const run = async () => {
     setShowRaw(false);
     setLoading(true);
-    setCacheHint(false);
     try {
-      const t = await api.treasuryFx({ days, search: withSearch, useCache: withCache });
-      if (!t.ok) {
-        setLocalErr(t.message);
-        return;
-      }
-      // 缓存命中（cache- 前缀 taskId）：瞬时完成，给出明确反馈避免「点了没反应」的错觉
-      if (t.taskId && t.taskId.startsWith("cache-")) setCacheHint(true);
-      task.watch(t.taskId, t);
+      reqRef.current = { days, search: withSearch, useCache: withCache };
+      await task.run(); // 统一模式：create 内部提交 + SSE 监听；缓存命中直接落地（result.fromCache 展示）
     } catch (e) {
       setLocalErr(errMsg(e));
     } finally {
@@ -214,7 +222,7 @@ export default function TreasuryFxTool() {
       {err && <ErrorCard>❌ {err}</ErrorCard>}
 
       {/* 缓存命中提示（瞬时完成反馈） */}
-      {cacheHint && (
+      {result?.fromCache && (
         <div style={{ ...card, borderColor: "#fde68a", background: "#fffbeb", color: "#b45309", padding: "0.7rem 1rem" }}>
           💾 已从缓存加载（{new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新数据请关闭「缓存」或修改参数。
         </div>

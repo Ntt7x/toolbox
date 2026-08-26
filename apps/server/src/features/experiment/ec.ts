@@ -4,8 +4,19 @@
 // ③B/Ω/CVAS/CCV 指标公式固化（indicators.ts）④LLM 仅做研判——不再用 LLM 采集数据
 // ============================================================
 import { Hono } from "hono";
-import { API_PREFIX, type AsyncTaskResult, type ExperimentEcRequest, type ExperimentEcResponse, type ExperimentEcData } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { API_PREFIX, type ExperimentEcRequest, type ExperimentEcResponse, type ExperimentEcData } from "@toolbox/shared";
+import { newTaskId, registerScheduledTask, registerTask, startTask } from "../../core/data-infra/index.js";
+
+registerScheduledTask({
+  id: "experiment-ec-window",
+  type: "experiment",
+  name: "实验窗口 · EC 每日刷新",
+  cron: "0 0 9 * * *",
+  handler: async (ctx) => {
+    const r = await refreshWindow("ec", ctx.signal);
+    return { ok: true, message: `窗口已刷新（${r.asOf}）`, result: r };
+  },
+});
 import { getPromptTemplate } from "../../core/prompts.js";
 import { chat } from "../../core/llm.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
@@ -148,14 +159,11 @@ export function registerExperimentEc(app: Hono): void {
   app.post(`${API_PREFIX}/tools/experiment/ec`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as Partial<ExperimentEcRequest> | null;
     const opts: ExperimentEcRequest = { force: raw?.force === true, useSearch: raw?.useSearch !== false };
-    const created = createTask((signal) => runEc(opts, signal), { timeoutMs: 10 * 60 * 1000, name: `${today()} · ec 泡沫预警` });
-    return c.json({ ok: true, taskId: created.taskId } as AsyncTaskResult<unknown>);
-  });
+    const taskId = newTaskId("experiment-ec");
 
-  app.get(`${API_PREFIX}/tools/experiment/ec/task/:taskId`, (c) => {
-    const task = getTask<ExperimentEcResponse>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
+registerTask({ id: taskId, type: "experiment", name: `${today()} · ec 泡沫预警`, handler: async (ctx) => { const result = await runEc(opts, ctx.signal ?? new AbortController().signal); return { ok: true, message: "分析完成", result }; } }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId });
   });
 
   // 历史结果（每日快照）

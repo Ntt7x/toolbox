@@ -127,7 +127,58 @@ registerConsumer({ queue: "x:derived", name: "X 衍生", handler: async (msg) =>
 - **登记模式（已实现，2026-08-26）**：`core/tasks.createTask` 传 `module` 时**自动** `registerExternalTask`（data-infra 记录生命周期：running→done/failed + lastResult + 历史）——业务零改动即获得运管可见；watchlist/bmpi 等缺 module 的 createTask 已补齐（watchlist.import/fundamental、experiment.bmpi）
 - **统一模式**（未来可选）：分析任务全走 data-infra runTask，前端轮询任务状态——涉及前端 useAsyncTask 改造，分阶段做
 
-### 9.4 全项目改造梳理（2026-08-26 检查）
+### 9.4 统一模式（2026-08-26 落地）——分析任务一条链路
+
+**原则**：所有"用户触发 → 后台分析 → 看进度/结果"的任务走同一条链路（data-infra），不再有第二套任务系统。
+
+**服务端三件套**（ephemeral 一次性任务——每次请求动态 id，终态后自动清定义、KV 记录保留运管可见）：
+
+```ts
+const id = newTaskId("cb-rate"); // 业务前缀
+registerTask({
+  id, type: "cb-rate", name: taskName,
+  handler: async (ctx) => {
+    const r = await analyze(req, ctx.signal ?? new AbortController().signal);
+    return { ok: true, message: "分析完成", result: r }; // result 挂任务记录
+  },
+}, { ephemeral: true }); // 终态后自动清 defs（KV 保留）
+startTask(id, { trigger: "manual" }); // fire-and-forget
+return c.json({ ok: true, taskId: id }, 202);
+```
+
+任务状态路由统一读 data-infra 详情（done → result；failed/cancelled/未完成 → 400 带 message）。
+
+**基础设施**（taskRegistry 已支持）：
+- `TaskRunOptions`：`signal`（runTask 自动注入 AbortController）/`progress`（进度快照 KV）/`taskId`
+- `TaskHandlerResult.result`：结构化结果挂任务记录（前端 done 后经详情 API 读取）
+- `cancelTask(id)`：abort 运行中任务 → 终态 `cancelled`（handler 内 LLM/IO 收到 signal）
+- `startTask(id, opts)`：异步启动（fire-and-forget）
+- `getTaskProgress(id)` + SSE `GET /api/data-infra/tasks/:id/stream`（status 事件：running/progress/done/failed/cancelled/notfound）
+- `GET /api/data-infra/tasks/:id`：任务详情（状态 + 进度 + result）
+
+**前端统一 hook** `useDataInfraTask<T>`（apps/web/src/hooks/useDataInfraTask.ts）：
+- `create` 返回 `{ taskId }` 或 `{ result }`（缓存命中直接落地——cbRate/treasuryFx 缓存短路）
+- SSE 优先 → onerror 一次降级轮询（不依赖 EventSource 自动重连）
+- `fetchResult(taskId)` 业务注入（done 后调）；`cancel` 业务注入（缺省调 data-infra cancel）
+- sessionStorage 跨页恢复（`resumeIfPending`）
+- 已迁移：experiment（framework/ec/bmpi）、cbRate、treasuryFx——watchlist 前端手动轮询保留（服务端已统一）
+
+**保留 core/tasks 的场景**（特殊交互流程，已登记 data-infra）：~~reverseRepo 手动入口、zhihuCrawler（浏览器自动化）、agentSessions（会话状态）~~ —— **2026-08-26 已全部迁移，core/tasks 退役**（tasks.ts/sse.ts/useAsyncTask.ts 已删除）：
+- reverseRepo 手动入口 → 统一触发调度任务（startTask("reverseRepo-monthly")，状态锁防并发）；daily 探查 → ephemeral
+- zhihuCrawler（auth/crawl/resume）→ ephemeral（onProgress 上报 SSE 进度）
+- agentSessions（chat/reasonix ask）→ ephemeral
+- 前端 `api.taskStatus/cancelTask/taskHistoryList/Entry` 全部映射 data-infra（兼容 AsyncTaskResult 契约）；TaskHistory 组件读 data-infra 任务记录（按 type 过滤）
+- 旧 `taskHistory:` KV 数据已备份清理（`.file/kv-backup/`），数据源注册移除
+
+### 9.7 统一模式整合（2026-08-26 P0+P1+P2）——去重与彻底统一
+
+- **服务端 `taskResultOrError(c, taskId)` 公共 helper**（core/data-infra/taskResult.ts）：统一 404/400/200 三段式——9 处 feature 任务结果路由（cbRate/treasuryFx/experiment×3/reverseRepo/watchlist×3）全部改为调用——状态消息文案统一（"任务失败/已取消/未完成"）
+- **业务结果路由退役**：`/tools/cb-rate/task/:id` 等 9 个业务 GET 路由删除——前端统一经 `GET /api/data-infra/tasks/:id`（详情）+ `api.dataInfraResult(taskId)` 读取结果（done → result；未完成抛错）
+- **前端 fetchResult 统一**：7 个页面 `fetchResult` 一行化（`api.dataInfraResult<T>(taskId)`）——api.ts 死方法（cbRateTaskStatus 等 6 个）删除
+- **ephemeral trim 加固**：`registerTask(ephemeral)` 注册时即触发裁剪（不只 cleanupRun——防连续运行永不触发）
+- **P1-4 评估后不做**：`useAnalysisTask` 包装 hook 边际收益低（fetchResult/cancel 已一行化），避免过度抽象
+
+### 9.5 全项目改造梳理（2026-08-26 检查）
 
 **已接入 data-infra**：tradeV2-snapshot（任务+派生器+消费者）、reverseRepo-monthly（调度任务）、zhihuCrawler（消费者+衍生）；**登记模式已全覆盖**（cbRate/treasuryFx/watchlist/experiment/agentSessions/zhihuCrawler 的 createTask 均自动登记，运管页可见分析任务状态与历史）
 
@@ -136,6 +187,13 @@ registerConsumer({ queue: "x:derived", name: "X 衍生", handler: async (msg) =>
 **中候选**：~~reverseRepo 手动入口与调度任务双轨整合~~ → **已完成（2026-08-26）**：调度 handler 与手动入口共用 `getUpdateState` 状态锁防并发（running 时跳过，避免重复 LLM）；业务缓存失效 → 消息通知（低价值，暂缓）
 
 **弱候选/不建议**：agentSessions（会话管理业务特殊）、newsCenter/books/todoV3（同步或已有机制）、爬虫 setTimeout（业务内延迟非调度）
+
+### 9.6 ephemeral 治理与自愈（2026-08-26 强化）
+
+- **一次性任务保留上限**：`EPHEMERAL_LIMIT = 100`——ephemeral 任务（分析请求）终态后 KV 记录保留（运管可见 + 历史），但超 100 条时自动裁剪最旧终态记录（running/queued 不裁剪）——防分析请求长期累积失控
+- **孤儿进度快照自愈**：`initDataInfra` 启动时清理全部 `dataInfra:taskProg:`（进程崩溃残留——启动后无 running 任务，进度快照均为孤儿）
+- **任务状态标记**：`RegisteredTask.ephemeral?`（注册时写入）——trimEphemeral 按标记识别，不依赖 type 推断
+- **cron 任务被 paused 的静默风险**：窗口/快照调度任务若被暂停，每日刷新静默失效——健康检查 `pausedTasks` 指标暴露（运管页健康卡片 ⚠️）——恢复用 `POST /data-infra/tasks/:id/resume`
 
 ## 十、DDIA 对照：数据工程理念落地（2026-08-26 阅读《数据密集型应用系统设计》）
 

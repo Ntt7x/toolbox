@@ -4,6 +4,7 @@
 // ============================================================
 
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
   API_PREFIX,
   type LlmChatMessage,
@@ -18,7 +19,7 @@ import { getPromptDetail, listPrompts, resetPrompt, updatePrompt } from "./promp
 import { generateDependencyGraph } from "./dependencyGraph.js";
 import { getQuoteSnapshot } from "./quote.js";
 import { registerDataSource, unmarkedKvEntries } from "./dataRegistry.js";
-import { deleteTask, listConsumers, listDerivators, listQueues, listTaskHistory, listTasks, orphanQueues, peekQueue, queueAudit, queueStats, requeueStale, runTask, scheduleTask, setTaskStatus, triggerDerivator } from "./data-infra/index.js";
+import { deleteTask, getTaskProgress, listConsumers, listDerivators, listQueues, listTaskHistory, listTasks, orphanQueues, peekQueue, queueAudit, queueStats, requeueStale, runTask, scheduleTask, setTaskStatus, triggerDerivator, cancelTask, getTask } from "./data-infra/index.js";
 import { clearQueue } from "./data-infra/queue.js";
 
 // 注册数据源：LLM 用量日志（本地数据管理可见）
@@ -156,6 +157,46 @@ export function registerPromptRoutes(app: Hono): void {
 export function registerDataInfraRoutes(app: Hono): void {
   // 任务清单（运管：状态/上次/下次执行）
   app.get(`${API_PREFIX}/data-infra/tasks`, (c) => c.json({ ok: true, tasks: listTasks() }));
+
+  // 任务详情（统一模式前端轮询：状态 + 进度 + 结果）
+  app.get(`${API_PREFIX}/data-infra/tasks/:id`, (c) => {
+    const id = c.req.param("id");
+    const t = getTask(id);
+    if (!t) return c.json({ ok: false, message: "任务不存在" }, 404);
+    return c.json({ ok: true, task: t, progress: getTaskProgress(id) });
+  });
+
+  // 取消执行中任务（handler 收到 abort → 中断 LLM/IO；终态 cancelled）
+  app.post(`${API_PREFIX}/data-infra/tasks/:id/cancel`, (c) => c.json({ ok: cancelTask(c.req.param("id")) }));
+
+  // 任务 SSE 流（统一模式前端实时状态/进度；终态 done/failed/cancelled 自动关闭）
+  app.get(`${API_PREFIX}/data-infra/tasks/:id/stream`, (c) => {
+    const id = c.req.param("id");
+    return streamSSE(c, async (stream) => {
+      let lastStatus = "";
+      let lastProg = "";
+      for (;;) {
+        const t = getTask(id);
+        if (!t) {
+          await stream.writeSSE({ event: "status", data: JSON.stringify({ status: "notfound" }) });
+          break;
+        }
+        const prog = getTaskProgress(id);
+        const status = t.status;
+        const progText = prog?.progress ?? "";
+        if (status !== lastStatus || progText !== lastProg) {
+          lastStatus = status;
+          lastProg = progText;
+          await stream.writeSSE({
+            event: "status",
+            data: JSON.stringify({ status, progress: progText, detail: prog?.detail, lastResult: t.lastResult }),
+          });
+        }
+        if (status === "done" || status === "failed" || status === "cancelled") break;
+        await stream.sleep(1000);
+      }
+    });
+  });
 
   // 任务执行历史
   app.get(`${API_PREFIX}/data-infra/tasks/:id/history`, (c) => c.json({ ok: true, entries: listTaskHistory(c.req.param("id")) }));

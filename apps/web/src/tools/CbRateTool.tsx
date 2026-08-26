@@ -1,10 +1,10 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { openDeepSeekChat } from "../deepseekChat";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { TaskHistory } from "../components/TaskHistory";
-import type { CbAction, CbRatePeriod, CbRateBank, CbRateResponse } from "@toolbox/shared";
+import type { CbAction, CbRatePeriod, CbRateBank, CbRateRequest, CbRateResponse } from "@toolbox/shared";
 
 // ---------- 九大央行选项 ----------
 
@@ -102,24 +102,37 @@ export default function CbRateTool() {
   const [withCache, setWithCache] = useState(true);
   const [loading, setLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
-  const [cacheHint, setCacheHint] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
   const [chatHint, setChatHint] = useState<string | null>(null);
   const [chatBusy, setChatBusy] = useState(false);
   // 程序性提示词（统一数据链路：API → 本地设置数据）
   const [promptText, setPromptText] = useState<string | null>(null);
-  // 后台异步任务（SSE 推送 + 轮询兜底 + sessionStorage 恢复 + 停止按钮）
-  const task = useAsyncTask<CbRateResponse>("cbRateTaskId", api.cbRateTaskStatus, api.cancelTask);
+  // 后台异步任务（统一模式：data-infra 任务——SSE 状态/进度 + 轮询兜底 + sessionStorage 恢复 + 停止）
+  const task = useDataInfraTask<CbRateResponse>({
+    storageKey: "cbRateTaskId",
+    create: async () => {
+      const t = await api.cbRate(reqRef.current!);
+      if (!t.ok) throw new Error(t.message);
+      if (t.result) return { result: t.result as CbRateResponse };
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<CbRateResponse>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const reqRef = useRef<CbRateRequest | null>(null); // run 里赋值，create 闭包读取最新请求
+  const running = task.state.status === "running";
   const [localErr, setLocalErr] = useState<string | null>(null); // 本地一次性错误（非任务错误）
-  // result 恒为 CbRateResponse（ok:true）——错误统一走 task.error/localErr，不再断言联合类型
-  const result = task.result;
-  const err = task.error ?? localErr;
-  const taskRunning = task.running;
-  const taskId = task.taskId;
+  // result 恒为 CbRateResponse（ok:true）——错误统一走 task.state.error/localErr，不再断言联合类型
+  const result = task.state.result;
+  const err = task.state.error ?? localErr;
+  const taskRunning = running;
+  const taskId = task.state.taskId;
 
   // 任务运行计时（任务信息：已运行时长）
   const [runSec, setRunSec] = useState(0);
+  // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { task.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   useEffect(() => {
     if (!taskRunning) {
       setRunSec(0);
@@ -141,9 +154,8 @@ export default function CbRateTool() {
   const run = async () => {
     setShowRaw(false);
     setLoading(true);
-    setCacheHint(false);
     try {
-      const req = {
+      reqRef.current = {
         period,
         ...(monthSel ? { month: monthSel } : {}),
         ...(selected.size > 0 ? { banks: [...selected] } : {}),
@@ -151,15 +163,7 @@ export default function CbRateTool() {
         search: withSearch,
         useCache: withCache,
       };
-      const t = await api.cbRate(req); // 立即返回 taskId，后台执行
-      if (!t.ok) {
-        // 提交失败：仅提示错误，保留已展示的历史结果（不得 reset 清掉）
-        setLocalErr(t.message);
-        return;
-      }
-      // 缓存命中（t 已是 done + 完整 result）直接落地；否则 SSE 监听，切页/刷新后自动恢复
-      if (t.taskId && t.taskId.startsWith("cache-")) setCacheHint(true);
-      task.watch(t.taskId, t);
+      await task.run(); // 统一模式：create 内部提交 + SSE 监听；缓存命中直接落地（result.fromCache 展示）
     } catch (e) {
       setLocalErr(errMsg(e));
     } finally {
@@ -319,9 +323,9 @@ export default function CbRateTool() {
       {err && <ErrorCard>❌ {err}</ErrorCard>}
 
       {/* 缓存命中提示（瞬时完成反馈，与国债汇率分析一致） */}
-      {cacheHint && (
+      {result?.fromCache && (
         <div style={{ ...card, borderColor: "#fde68a", background: "#fffbeb", color: "#b45309", padding: "0.7rem 1rem" }}>
-          💾 已从缓存加载（{new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新数据请关闭「缓存」或修改参数。
+          💾 已从缓存加载（{result.cachedAt ? new Date(result.cachedAt).toLocaleTimeString() : new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新数据请关闭「缓存」或修改参数。
         </div>
       )}
 

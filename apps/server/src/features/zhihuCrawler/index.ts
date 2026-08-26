@@ -2,11 +2,11 @@
 // 业务模块：知乎爬虫（features/zhihu-crawler）
 // - meta：工具注册信息（小工具分组）
 // - register：cookie 设置 / 用户信息 / 抓取（后台任务，人类频率）/ 抓取历史
-// 依赖下层公共模块：core/tasks（后台任务）、core/settingsStore（cookie）
+// 依赖下层公共模块：core/data-infra（统一任务）、core/settingsStore（cookie）
 // ============================================================
 import { Hono } from "hono";
 import { API_PREFIX, type ToolMeta, type ZhihuCrawlResult, type ZhihuCrawlItem, type ZhihuCrawlProgress, type ZhihuImportResult, type ZhihuImportRequest, type ZhihuResumeRequest } from "@toolbox/shared";
-import { createTask } from "../../core/tasks.js";
+import { getTask, newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
 import { enqueue, registerConsumer } from "../../core/data-infra/index.js";
@@ -48,12 +48,15 @@ export function register(app: Hono): void {
 
   // 浏览器内登录授权（后台任务：弹窗 → 用户登录 → 自动提取 cookie）
   app.post(`${API_PREFIX}/tools/zhihu-crawler/auth`, async (c) => {
-    const { taskId } = createTask<{ ok: boolean; name?: string; message?: string }>(
-      async (signal) => {
-        return authViaBrowser({ signal, onProgress: () => {} });
+    const taskId = newTaskId("zhihu-auth");
+    registerTask({
+      id: taskId, type: "zhihu-crawler", name: "知乎浏览器登录授权",
+      handler: async (ctx) => {
+        const r = await authViaBrowser({ signal: ctx.signal ?? new AbortController().signal, onProgress: (m: string) => ctx.progress?.(m) });
+        return { ok: true, message: "登录授权完成", result: r };
       },
-      { timeoutMs: 6 * 60 * 1000, module: "zhihu.auth", name: "知乎浏览器登录授权" },
-    );
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 
@@ -82,21 +85,23 @@ export function register(app: Hono): void {
     const dateFrom = typeof raw?.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateFrom) ? raw.dateFrom : undefined;
     const dateTo = typeof raw?.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateTo) ? raw.dateTo : undefined;
 
-    const { taskId } = createTask<ZhihuCrawlResult>(
-      async (signal) => {
+    const taskId = newTaskId("zhihu-crawl");
+    registerTask({
+      id: taskId, type: "zhihu-crawler", name: `知乎爬虫 · ${target}`,
+      handler: async (ctx) => {
         const r = await crawlUser(target, {
           types,
           limit,
           ...(dateFrom ? { dateFrom } : {}),
           ...(dateTo ? { dateTo } : {}),
-          signal,
-          onProgress: () => {},
+          signal: ctx.signal ?? new AbortController().signal,
+          onProgress: (p) => ctx.progress?.(p.message, p),
           saveProgress: (snap) => kvSet(`zhihuCrawl:progress:${snap.progressId}`, snap),
         });
-        return finishCrawl(r, target);
+        return { ok: true, message: "爬取完成", result: finishCrawl(r, target) };
       },
-      { timeoutMs: 30 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫 · ${target}` },
-    );
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 
@@ -115,8 +120,10 @@ export function register(app: Hono): void {
       return c.json({ ok: false, message: "进度已超过 7 天未续爬，已清理（可重新开始爬取）" }, 404);
     }
     const snap = progress as ZhihuCrawlProgress;
-    const { taskId } = createTask<ZhihuCrawlResult>(
-      async (signal) => {
+    const taskId = newTaskId("zhihu-crawl");
+    registerTask({
+      id: taskId, type: "zhihu-crawler", name: `知乎爬虫（续爬） · ${snap.token}`,
+      handler: async (ctx) => {
         const r = await crawlUser(snap.token, {
           types: snap.types,
           limit: snap.limit,
@@ -126,14 +133,14 @@ export function register(app: Hono): void {
           commentsDone: snap.commentsDone === true,
           phaseIndex: snap.phaseIndex,
           progressId: snap.progressId,
-          signal,
-          onProgress: () => {},
+          signal: ctx.signal ?? new AbortController().signal,
+          onProgress: (p) => ctx.progress?.(p.message, p),
           saveProgress: (s) => kvSet(`zhihuCrawl:progress:${s.progressId}`, s),
         });
-        return finishCrawl(r, snap.token);
+        return { ok: true, message: "爬取完成", result: finishCrawl(r, snap.token) };
       },
-      { timeoutMs: 30 * 60 * 1000, module: "zhihu.crawler", name: `知乎爬虫（续爬） · ${snap.token}` },
-    );
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
     return c.json({ ok: true, taskId, status: "running" }, 202);
   });
 

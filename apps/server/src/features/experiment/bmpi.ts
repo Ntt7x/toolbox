@@ -5,8 +5,19 @@
 // ④LLM 仅做综合研判（summary/依据/观察节点）——不再用 LLM 采集数据（省成本、数据更硬）
 // ============================================================
 import { Hono } from "hono";
-import { API_PREFIX, type AsyncTaskResult, type ExperimentBmpiRequest, type ExperimentBmpiResponse } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { API_PREFIX, type ExperimentBmpiRequest, type ExperimentBmpiResponse } from "@toolbox/shared";
+import { newTaskId, registerScheduledTask, registerTask, startTask } from "../../core/data-infra/index.js";
+
+registerScheduledTask({
+  id: "experiment-bmpi-window",
+  type: "experiment",
+  name: "实验窗口 · BMPI 每日刷新",
+  cron: "0 0 9 * * *",
+  handler: async (ctx) => {
+    const r = await refreshWindow("bmpi", ctx.signal);
+    return { ok: true, message: `窗口已刷新（${r.asOf}）`, result: r };
+  },
+});
 import { getPromptTemplate } from "../../core/prompts.js";
 import { chat } from "../../core/llm.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
@@ -186,14 +197,11 @@ export function registerExperimentBmpi(app: Hono): void {
   app.post(`${API_PREFIX}/tools/experiment/bmpi`, async (c) => {
     const raw = (await c.req.json().catch(() => null)) as Partial<ExperimentBmpiRequest> | null;
     const opts: ExperimentBmpiRequest = { force: raw?.force === true, useSearch: raw?.useSearch !== false };
-    const created = createTask((signal) => runBmpi(opts, signal), { timeoutMs: 10 * 60 * 1000, module: "experiment.bmpi", name: `${today()} · BMPI 化债牛市` });
-    return c.json({ ok: true, taskId: created.taskId } as AsyncTaskResult<unknown>);
-  });
+    const taskId = newTaskId("experiment-bmpi");
 
-  app.get(`${API_PREFIX}/tools/experiment/bmpi/task/:taskId`, (c) => {
-    const task = getTask<ExperimentBmpiResponse>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
+registerTask({ id: taskId, type: "experiment", name: `${today()} · BMPI 化债牛市`, handler: async (ctx) => { const result = await runBmpi(opts, ctx.signal ?? new AbortController().signal); return { ok: true, message: "分析完成", result }; } }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId });
   });
 
   // 历史结果（每日快照）

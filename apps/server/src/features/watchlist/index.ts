@@ -2,13 +2,12 @@
 // 业务模块：专题自选股（features/watchlist）
 // - meta：工具注册信息
 // - register：专题 CRUD（KV 持久化）+ 个股财报分析（LLM，后台任务 + 缓存）
-// 依赖下层公共模块：core/kvStore、core/tasks、core/llm、core/prompts
+// 依赖下层公共模块：core/kvStore、core/data-infra（统一任务）、core/llm、core/prompts
 // ============================================================
 
 import { Hono } from "hono";
 import {
   API_PREFIX,
-  type AsyncTaskResult,
   type ToolMeta,
   type WatchlistCreateRequest,
   type WatchlistDetailResult,
@@ -17,7 +16,7 @@ import {
   type WatchlistTopic,
   type WatchlistUpdateRequest,
 } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 import { kvDelete, kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { createTopic, deleteTopic, getTopic, listTopics, PREFIX, updateTopic } from "./store.js";
@@ -214,11 +213,10 @@ export function register(app: Hono): void {
     if (!/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url)) {
       return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
     }
-    const { taskId } = createTask<WatchlistTopic>(
-      async (signal) => importFromChat(url, signal),
-      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 导入" },
-    );
-    return c.json(getTask<WatchlistTopic>(taskId), 202);
+    const taskId = newTaskId("watchlist-import");
+    registerTask({ id: taskId, type: "watchlist", name: "专题 Chat 导入", handler: async (ctx) => { const r = await importFromChat(url, ctx.signal ?? new AbortController().signal); return { ok: true, message: "导入完成", result: r }; } }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId }, 202);
   });
 
   // 移动/复制个股到其他专题（静态路由须在 /:id 之前注册）
@@ -292,19 +290,12 @@ export function register(app: Hono): void {
     if (!/^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/.test(url)) {
       return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
     }
-    const { taskId } = createTask<WatchlistTopic>(
-      async (signal) => importFromChat(url, signal, id),
-      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 补充" },
-    );
-    return c.json(getTask<WatchlistTopic>(taskId), 202);
+    const taskId = newTaskId("watchlist-import");
+    registerTask({ id: taskId, type: "watchlist", name: "专题 Chat 补充", handler: async (ctx) => { const r = await importFromChat(url, ctx.signal ?? new AbortController().signal, id); return { ok: true, message: "补充完成", result: r }; } }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId }, 202);
   });
 
-  // Chat 导入任务状态
-  app.get(`${API_PREFIX}/tools/watchlist/import/task/:taskId`, (c) => {
-    const task: AsyncTaskResult<WatchlistTopic> | null = getTask<WatchlistTopic>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
-  });
 
   // Chat 补充预览：解析对话 → 候选个股（不落库；用户确认后才导入，memo msozzpcl）
   app.post(`${API_PREFIX}/tools/watchlist/:id/import/preview`, async (c) => {
@@ -317,25 +308,18 @@ export function register(app: Hono): void {
       return c.json({ ok: false, message: "链接格式无效，应为 https://chat.deepseek.com/share/<id>" }, 400);
     }
     // 后台任务：解析（LLM 耗时）→ 结果存 KV 供确认接口读取
-    const { taskId } = createTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(
-      async (signal) => {
-        const parsed = await parseImportFromChat(url, signal);
+    const taskId = newTaskId("watchlist-import");
+    registerTask({
+      id: taskId, type: "watchlist", name: "专题 Chat 解析",
+      handler: async (ctx) => {
+        const parsed = await parseImportFromChat(url, ctx.signal ?? new AbortController().signal);
         if (parsed.stocks.length === 0) throw new Error("Chat 对话中未识别到可补充的个股");
-        kvSet(`watchlist:importPreview:${taskId}`, { ...parsed, _at: Date.now() });
-        return parsed;
+        kvSet(`watchlist:importPreview:${ctx.taskId ?? taskId}`, { ...parsed, _at: Date.now() });
+        return { ok: true, message: "解析完成", result: parsed };
       },
-      { timeoutMs: 10 * 60 * 1000, module: "watchlist.import", name: "专题 Chat 解析" },
-    );
-    return c.json(getTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(taskId), 202);
-  });
-
-  // Chat 补充预览任务状态
-  app.get(`${API_PREFIX}/tools/watchlist/:id/import/preview/task/:taskId`, (c) => {
-    const task = getTask<{ name: string; description?: string; stocks: WatchlistStock[] }>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    // 附加候选（预览结果）
-    const preview = kvGet<{ name: string; description?: string; stocks?: WatchlistStock[] }>(`watchlist:importPreview:${c.req.param("taskId")}`);
-    return c.json({ ...task, preview: preview?.stocks ?? null }, 200);
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId }, 202);
   });
 
   // Chat 补充确认：读取预览候选 → 批量加入专题（memo msozzpcl）
@@ -410,21 +394,17 @@ export function register(app: Hono): void {
     const stock = topic.stocks.find((s) => s.code === code);
     const name = stock?.name ?? undefined;
 
-    const { taskId } = createTask<WatchlistFundamentalResult>(
-      async (signal) => {
-        const r = await fundamentalAnalysis(code, { force, name, signal });
+    const taskId = newTaskId("watchlist-fundamental");
+    registerTask({
+      id: taskId, type: "watchlist", name: `财报分析 · ${code}`,
+      handler: async (ctx) => {
+        const r = await fundamentalAnalysis(code, { force, name, signal: ctx.signal ?? new AbortController().signal });
         if (!r.ok) throw new Error(r.message || "财报分析失败");
-        return r;
+        return { ok: true, message: "分析完成", result: r };
       },
-      { timeoutMs: 10 * 60 * 1000, module: "watchlist.fundamental", name: `财报分析 · ${code}` },
-    );
-    return c.json(getTask<WatchlistFundamentalResult>(taskId), 202);
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId }, 202);
   });
 
-  // 财报分析任务状态
-  app.get(`${API_PREFIX}/tools/watchlist/:id/fundamental/task/:taskId`, (c) => {
-    const task: AsyncTaskResult<WatchlistFundamentalResult> | null = getTask<WatchlistFundamentalResult>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
-  });
 }

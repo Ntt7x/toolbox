@@ -16,11 +16,14 @@ export * from "./taskRegistry.js";
 export * from "./scheduler.js";
 export * from "./derivator.js";
 export * from "./consumer.js";
+export * from "./taskResult.js";
 
 import { registerDataSource } from "../dataRegistry.js";
 import { startConsumers, stopConsumers } from "./consumer.js";
 import { derivatorIds, getDerivator, triggerDerivator } from "./derivator.js";
 import { registerScheduledTask, startScheduler, stopScheduler } from "./scheduler.js";
+import { kvDelete, kvListRaw } from "../kvStore.js";
+import { PROG_PREFIX } from "./taskRegistry.js";
 
 /** 装配数据源注册（本地数据管理可见） */
 export function initDataInfra(): void {
@@ -31,6 +34,8 @@ export function initDataInfra(): void {
     tag: "运行状态",
     description: "消息队列（dataInfra:q:）、消费审计（dataInfra:qAudit:）、任务注册表（dataInfra:task:）、任务历史（dataInfra:taskHist:）、派生器运行记录（dataInfra:derivator:）",
   });
+  // 启动清理：孤儿进度快照（进程被杀/崩溃残留——启动后无 running 任务，全部进度快照均为孤儿）
+  for (const r of kvListRaw(PROG_PREFIX)) kvDelete(r.key);
   // 派生器自身 cron 统一注册为调度任务（调度层只认任务；handler 触发派生器）——
   // 从而自动获得 missed 补跑 / 运管可见 / 执行历史
   for (const id of derivatorIds()) {

@@ -1,7 +1,7 @@
 // 实验·页面3：欧元/日元泡沫预警（ec）——TUI 面板版（数据工程：窗口/每日结果/提示词）
 import { useCallback, useEffect, useState } from "react";
 import type { ExperimentEcResponse } from "@toolbox/shared";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import { api, errMsg } from "../api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -143,24 +143,32 @@ export default function ExperimentEcTool() {
   const [force, setForce] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
   const [history, setHistory] = useState<{ asOf: string; b?: number; status: string }[]>([]);
-  const task = useAsyncTask<ExperimentEcResponse>("expEcTaskId", api.experimentEcTask, (taskId) => api.cancelTask(taskId));
+  const task = useDataInfraTask<ExperimentEcResponse>({
+    storageKey: "expEcTaskId",
+    create: async () => {
+      const t = await api.experimentEc(force);
+      if (!t.ok) throw new Error(t.message);
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<ExperimentEcResponse>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const running = task.state.status === "running";
   const loadHistory = useCallback(async () => {
     try {
       const r = await api.experimentEcHistory();
       setHistory(r.history.map((h) => ({ asOf: h.asOf, b: typeof h.indices.b === "number" ? h.indices.b : undefined, status: h.status })));
     } catch { /* 静默 */ }
   }, []);
-  useEffect(() => { void loadHistory(); }, [loadHistory]);
+    // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { task.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+useEffect(() => { void loadHistory(); }, [loadHistory]);
 
   const run = async () => {
     setLocalErr(null);
-    try {
-      const t = await api.experimentEc(force);
-      if (!t.ok) { setLocalErr(t.message); return; }
-      task.watch(t.taskId, t);
-    } catch (e) { setLocalErr(errMsg(e)); }
+    try { await task.run(); } catch (e) { setLocalErr(errMsg(e)); }
   };
-  const r = task.result;
+  const r = task.state.result;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -171,8 +179,8 @@ export default function ExperimentEcTool() {
           <span style={{ fontSize: "0.72rem", color: C.muted, marginLeft: "auto" }}>全球套利拥挤度 · 窗口数据自动刷新 · 每日结果存档</span>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Button onClick={() => void run()} disabled={task.running} className="h-9">{task.running ? "分析中…" : r ? "🔄 重新预警" : "🚀 开始预警"}</Button>
-          {task.running && <Button variant="ghost" size="sm" onClick={() => task.cancel()} style={{ color: C.red }}>⏹ 停止</Button>}
+          <Button onClick={() => void run()} disabled={running} className="h-9">{running ? "分析中…" : r ? "🔄 重新预警" : "🚀 开始预警"}</Button>
+          {running && <Button variant="ghost" size="sm" onClick={() => task.cancel()} style={{ color: C.red }}>⏹ 停止</Button>}
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.8rem", color: C.sub, cursor: "pointer" }}>
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} style={{ accentColor: C.accent }} />强制刷新
           </label>
@@ -180,7 +188,7 @@ export default function ExperimentEcTool() {
           {r?.fromCache && <span style={{ fontSize: "0.72rem", color: C.amber, background: "#fffbeb", padding: "0.15rem 0.5rem", borderRadius: 6 }}>📦 来自缓存</span>}
         </div>
         {localErr && <div style={{ color: C.red, fontSize: "0.82rem", marginTop: 6 }}>{localErr}</div>}
-        {task.running && <div style={{ color: C.sub, fontSize: "0.8rem", marginTop: 6 }}>⏳ 刷新外汇窗口 → 计算 B/Ω/CVAS/CCV → LLM 研判…</div>}
+        {running && <div style={{ color: C.sub, fontSize: "0.8rem", marginTop: 6 }}>⏳ 刷新外汇窗口 → 计算 B/Ω/CVAS/CCV → LLM 研判…</div>}
       </CardContent></Card>
 
       <EcSupplementPanel onSaved={() => void loadHistory()} />

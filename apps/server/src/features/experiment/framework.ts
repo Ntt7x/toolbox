@@ -1,13 +1,13 @@
 // ============================================================
 // 实验·页面1：通用投资框架（framework）
 // 输入投资主题 → LLM 联网搜索 → 4 层分析（哲学/战略/战术/批判）+ e-梯队仓位表
-// 复用：core/llm（chatSearch）、core/prompts（experiment.framework 模板）、core/tasks（长分析）
+// 统一模式：data-infra 一次性任务（ephemeral）——全链路状态/进度/结果统一
 // ============================================================
 import { Hono } from "hono";
-import { API_PREFIX, type AsyncTaskResult, type ExperimentFrameworkRequest, type ExperimentFrameworkResponse } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { API_PREFIX, type ExperimentFrameworkRequest, type ExperimentFrameworkResponse } from "@toolbox/shared";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { chat } from "../../core/llm.js";
+import { newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 
 function today(): string {
   const n = new Date();
@@ -38,13 +38,19 @@ export function registerExperimentFramework(app: Hono): void {
     const topic = raw?.topic?.trim();
     if (!topic) return c.json({ ok: false, message: "topic（投资主题）不能为空" }, 400);
     if (topic.length > 200) return c.json({ ok: false, message: "主题过长（≤200 字）" }, 400);
-    const created = createTask((signal) => runFramework(topic, signal), { timeoutMs: 10 * 60 * 1000, name: taskName(topic) });
-    return c.json({ ok: true, taskId: created.taskId } as AsyncTaskResult<unknown>);
+    // 统一模式：一次性任务（ephemeral）——注册即启动，结果挂任务记录
+    const id = newTaskId("experiment-framework");
+    registerTask({
+      id,
+      type: "experiment",
+      name: taskName(topic),
+      handler: async (ctx) => {
+        const result = await runFramework(topic, ctx.signal ?? new AbortController().signal);
+        return { ok: true, message: "分析完成", result };
+      },
+    }, { ephemeral: true });
+    startTask(id, { trigger: "manual" });
+    return c.json({ ok: true, taskId: id });
   });
 
-  app.get(`${API_PREFIX}/tools/experiment/framework/task/:taskId`, (c) => {
-    const task = getTask<ExperimentFrameworkResponse>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
-  });
 }

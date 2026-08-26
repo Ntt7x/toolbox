@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errMsg } from "../api";
 import { openDeepSeekChat } from "../deepseekChat";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import { CodeBlock, ErrorCard, PageHeader } from "../ui";
 import { TaskHistory } from "../components/TaskHistory";
 import BalanceChart from "../components/BalanceChart";
@@ -42,11 +42,19 @@ export default function ReverseRepoTool() {
   const [monthly, setMonthly] = useState<ReverseRepoMonthlyResult | null>(null);
   const [monthlyErr, setMonthlyErr] = useState<string | null>(null);
   // 增量每日变动
-  const dailyTask = useAsyncTask<ReverseRepoDailyResponse>(
-    "reverseRepoDailyTaskId",
-    api.reverseRepoDailyTaskStatus,
-    api.cancelTask,
-  );
+  const dailyReqRef = useRef<{ force: boolean } | null>(null);
+  const dailyTask = useDataInfraTask<ReverseRepoDailyResponse>({
+    storageKey: "reverseRepoDailyTaskId",
+    create: async () => {
+      const t = await api.reverseRepoDaily(dailyReqRef.current!.force);
+      if (!t.ok) throw new Error(t.message);
+      if (t.result) return { result: t.result as ReverseRepoDailyResponse };
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<ReverseRepoDailyResponse>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const dailyRunning = dailyTask.state.status === "running";
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
   const [chatHint, setChatHint] = useState<string | null>(null);
@@ -59,30 +67,26 @@ export default function ReverseRepoTool() {
   // 月度明细展开（按月份，默认收起）
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
 
-  const daily = dailyTask.result;
+  const daily = dailyTask.state.result;
 
+  // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { dailyTask.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   // 任务运行计时（任务信息：已运行时长）
   const [runSec, setRunSec] = useState(0);
   useEffect(() => {
-    if (!dailyTask.running) {
+    if (!dailyRunning) {
       setRunSec(0);
       return;
     }
     const t = setInterval(() => setRunSec((v) => v + 1), 1000);
     return () => clearInterval(t);
-  }, [dailyTask.running]);
+  }, [dailyRunning]);
 
   const probeDaily = async (force: boolean) => {
     setDailyErr(null);
-    setCacheHint(false);
     try {
-      const t = await api.reverseRepoDaily(force);
-      if (!t.ok) {
-        setDailyErr(t.message);
-        return;
-      }
-      if (t.taskId && t.taskId.startsWith("cache-")) setCacheHint(true);
-      dailyTask.watch(t.taskId, t);
+      dailyReqRef.current = { force };
+      await dailyTask.run();
     } catch (e) {
       setDailyErr(errMsg(e));
     }
@@ -136,6 +140,7 @@ export default function ReverseRepoTool() {
         if (r.ok) setPromptText(r.rendered);
       })
       .catch(() => {});
+  const dailyRunning = dailyTask.state.status === "running";
   }, []);
 
   return (
@@ -150,21 +155,21 @@ export default function ReverseRepoTool() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
           <span style={{ fontWeight: 700, fontSize: "1rem" }}>📈 每日变动量探查（LLM，仅买断式）</span>
           <span style={{ color: "#94a3b8", fontSize: "0.8rem", marginLeft: "auto" }}>
-            {dailyTask.running ? `探查中…（已耗时 ${runSec}s）` : probeView === "today" ? "当日变动明细 + 当月说明" : "当月变动量说明（含存量余额估算）"}
+            {dailyRunning ? `探查中…（已耗时 ${runSec}s）` : probeView === "today" ? "当日变动明细 + 当月说明" : "当月变动量说明（含存量余额估算）"}
           </span>
         </div>
         {/* 探查按钮组：当日 / 当月 切换 + 强制刷新 + 查看提示词 */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <button style={{ ...btn, background: probeView === "today" ? "#3b82f6" : "#cbd5e1", color: probeView === "today" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("today")} disabled={dailyTask.running} type="button">
+          <button style={{ ...btn, background: probeView === "today" ? "#3b82f6" : "#cbd5e1", color: probeView === "today" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("today")} disabled={dailyRunning} type="button">
             🕐 探查当日
           </button>
-          <button style={{ ...btn, background: probeView === "month" ? "#3b82f6" : "#cbd5e1", color: probeView === "month" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("month")} disabled={dailyTask.running} type="button">
+          <button style={{ ...btn, background: probeView === "month" ? "#3b82f6" : "#cbd5e1", color: probeView === "month" ? "#fff" : "#475569" }} onClick={() => probeViewDaily("month")} disabled={dailyRunning} type="button">
             📅 探查当月
           </button>
           <button
             style={{ ...btn, background: "#dc2626", fontWeight: 500, padding: "0.55rem 1rem" }}
             onClick={() => probeViewDailyForce(probeView)}
-            disabled={dailyTask.running}
+            disabled={dailyRunning}
             type="button"
           >
             ♻️ 强制刷新
@@ -200,7 +205,7 @@ export default function ReverseRepoTool() {
           </div>
         )}
         {dailyErr && <div style={{ color: "#b91c1c", marginTop: "0.5rem" }}>❌ {dailyErr}</div>}
-        {cacheHint && (
+        {dailyTask.state.result?.fromCache && (
           <div style={{ borderColor: "#fde68a", background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", borderRadius: 10, padding: "0.6rem 0.9rem", fontSize: "0.82rem", marginTop: "0.6rem" }}>
             💾 已从缓存加载（{new Date().toLocaleTimeString()}）——参数未变化时命中缓存免调 LLM；如需最新请点「强制刷新」。
           </div>
@@ -260,7 +265,7 @@ export default function ReverseRepoTool() {
         {/* 历史探查任务（KV 持久化，回看以往每日变动） */}
         <TaskHistory
           module="reverse-repo.daily"
-          refreshKey={dailyTask.taskId}
+          refreshKey={dailyTask.state.taskId}
           title="📚 历史探查任务"
           renderResult={(v) => {
             const d = v as ReverseRepoDailyResponse;

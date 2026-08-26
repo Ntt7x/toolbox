@@ -2,7 +2,7 @@
 // 业务模块：逆回购余额跟踪（features/reverse-repo）
 // - meta：工具注册信息
 // - register：存量月度数据（GET，权威种子）+ 每日变动探查（POST，LLM+缓存）
-// 依赖下层公共模块：core/tasks、core/llm、core/prompts、core/kvStore
+// 依赖下层公共模块：core/data-infra（统一任务）、core/llm、core/prompts、core/kvStore
 // ============================================================
 
 import { Hono } from "hono";
@@ -14,8 +14,7 @@ import {
   type ReverseRepoMonthlyResult,
   type ToolMeta,
 } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
-import { registerScheduledTask } from "../../core/data-infra/index.js";
+import { getTask, newTaskId, registerScheduledTask, registerTask, startTask } from "../../core/data-infra/index.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { getMonthlyData, getUpdateState, missingMonths, probeDaily, runMonthlyUpdate, UPDATE_STATE_KEY } from "./service.js";
@@ -54,7 +53,7 @@ registerScheduledTask({
     const body = getMonthlyData();
     const stale = missingMonths(body.rows);
     if (stale.length === 0) return { ok: true, message: "月度数据已是最新，无需更新" };
-    // 双轨防并发：手动入口（POST /monthly/refresh 的 createTask）可能正在跑——状态锁跳过本次调度，避免重复 LLM 调用
+    // 双轨防并发：手动入口（POST /monthly/refresh）可能正在跑——状态锁跳过本次调度，避免重复 LLM 调用
     if (getUpdateState().state === "running") return { ok: true, message: "已有更新任务进行中，本次调度跳过" };
     await runMonthlyUpdate(stale);
     return { ok: true, message: `已补更 ${stale.length} 个月份（${stale.join(",")}）` };
@@ -83,6 +82,7 @@ export function register(app: Hono): void {
   });
 
   // 手动触发月度数据更新（等价于 GET monthly 的自动触发；返回立即结果，任务后台执行）
+  // 手动更新入口：统一触发调度任务（reverseRepo-monthly）——与 cron 同链路 + 状态锁防并发
   app.post(`${API_PREFIX}/tools/reverse-repo/monthly/refresh`, (c) => {
     const body = getMonthlyData();
     const stale = missingMonths(body.rows);
@@ -90,16 +90,11 @@ export function register(app: Hono): void {
     if (getUpdateState().state === "running") {
       return c.json({ ok: true, state: "running", months: stale, message: "已有更新任务进行中" });
     }
-    let taskId = "";
-    const created = createTask(
-      async (signal) => runMonthlyUpdate(stale, signal, taskId),
-      { timeoutMs: 15 * 60 * 1000, module: "reverse-repo.monthly-update" }, // 2026-08：补 module 使任务历史归档
-    );
-    taskId = created.taskId;
-    // 2026-08 修复：createTask 同步执行 fn 时 taskId 尚为空串，state 缺 taskId 致前端无法跟踪 → 创建后补写
-    const st = kvGet<{ state: string }>(UPDATE_STATE_KEY);
-    if (st && st.state === "running") kvSet(UPDATE_STATE_KEY, { ...st, taskId });
-    return c.json({ ok: true, state: "running", months: stale, taskId });
+    const t = getTask("reverseRepo-monthly");
+    if (!t) return c.json({ ok: false, message: "调度任务未注册" }, 500);
+    if (t.status === "paused") return c.json({ ok: false, message: "调度任务已暂停，请先在数据基础设施页恢复" }, 400);
+    startTask("reverseRepo-monthly", { trigger: "manual" });
+    return c.json({ ok: true, state: "running", months: stale, taskId: "reverseRepo-monthly" });
   });
 
   /** 每日变动探查缓存 TTL：2 年（历史数据长期有效；「强制刷新」按钮可绕过缓存重新探查）
@@ -129,22 +124,21 @@ export function register(app: Hono): void {
       }
     }
 
-    const { taskId } = createTask<ReverseRepoDailyResult>(
-      async (signal) => {
-        const r = await probeDaily(signal);
+    // 统一模式：ephemeral 一次性任务（data-infra）
+    const taskId = newTaskId("reverse-repo-daily");
+    registerTask({
+      id: taskId,
+      type: "reverse-repo",
+      name: `${new Date().toISOString().slice(0, 10)} · 逆回购每日变动探查`,
+      handler: async (ctx) => {
+        const r = await probeDaily(ctx.signal ?? new AbortController().signal);
         if (!r.ok) throw new Error(r.message);
         kvSet(dailyCacheKey(), { ...r, _at: new Date().toISOString() });
-        return r;
+        return { ok: true, message: "探查完成", result: r };
       },
-      { timeoutMs: 10 * 60 * 1000, module: "reverse-repo.daily" }, // 同 cbRate：搜索超时须 ≥10 分钟（2026-08 修复）
-    );
-    return c.json(getTask<ReverseRepoDailyResult>(taskId), 202);
+    }, { ephemeral: true });
+    startTask(taskId, { trigger: "manual" });
+    return c.json({ ok: true, taskId }, 202);
   });
 
-  // 增量任务状态轮询
-  app.get(`${API_PREFIX}/tools/reverse-repo/daily/task/:taskId`, (c) => {
-    const task: AsyncTaskResult<ReverseRepoDailyResult> | null = getTask<ReverseRepoDailyResult>(c.req.param("taskId"));
-    if (!task) return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    return c.json(task, 200);
-  });
 }

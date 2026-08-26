@@ -18,7 +18,6 @@ import {
 } from "@toolbox/shared";
 import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes, registerDataInfraRoutes } from "./core/routes.js";
 import { initDataInfra, startDataInfraRuntime } from "./core/data-infra/index.js";
-import { registerTaskRoutes } from "./core/sse.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
 import * as treasuryFxFeature from "./features/treasuryFx/index.js";
@@ -82,7 +81,6 @@ registerLlmRoutes(app);
 registerLlmUsageRoutes(app);
 registerPromptRoutes(app);
 registerQuoteRoutes(app);
-registerTaskRoutes(app);
 registerDataInfraRoutes(app);
 
 // 上层业务路由

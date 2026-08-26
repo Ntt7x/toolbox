@@ -2,7 +2,7 @@
 // 业务模块：央行利率分析（features/cb-rate）
 // - meta：工具注册信息
 // - register：本工具的路由（后台任务 + 轮询）
-// 依赖下层公共模块：core/tasks（通用任务）、core/llm（chat+search+JSON）
+// 依赖下层公共模块：core/data-infra（统一任务）、core/llm（chat+search+JSON）
 // ============================================================
 
 import { Hono } from "hono";
@@ -13,7 +13,7 @@ import {
   type CbRateResponse,
   type ToolMeta,
 } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { analyzeCentralBankRates } from "./service.js";
@@ -27,14 +27,7 @@ registerDataSource({
   description: "利率分析结果持久化缓存（Key-结构化 Value，TTL 2 年）",
 });
 
-// 注册数据源：任务历史（异步分析任务归档）
-registerDataSource({
-  kind: "kv",
-  name: "taskHistory:",
-  page: "任务历史",
-  tag: "运行记录",
-  description: "异步分析任务历史（央行利率/国债汇率/逆回购等，结果快照归档，上限 50 条/模块）",
-});
+// 注：任务历史已统一到 data-infra（dataInfra:task: / dataInfra:taskHist:），core/tasks 时代的 taskHistory: 已退役
 
 /** 缓存 TTL：2 年（历史数据为权威/已确认信息，长期有效；「强制刷新/重建」按钮可绕过缓存重新查询） */
 export const CACHE_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
@@ -110,29 +103,24 @@ export function register(app: Hono): void {
       }
     }
 
-    // 未命中：后台任务执行，完成后写缓存
+    // 未命中：统一模式一次性任务（data-infra ephemeral）——状态/进度/结果统一链路，完成后写缓存
     const taskName = cbRateTaskName(req);
-    const { taskId } = createTask<CbRateResponse>(
-      async (signal) => {
-        const r = await analyzeCentralBankRates(req, signal);
-        if (!r.ok) throw new Error(r.message); // 业务错误 → 任务 error 态
+    const id = newTaskId("cb-rate");
+    registerTask({
+      id,
+      type: "cb-rate",
+      name: taskName,
+      handler: async (ctx) => {
+        const r = await analyzeCentralBankRates(req, ctx.signal ?? new AbortController().signal);
+        if (!r.ok) throw new Error(r.message); // 业务错误 → 任务 failed 态
         if (useCache) {
           kvSet(cbRateCacheKey(req), { ...r, fromCache: false, cachedAt: new Date().toISOString() });
         }
-        return r;
+        return { ok: true, message: "分析完成", result: r };
       },
-      { timeoutMs: 10 * 60 * 1000, module: "cb-rate", name: taskName } // 搜索模式常态 8~10 分钟（dev.md §6.3），超时须 ≥10 分钟（2026-08 修复）,
-    );
-    return c.json(getTask<CbRateResponse>(taskId), 202);
+    }, { ephemeral: true });
+    startTask(id, { trigger: "manual" });
+    return c.json({ ok: true, taskId: id }, 202);
   });
 
-  // 查询任务状态（轮询兜底；实时推送走全局 GET /api/tasks/:taskId/stream）
-  app.get(`${API_PREFIX}/tools/cb-rate/task/:taskId`, (c) => {
-    const taskId = c.req.param("taskId");
-    const task: AsyncTaskResult<CbRateResponse> | null = getTask<CbRateResponse>(taskId);
-    if (!task) {
-      return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    }
-    return c.json(task, 200);
-  });
 }

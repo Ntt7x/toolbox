@@ -2,7 +2,7 @@
 // 业务模块：国债汇率分析（features/treasury-fx）
 // - meta：工具注册信息
 // - register：本工具的路由（后台任务 + 轮询，仿 cbRate）
-// 依赖下层公共模块：core/tasks、core/llm、core/prompts、core/kvStore
+// 依赖下层公共模块：core/data-infra（统一任务）、core/llm、core/prompts、core/kvStore
 // ============================================================
 
 import { Hono } from "hono";
@@ -13,7 +13,7 @@ import {
   type TreasuryFxRequest,
   type TreasuryFxResponse,
 } from "@toolbox/shared";
-import { createTask, getTask } from "../../core/tasks.js";
+import { newTaskId, registerTask, startTask } from "../../core/data-infra/index.js";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { analyzeTreasuryFx } from "./service.js";
@@ -76,29 +76,24 @@ export function register(app: Hono): void {
       }
     }
 
-    // 未命中：后台任务执行，完成后写缓存
+    // 未命中：统一模式一次性任务（data-infra ephemeral），完成后写缓存
     const taskName = `${new Date().toISOString().slice(0, 10)} · 国债汇率分析（近 ${req.days ?? 5} 天）`;
-    const { taskId } = createTask<TreasuryFxResponse>(
-      async (signal) => {
-        const r = await analyzeTreasuryFx(req, signal);
+    const id = newTaskId("treasury-fx");
+    registerTask({
+      id,
+      type: "treasury-fx",
+      name: taskName,
+      handler: async (ctx) => {
+        const r = await analyzeTreasuryFx(req, ctx.signal ?? new AbortController().signal);
         if (!r.ok) throw new Error(r.message);
         if (useCache) {
           kvSet(treasuryFxCacheKey(req), { ...r, fromCache: false, cachedAt: new Date().toISOString() });
         }
-        return r;
+        return { ok: true, message: "分析完成", result: r };
       },
-      { timeoutMs: 10 * 60 * 1000, module: "treasury-fx", name: taskName } // 同 cbRate：搜索超时须 ≥10 分钟（2026-08 修复）,
-    );
-    return c.json(getTask<TreasuryFxResponse>(taskId), 202);
+    }, { ephemeral: true });
+    startTask(id, { trigger: "manual" });
+    return c.json({ ok: true, taskId: id }, 202);
   });
 
-  // 查询任务状态（轮询兜底；实时推送走全局 GET /api/tasks/:taskId/stream）
-  app.get(`${API_PREFIX}/tools/treasury-fx/task/:taskId`, (c) => {
-    const taskId = c.req.param("taskId");
-    const task: AsyncTaskResult<TreasuryFxResponse> | null = getTask<TreasuryFxResponse>(taskId);
-    if (!task) {
-      return c.json({ ok: false, message: "任务不存在或已过期" }, 404);
-    }
-    return c.json(task, 200);
-  });
 }

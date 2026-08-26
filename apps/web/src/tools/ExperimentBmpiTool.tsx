@@ -1,7 +1,7 @@
 // 实验·页面2：化债牛市进度指数（BMPI v4.0）——TUI 面板版（数据工程：窗口/每日结果/回测/提示词）
 import { useCallback, useEffect, useState } from "react";
 import type { ExperimentBmpiResponse } from "@toolbox/shared";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import { api, errMsg } from "../api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -170,7 +170,20 @@ export default function ExperimentBmpiTool() {
   const [backtest, setBacktest] = useState<{ date: string; bmpi: number | null }[] | null>(null);
   const [btLoading, setBtLoading] = useState(false);
   const [btMsg, setBtMsg] = useState<string | null>(null);
-  const task = useAsyncTask<ExperimentBmpiResponse>("expBmpiTaskId", api.experimentBmpiTask, (taskId) => api.cancelTask(taskId));
+  const task = useDataInfraTask<ExperimentBmpiResponse>({
+    storageKey: "expBmpiTaskId",
+    create: async () => {
+      const t = await api.experimentBmpi(force);
+      if (!t.ok) throw new Error(t.message);
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<ExperimentBmpiResponse>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const running = task.state.status === "running";
+
+  // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { task.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -191,13 +204,9 @@ export default function ExperimentBmpiTool() {
 
   const run = async () => {
     setLocalErr(null);
-    try {
-      const r = await api.experimentBmpi(force);
-      if (!r.ok) { setLocalErr(r.message ?? "启动失败"); return; }
-      task.watch(r.taskId, r);
-    } catch (e) { setLocalErr(errMsg(e)); }
+    try { await task.run(); } catch (e) { setLocalErr(errMsg(e)); }
   };
-  const r = task.result;
+  const r = task.state.result;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -209,8 +218,8 @@ export default function ExperimentBmpiTool() {
           <span style={{ fontSize: "0.72rem", color: C.muted, marginLeft: "auto" }}>窗口数据自动刷新 · 每日结果存档 · 今年起回测</span>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Button onClick={() => void run()} disabled={task.running} className="h-9">{task.running ? "⏳ 分析中…" : "🚀 开始分析"}</Button>
-          {task.running && <Button variant="ghost" size="sm" onClick={() => task.cancel()} style={{ color: C.red }}>⏹ 停止</Button>}
+          <Button onClick={() => void run()} disabled={running} className="h-9">{running ? "⏳ 分析中…" : "🚀 开始分析"}</Button>
+          {running && <Button variant="ghost" size="sm" onClick={() => task.cancel()} style={{ color: C.red }}>⏹ 停止</Button>}
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.8rem", color: C.sub }}>
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} style={{ accentColor: C.accent }} />强制刷新
           </label>
@@ -218,7 +227,7 @@ export default function ExperimentBmpiTool() {
           {r?.fromCache && <span style={{ fontSize: "0.72rem", color: C.amber, background: "#fffbeb", padding: "2px 8px", borderRadius: 999 }}>📦 缓存 {r.cachedAt ? new Date(r.cachedAt).toLocaleString("zh-CN") : ""}</span>}
         </div>
         {localErr && <div style={{ color: C.red, fontSize: "0.82rem", marginTop: 6 }}>{localErr}</div>}
-        {task.running && <div style={{ color: C.sub, fontSize: "0.8rem", marginTop: 6 }}>⏳ 刷新窗口行情 → 计算 S₁/S₂/S₃ → 合成 BMPI → LLM 研判…</div>}
+        {running && <div style={{ color: C.sub, fontSize: "0.8rem", marginTop: 6 }}>⏳ 刷新窗口行情 → 计算 S₁/S₂/S₃ → 合成 BMPI → LLM 研判…</div>}
       </CardContent></Card>
 
       <SupplementPanel onSaved={() => void loadHistory()} />

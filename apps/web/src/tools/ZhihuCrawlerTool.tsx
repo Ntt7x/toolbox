@@ -3,9 +3,9 @@
 // 某用户的时间降序创作内容（回答/文章/想法），转 markdown；
 // 支持：作者参与讨论的评论抓取、历史结果持久化、导入知识库
 // ============================================================
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { useAsyncTask } from "../hooks/useAsyncTask";
+import { useDataInfraTask } from "../hooks/useDataInfraTask";
 import type { ZhihuCrawlItem, ZhihuCrawlKind, ZhihuCrawlRequest, ZhihuComment, ZhihuUserInfo } from "@toolbox/shared";
 import { card, PageHeader } from "../ui";
 import { MarkdownView } from "../MarkdownView";
@@ -114,11 +114,21 @@ export default function ZhihuCrawlerTool() {
   const [viewItems, setViewItems] = useState<ZhihuCrawlItem[] | null>(null);
   const [resultOpenFirst, setResultOpenFirst] = useState(false); // 展开历史结果时自动打开第一篇
 
-  const task = useAsyncTask<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; warnings?: string[]; message?: string }>(
-    "zhihuCrawlTaskId",
-    (id) => api.taskStatus<{ ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; message?: string }>(id),
-    api.cancelTask,
-  );
+  type CrawlResultT = { ok: boolean; user?: { name: string; urlToken: string; headline?: string }; items?: ZhihuCrawlItem[]; total?: number; resultId?: string; partial?: boolean; paused?: boolean; cancelled?: boolean; progressId?: string; warnings?: string[]; message?: string };
+  const runSpecRef = useRef<{ action: "crawl" | "resume"; req?: Parameters<typeof api.zhihuCrawl>[0]; pid?: string } | null>(null);
+  const task = useDataInfraTask<CrawlResultT>({
+    storageKey: "zhihuCrawlTaskId",
+    create: async () => {
+      const spec = runSpecRef.current;
+      if (!spec) throw new Error("未指定爬取动作");
+      const t = spec.action === "crawl" ? await api.zhihuCrawl(spec.req!) : await api.zhihuResume(spec.pid!);
+      if (!t.ok) throw new Error((t as { message?: string }).message ?? "任务失败");
+      return { taskId: t.taskId };
+    },
+    fetchResult: (taskId) => api.dataInfraResult<CrawlResultT>(taskId),
+    cancel: (taskId) => api.cancelTask(taskId),
+  });
+  const running = task.state.status === "running";
 
   const refreshInstances = () => {
     api.zhihuInstances().then((r) => {
@@ -133,7 +143,9 @@ export default function ZhihuCrawlerTool() {
     }).catch(() => {});
   };
 
-  useEffect(() => {
+    // 挂载恢复：跨页/刷新后继续等待 data-infra 任务
+  useEffect(() => { task.resumeIfPending(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+useEffect(() => {
     api.zhihuCookie().then((r) => setCookieOk(r.configured)).catch(() => {});
     api.zhihuHistory().then((r) => setHistory(r.items)).catch(() => {});
     api.zhihuFavorites().then((r) => setFavorites(r.items)).catch(() => {});
@@ -142,10 +154,10 @@ export default function ZhihuCrawlerTool() {
 
   // 任务完成时刷新实例（可能有新导入）与历史
   useEffect(() => {
-    if (task.result?.ok && task.result.resultId) {
+    if (task.state.result?.ok && task.state.result.resultId) {
       api.zhihuHistory().then((r) => setHistory(r.items)).catch(() => {});
     }
-  }, [task.result?.ok, task.result?.resultId]);
+  }, [task.state.result?.ok, task.state.result?.resultId]);
 
   const toggleType = (k: ZhihuCrawlKind) => {
     setTypes((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
@@ -205,32 +217,31 @@ export default function ZhihuCrawlerTool() {
     }
     const req: ZhihuCrawlRequest = { target: target.trim(), types, limit, ...(from ? { dateFrom: from } : {}), ...(to ? { dateTo: to } : {}) };
     // 2026-08-14：请求失败（未配置 cookie 等 400）给出可见错误，不再静默无反应
-    let t: Awaited<ReturnType<typeof api.zhihuCrawl>>;
+    runSpecRef.current = { action: "crawl", req };
     try {
-      t = await api.zhihuCrawl(req);
+      await task.run();
     } catch (e) {
       setImportMsg(e instanceof Error ? e.message : String(e));
       return;
     }
-    task.watch(t.taskId, t as never);
     setSelected(new Set());
     setImportMsg("");
   };
 
   const handleResume = async () => {
-    const pid = task.result?.ok ? task.result.progressId : undefined;
+    const pid = task.state.result?.ok ? task.state.result.progressId : undefined;
     if (!pid) return;
     try {
-      const t = await api.zhihuResume(pid);
-      task.watch(t.taskId, t as never);
+      runSpecRef.current = { action: "resume", pid };
+      await task.run();
       setImportMsg("");
     } catch (e) {
       setImportMsg(`✗ ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
-  const items = task.result?.ok ? task.result.items ?? [] : [];
-  const resultId = task.result?.ok ? task.result.resultId : undefined;
+  const items = task.state.result?.ok ? task.state.result.items ?? [] : [];
+  const resultId = task.state.result?.ok ? task.state.result.resultId : undefined;
 
   const handleImport = async () => {
     if (!resultId || !instance) {
@@ -253,7 +264,7 @@ export default function ZhihuCrawlerTool() {
 
   const markdownText = useMemo(() => {
     if (items.length === 0) return "";
-    const head = `# ${task.result?.user?.name ?? ""} 的知乎创作内容（共 ${items.length} 条）\n\n`;
+    const head = `# ${task.state.result?.user?.name ?? ""} 的知乎创作内容（共 ${items.length} 条）\n\n`;
     const body = items
       .map((it, i) => {
         const kind = KIND_LABEL[it.kind];
@@ -271,7 +282,7 @@ export default function ZhihuCrawlerTool() {
       })
       .join("\n\n---\n\n");
     return head + body;
-  }, [items, task.result]);
+  }, [items, task.state.result]);
 
   const copyMarkdown = async () => {
     try {
@@ -486,18 +497,18 @@ export default function ZhihuCrawlerTool() {
         <div style={{ marginTop: "0.8rem" }}>
           <button
             onClick={handleStart}
-            disabled={!target.trim() || types.length === 0 || task.running}
+            disabled={!target.trim() || types.length === 0 || running}
             className="btn btn-primary"
             style={{ padding: "0.5rem 1.4rem", fontSize: "0.9rem" }}
           >
-            {task.running ? "抓取中…" : "🚀 开始抓取"}
+            {running ? "抓取中…" : "🚀 开始抓取"}
           </button>
-          {task.running && (
+          {running && (
             <button onClick={() => task.cancel()} className="btn btn-danger" style={{ marginLeft: "0.6rem", padding: "0.5rem 1rem" }}>
               停止
             </button>
           )}
-          {task.error && <p style={{ color: "#b91c1c", fontSize: "0.82rem", margin: "0.5rem 0 0" }}>❌ {task.error}</p>}
+          {task.state.error && <p style={{ color: "#b91c1c", fontSize: "0.82rem", margin: "0.5rem 0 0" }}>❌ {task.state.error}</p>}
           <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "0.4rem 0 0" }}>
             回答/文章/想法后台逐步抓取；自动附带「作者参与讨论的评论」（前 10 条内容）。结果持久化保存，可随时回来查看或导入知识库。
           </p>
@@ -519,22 +530,22 @@ export default function ZhihuCrawlerTool() {
             </div>
           </div>
           {/* 暂停/取消状态提示 + 续爬 */}
-          {task.result?.partial && (
-            <div style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderRadius: 10, background: task.result.cancelled ? "#fef2f2" : "#fffbeb", border: task.result.cancelled ? "1px solid #fecaca" : "1px solid #fde68a", display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "0.85rem", color: task.result.cancelled ? "#b91c1c" : "#92400e" }}>
-                {task.result.cancelled ? `⏹ 已取消（已抓取 ${items.length} 条已保留）` : `⏸ 已暂停（${items.length >= (task.result.total ?? 20) ? "达到数量上限" : "超过单次 20 分钟超时"}，已抓取 ${items.length} 条已保存）`}
+          {task.state.result?.partial && (
+            <div style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderRadius: 10, background: task.state.result.cancelled ? "#fef2f2" : "#fffbeb", border: task.state.result.cancelled ? "1px solid #fecaca" : "1px solid #fde68a", display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "0.85rem", color: task.state.result.cancelled ? "#b91c1c" : "#92400e" }}>
+                {task.state.result.cancelled ? `⏹ 已取消（已抓取 ${items.length} 条已保留）` : `⏸ 已暂停（${items.length >= (task.state.result.total ?? 20) ? "达到数量上限" : "超过单次 20 分钟超时"}，已抓取 ${items.length} 条已保存）`}
               </span>
-              <button onClick={handleResume} disabled={task.running} style={{ padding: "0.4rem 1rem", fontSize: "0.82rem" }}>
-                {task.running ? "续爬中…" : "▶ 继续爬取（断点续爬）"}
+              <button onClick={handleResume} disabled={running} style={{ padding: "0.4rem 1rem", fontSize: "0.82rem" }}>
+                {running ? "续爬中…" : "▶ 继续爬取（断点续爬）"}
               </button>
               <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>单次上限 100 条 / 20 分钟，超出自动暂停并保存进度；可多次续爬直至完成。</span>
             </div>
           )}
           {/* 诊断信息：失败/0 结果原因 */}
-          {task.result?.ok && task.result.warnings && task.result.warnings.length > 0 && (
+          {task.state.result?.ok && task.state.result.warnings && task.state.result.warnings.length > 0 && (
             <div style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderRadius: 10, background: "#fffbeb", border: "1px solid #fde68a", fontSize: "0.8rem", color: "#92400e", lineHeight: 1.7 }}>
-              {task.result.total === 0 ? <b>⚠ 未获取到内容：</b> : <b>⚠ 部分类型未获取到内容：</b>}
-              {task.result.warnings.map((w, i) => (
+              {task.state.result.total === 0 ? <b>⚠ 未获取到内容：</b> : <b>⚠ 部分类型未获取到内容：</b>}
+              {task.state.result.warnings.map((w, i) => (
                 <div key={i} style={{ marginTop: "0.15rem" }}>· {w}</div>
               ))}
             </div>
