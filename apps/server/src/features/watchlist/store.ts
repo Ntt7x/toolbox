@@ -7,6 +7,7 @@
 
 import { kvGet, kvListRaw, kvSet, kvDelete } from "../../core/kvStore.js";
 import type { WatchlistStock, WatchlistSummary, WatchlistTopic } from "@toolbox/shared";
+import { enqueueVolUpdate } from "../../core/volatilityStore.js";
 
 /** KV key 前缀（数据源注册名） */
 export const PREFIX = "watchlist:";
@@ -97,7 +98,11 @@ export function updateTopic(
       if (!ns.code) continue;
       const idx = stocks.findIndex((x) => x.code === ns.code);
       if (idx >= 0) stocks[idx] = ns; // 同代码更新（理由/名称覆盖）
-      else stocks.push(ns);
+      else {
+        stocks.push(ns);
+        // 新增标的感知：专题加个股 → 立即入队波动率初始化（幂等）
+        enqueueVolUpdate(ns.code);
+      }
     }
   }
   if (Array.isArray(patch.removeCodes)) {

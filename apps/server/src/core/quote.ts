@@ -289,6 +289,25 @@ async function fetchTencent(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
  */
 /** 日 K 收盘序列（腾讯 qfqday；from/to 格式 YYYY-MM-DD）。返回 [{date, close}] 升序；失败返回空数组。 */
 export async function fetchDailyCloses(codeInput: string, from: string, to: string, max = 500): Promise<{ date: string; close: number }[]> {
+  const rows = await fetchDailyRows(codeInput, from, to, max);
+  return rows.map((r) => ({ date: r.date, close: r.close }));
+}
+
+/**
+ * 日 K OHLC 序列（腾讯 qfqday，数据工程波动率流水线数据源）。
+ * 每行 [date, open, close, high, low, volume]；升序返回；失败返回空数组。
+ */
+export async function fetchDailyOHLC(
+  codeInput: string, from: string, to: string, max = 500,
+): Promise<{ date: string; open: number; close: number; high: number; low: number }[]> {
+  const rows = await fetchDailyRows(codeInput, from, to, max);
+  return rows.map((r) => ({ date: r.date, open: r.open, close: r.close, high: r.high, low: r.low }));
+}
+
+/** 腾讯日K原始行（内部共用；qfqday 优先，退 day） */
+async function fetchDailyRows(
+  codeInput: string, from: string, to: string, max = 500,
+): Promise<{ date: string; open: number; close: number; high: number; low: number }[]> {
   try {
     const parsed = parseSecCode(codeInput);
     if (!parsed) return [];
@@ -300,11 +319,14 @@ export async function fetchDailyCloses(codeInput: string, from: string, to: stri
     const data = j?.data?.[`${parsed.market}${parsed.code}`];
     const kline = data?.qfqday ?? data?.day ?? [];
     if (!Array.isArray(kline)) return [];
-    const out: { date: string; close: number }[] = [];
+    const out: { date: string; open: number; close: number; high: number; low: number }[] = [];
     for (const row of kline) {
       const d = String(row?.[0] ?? "");
+      const open = Number(row?.[1]);
       const close = Number(row?.[2]);
-      if (d && isFinite(close)) out.push({ date: d, close });
+      const high = Number(row?.[3]);
+      const low = Number(row?.[4]);
+      if (d && isFinite(close)) out.push({ date: d, open, close, high, low });
     }
     return out;
   } catch {

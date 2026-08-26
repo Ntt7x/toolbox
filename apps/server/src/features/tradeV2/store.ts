@@ -6,6 +6,7 @@
 // ============================================================
 import type { TradeV2Entry, TradeV2Group } from "@toolbox/shared";
 import { kvGet, kvSet, kvDelete } from "../../core/kvStore.js";
+import { enqueueVolUpdate } from "../../core/volatilityStore.js";
 
 export const GROUP_PREFIX = "tradeV2:group:";
 export const GROUP_LIST = "tradeV2:groups:list";
@@ -68,7 +69,11 @@ export function updateGroup(
   if (patch.infoType !== undefined) g.infoType = patch.infoType ?? undefined;
   if (patch.totalCapital !== undefined) g.totalCapital = patch.totalCapital;
   if (patch.dailyAddLimit !== undefined) g.dailyAddLimit = patch.dailyAddLimit;
-  if (patch.stockLimits !== undefined) g.stockLimits = patch.stockLimits;
+  if (patch.stockLimits !== undefined) {
+    g.stockLimits = patch.stockLimits;
+    // 新增标的感知：分组加标的 → 立即入队波动率初始化（幂等，消费端按 lastDate 跳过）
+    for (const s of patch.stockLimits ?? []) enqueueVolUpdate(s?.code ?? "");
+  }
   if (patch.allowShort !== undefined) g.allowShort = patch.allowShort;
   g.updatedAt = new Date().toISOString();
   kvSet(GROUP_PREFIX + id, g);

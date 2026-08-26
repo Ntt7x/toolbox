@@ -2,7 +2,7 @@
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { registerDerivator, triggerDerivator, listDerivators, getDerivator, checkDerivatorQueues } from "./derivator.js";
-import { registerConsumer, listConsumers, orphanQueues } from "./consumer.js";
+import { registerConsumer, listConsumers, orphanQueues, startConsumers, stopConsumers } from "./consumer.js";
 import { registerTask, runTask, newTaskId, onTaskFinished } from "./taskRegistry.js";
 import { enqueue, queueStats, clearQueue } from "./queue.js";
 import { kvDelete } from "../kvStore.js";

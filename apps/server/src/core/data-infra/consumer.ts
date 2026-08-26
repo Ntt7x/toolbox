@@ -19,6 +19,8 @@ export interface ConsumerDef {
   name: string;
   /** 并行消费数（默认 1） */
   concurrency?: number;
+  /** 单条消息处理超时（ms，默认 120s；超时视为失败重投——防 fetch 挂起卡死消费循环） */
+  handlerTimeoutMs?: number;
   /** 消费逻辑（必须幂等：同消息重复执行结果一致） */
   handler: (msg: ConsumerMessage) => Promise<void> | void;
 }
@@ -47,16 +49,27 @@ export function registerConsumer(def: ConsumerDef): void {
   if (started) startQueueLoop(def.queue);
 }
 
+let staleTimer: ReturnType<typeof setInterval> | undefined;
+
 export function startConsumers(): void {
   started = true;
   // 崩溃恢复：把已注册消费者队列里"处理超时"的 processing 消息恢复为 pending（至少一次投递语义）
   for (const q of consumers.keys()) requeueStale(q);
   for (const def of consumers.values()) startQueueLoop(def.queue);
+  // 周期恢复：运行中 processing 卡住（fetch 挂起/进程内 handler 超时未回收）也能自动恢复——
+  // requeueStale 默认 5min 阈值，60s 扫描一次
+  if (!staleTimer) {
+    staleTimer = setInterval(() => {
+      for (const q of consumers.keys()) requeueStale(q);
+    }, 60_000);
+    staleTimer.unref?.(); // 不阻止进程退出（测试环境关键：node --test 不被 interval 挂起）
+  }
 }
 
 export function stopConsumers(): void {
   started = false;
   loops.clear();
+  if (staleTimer) { clearInterval(staleTimer); staleTimer = undefined; }
 }
 
 function startQueueLoop(queue: string): void {
@@ -75,7 +88,13 @@ async function loopOnce(queue: string): Promise<void> {
     if (msg) {
       try {
         const { type, ...rest } = msg.payload ?? {};
-        await def.handler({ id: msg.id, type: type as string | undefined, payload: Object.keys(rest).length ? rest : undefined });
+        // handler 级超时兜底（2026-08-26 数据工程用例教训：fetch 在 Windows DNS/连接阶段可能不响应
+        // AbortSignal 挂起，导致消费循环停摆——超时视为失败重投；消费端幂等兜底）
+        const timeoutMs = def.handlerTimeoutMs ?? 120_000;
+        await Promise.race([
+          def.handler({ id: msg.id, type: type as string | undefined, payload: Object.keys(rest).length ? rest : undefined }),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`handler 超时（>${timeoutMs}ms）`)), timeoutMs)),
+        ]);
         ack(queue, msg.id, true);
         // 消费统计（可观测）
         const st = stats.get(queue) ?? { processed: 0 };

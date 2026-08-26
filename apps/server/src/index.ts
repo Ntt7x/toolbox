@@ -18,6 +18,7 @@ import {
 } from "@toolbox/shared";
 import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes, registerDataInfraRoutes } from "./core/routes.js";
 import { initDataInfra, startDataInfraRuntime } from "./core/data-infra/index.js";
+import { registerVolJob } from "./features/volatilityJob/index.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
 import * as cbRateFeature from "./features/cbRate/index.js";
 import * as treasuryFxFeature from "./features/treasuryFx/index.js";
@@ -115,6 +116,8 @@ export { app };
 
 // 数据工程基础设施：数据源注册（无条件执行——注册表完整性，测试断言"未标记应为 0"依赖）
 initDataInfra();
+// 市场波动率数据工程工作流（调度枚举 + 队列消费 FaaS）
+registerVolJob();
 
 const port = Number(process.env.PORT ?? 8787);
 // 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
