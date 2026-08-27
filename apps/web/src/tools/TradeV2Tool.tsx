@@ -2286,33 +2286,30 @@ export default function TradeV2Tool() {
 
   const groupTabStyle = (sel: boolean, hover = false, isPaper = false): React.CSSProperties => {
     // 虚盘分组：虚线边框 + 淡绿底，视觉上与实盘区分（memo mtbjkyro 增强外观）
+    const base: React.CSSProperties = { padding: "0.4rem 0.85rem", borderRadius: 10, fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, transition: "all .15s ease", position: "relative" };
     if (isPaper) {
       return {
-        padding: "0.4rem 0.85rem",
-        borderRadius: 10,
+        ...base,
         border: "1.5px dashed " + (sel ? "#15803d" : "#86c98f"),
         background: sel ? "#ecfdf5" : hover ? "#f0fdf4" : "#f7fdf9",
         color: sel ? "#14532d" : "#3f7a52",
-        fontSize: "0.82rem",
-        cursor: "pointer",
-        fontWeight: 600,
         boxShadow: sel ? "0 1px 2px rgba(21,128,61,0.15)" : "none",
-        transition: "all .15s ease",
       };
     }
     return {
-      padding: "0.4rem 0.85rem",
-      borderRadius: 10,
+      ...base,
       border: "1.5px solid " + (sel ? C.accent : C.faint),
       background: sel ? C.accentBg : hover ? C.panel : "#fff",
       color: sel ? "#1d4ed8" : C.sub,
-      fontSize: "0.82rem",
-      cursor: "pointer",
-      fontWeight: 600,
       boxShadow: sel ? "0 1px 2px rgba(37,99,235,0.15)" : "none",
-      transition: "all .15s ease",
     };
   };
+
+  /** 分组右上角高亮小标签（信息类型 info/noinfo + 账本类型 real/paper）——memo mtbjkyro 增强区分度 */
+  const cornerTag = (text: string, color: string): React.CSSProperties => ({
+    fontSize: "0.58rem", fontWeight: 800, padding: "0 0.32rem", borderRadius: 4,
+    background: color, color: "#fff", lineHeight: "1.35rem", boxShadow: "0 1px 2px rgba(0,0,0,0.18)", whiteSpace: "nowrap",
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2343,8 +2340,11 @@ export default function TradeV2Tool() {
               return (
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}>
                   {g.name}
-                  <InfoTypeBadge infoType={g.infoType} />
-                  <PaperBadge isPaper={g.isPaper} />
+                  {/* 右上角高亮小标签：信息类型 + 账本类型（明显区分） */}
+                  <span style={{ position: "absolute", top: -7, right: -4, display: "flex", gap: 3 }}>
+                    {g.infoType ? <span style={cornerTag(g.infoType === "info" ? "info" : "noinfo", g.infoType === "info" ? "#2563eb" : "#d97706")}>{g.infoType === "info" ? "info" : "noinfo"}</span> : null}
+                    <span style={cornerTag(g.isPaper ? "paper" : "real", g.isPaper ? "#7c3aed" : "#059669")}>{g.isPaper ? "paper" : "real"}</span>
+                  </span>
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
                 </button>
