@@ -2285,15 +2285,15 @@ export default function TradeV2Tool() {
   const sellAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { sellAmount?: number }) => t + (d.sellAmount ?? 0), 0));
 
   const groupTabStyle = (sel: boolean, hover = false, isPaper = false): React.CSSProperties => {
-    // 虚盘分组：虚线边框 + 淡绿底，视觉上与实盘区分（memo mtbjkyro 增强外观）
+    // 属性驱动外观（memo mtbjkyro 优化）：虚盘=紫色虚线（"虚拟"语义），实盘=蓝色实线（默认认知）
     const base: React.CSSProperties = { padding: "0.4rem 0.85rem", borderRadius: 10, fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, transition: "all .15s ease", position: "relative" };
     if (isPaper) {
       return {
         ...base,
-        border: "1.5px dashed " + (sel ? "#15803d" : "#86c98f"),
-        background: sel ? "#ecfdf5" : hover ? "#f0fdf4" : "#f7fdf9",
-        color: sel ? "#14532d" : "#3f7a52",
-        boxShadow: sel ? "0 1px 2px rgba(21,128,61,0.15)" : "none",
+        border: "1.5px dashed " + (sel ? "#7c3aed" : "#b7a4e8"),
+        background: sel ? "#faf5ff" : hover ? "#f7f3ff" : "#fcfaff",
+        color: sel ? "#5b21b6" : "#7c5cc4",
+        boxShadow: sel ? "0 1px 2px rgba(124,58,237,0.15)" : "none",
       };
     }
     return {
@@ -2305,13 +2305,11 @@ export default function TradeV2Tool() {
     };
   };
 
-  /** 分组右上角高亮小标签（信息类型 info/noinfo + 账本类型 real/paper）——memo mtbjkyro 增强区分度
-   *  柔和胶囊风格（淡底深字，与 InfoTypeBadge 一致，避免高亮实底突兀） */
-  const cornerTag = (text: string, bg: string, fg: string): React.CSSProperties => ({
-    fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999,
-    background: bg, color: fg, lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid " + fg + "33",
-  });
+  /** 信息类型小图标（属性驱动：有信息📡/无信息📊，融入 pill 而非角标堆叠） */
+  const infoIcon = (infoType?: "info" | "noinfo"): string | null =>
+    infoType === "info" ? "📡" : infoType === "noinfo" ? "📊" : null;
 
+  
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -2339,13 +2337,14 @@ export default function TradeV2Tool() {
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
-                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}>
+                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}
+                  title={`${g.name}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与全部组合/实盘金额）" : " · 实盘"}`}>
+                  {infoIcon(g.infoType) ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>{infoIcon(g.infoType)}</span> : null}
                   {g.name}
-                  {/* 右上角柔和胶囊标签：信息类型 + 账本类型（明显区分且风格统一） */}
-                  <span style={{ position: "absolute", top: -9, right: -3, display: "flex", gap: 3 }}>
-                    {g.infoType ? <span style={cornerTag(g.infoType === "info" ? "info" : "noinfo", g.infoType === "info" ? "#eff6ff" : "#fffbeb", g.infoType === "info" ? "#2563eb" : "#d97706")}>{g.infoType === "info" ? "info" : "noinfo"}</span> : null}
-                    <span style={cornerTag(g.isPaper ? "paper" : "real", g.isPaper ? "#faf5ff" : "#ecfdf5", g.isPaper ? "#7c3aed" : "#059669")}>{g.isPaper ? "paper" : "real"}</span>
-                  </span>
+                  {/* 右上角仅虚盘 paper 角标（属性已融入 pill 外观：实线蓝=实盘 / 虚线紫=虚盘） */}
+                  {g.isPaper ? (
+                    <span style={{ position: "absolute", top: -9, right: -3, fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999, background: "#faf5ff", color: "#7c3aed", lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid #7c3aed33" }}>paper</span>
+                  ) : null}
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
                 </button>
