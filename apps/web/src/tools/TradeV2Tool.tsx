@@ -2129,7 +2129,7 @@ export default function TradeV2Tool() {
         negCount: global.negCount,
         positionPct: (() => {
           // 组合视图（聚合）：总市值 / 来源各分组总仓位上限之和（未设上限的分组不计入分母）
-          const cap = groups.reduce((a, g) => a + (g.totalCapital > 0 ? g.totalCapital : 0), 0);
+          const cap = srcGroups.reduce((a, g) => a + (g.totalCapital > 0 ? g.totalCapital : 0), 0);
           return cap > 0 ? (global.totalMv / cap) * 100 : undefined;
         })(),
       };
@@ -2145,28 +2145,31 @@ export default function TradeV2Tool() {
     [entries, isGroupView, selectedId],
   );
 
-  // 组合整体统计（全部视图）：盈亏率 + 集中度（最大分组市值占比）
+    /** 组合视图统计范围（memo：聚合分组按来源基础分组，而非全部） */
+  const srcGroups = useMemo(() => (globalGroup?.aggSources?.length ? groups.filter((g) => globalGroup.aggSources!.includes(g.id)) : groups), [groups, globalGroup]);
+
+// 组合整体统计（全部视图）：盈亏率 + 集中度（最大分组市值占比）
   const globalCost = global ? global.totalMv - global.unrealizedPnl : 0;
   const globalRate = global && globalCost > 0 ? (global.totalPnl / globalCost) * 100 : undefined;
   const maxGroup = useMemo(() => {
-    if (groups.length === 0 || !global || global.totalMv <= 0) return undefined;
-    const g = [...groups].sort((a, b) => b.totalMv - a.totalMv)[0]!;
+    if (srcGroups.length === 0 || !global || global.totalMv <= 0) return undefined;
+    const g = [...srcGroups].sort((a, b) => b.totalMv - a.totalMv)[0]!;
     return { name: g.name, pct: (g.totalMv / global.totalMv) * 100 };
   }, [groups, global]);
 
   const pieOption = useMemo<echarts.EChartsOption>(() => {
     const data = isGroupView && analysis
       ? analysis.positions.filter((p) => p.marketValue > 0).map((p) => ({ name: p.name ? `${p.name} ${p.code}` : p.code, value: Math.round(p.marketValue) }))
-      : groups.filter((g) => g.totalMv > 0).map((g) => ({ name: g.name, value: Math.round(g.totalMv) }));
+      : srcGroups.filter((g) => g.totalMv > 0).map((g) => ({ name: g.name, value: Math.round(g.totalMv) }));
     return {
       tooltip: { trigger: "item", formatter: "{b}<br/>市值 {c} 元（{d}%）" },
       legend: { type: "scroll", bottom: 0, textStyle: { fontSize: 11 } },
       series: [{ type: "pie", radius: ["38%", "66%"], center: ["50%", "44%"], data, label: { fontSize: 11, formatter: "{b}: {d}%" }, itemStyle: { borderRadius: 4, borderColor: "#fff", borderWidth: 1 } }],
     };
-  }, [isGroupView, analysis, groups]);
+  }, [isGroupView, analysis, srcGroups]);
 
   const barOption = useMemo<echarts.EChartsOption>(() => {
-    const names = groups.map((g) => g.name);
+    const names = srcGroups.map((g) => g.name);
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       legend: { data: ["已实现", "未实现"], top: 0, textStyle: { fontSize: 11 } },
@@ -2178,7 +2181,7 @@ export default function TradeV2Tool() {
         { name: "未实现", type: "bar", stack: "pnl", data: groups.map((g) => Math.round(g.unrealizedPnl)), itemStyle: { color: "#93c5fd" } },
       ],
     };
-  }, [groups]);
+  }, [srcGroups]);
 
   const globalLineOption = useMemo<echarts.EChartsOption>(() => ({
     tooltip: { trigger: "axis", formatter: (p: unknown) => {
@@ -2470,7 +2473,7 @@ export default function TradeV2Tool() {
           )}
           {/* 组合视图：分组贡献明细（聚合分组=来源分组；点击行跳转该组） */}
           {!isGroupView && global && (
-            <GroupContributionTable groups={globalGroup?.aggSources?.length ? groups.filter((g) => globalGroup.aggSources!.includes(g.id)) : groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
+            <GroupContributionTable groups={srcGroups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
           )}
 
           {!isGroupView && (
