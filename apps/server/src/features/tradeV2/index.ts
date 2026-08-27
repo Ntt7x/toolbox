@@ -60,7 +60,7 @@ export function registerTradeV2Feature(app: Hono) {
     const ctx = await getTradeV2Ctx();
     const r = await ctx.tradeV2Analysis.groupAnalysis(c.req.param("id")!);
     if (!r) return c.json({ ok: false, message: "分组不存在" }, 404);
-    return c.json({ ok: true, group: r.group, analysis: r.analysis });
+    return c.json({ ok: true, group: r.group, analysis: r.analysis, entries: r.entries });
   });
 
   app.post(`${API_PREFIX}/tools/trade-v2/groups`, async (c: Context) => {
@@ -277,12 +277,8 @@ export function registerTradeV2Feature(app: Hono) {
     return c.json({ ok: true, moved });
   });
 
-  // ---------- 全局分析（跨组） ----------
+  // ---------- 聚合分组分析（跨组组合分析——聚合分组功能；基础分组走 groupAnalysis） ----------
 
-  app.get(`${API_PREFIX}/tools/trade-v2/analysis`, async (c: Context) => {
-    const ctx = await getTradeV2Ctx();
-    return c.json({ ok: true, analysis: await ctx.tradeV2Analysis.global() });
-  });
 }
 
 /** 把待校验条目并入全量列表（临时对象仅用于校验；不入库） */

@@ -215,7 +215,7 @@ export const api = {
   /** 每日交易单批量提交（整批校验 → 入库 + 逐标的净归并汇总；preview=true 只校验不入库） */
   tradeV2BatchEntries: (items: TradeV2EntryDraft[], preview = false) =>
     request<TradeV2BatchResult>("/tools/trade-v2/entries/batch", jsonInit("POST", { items, ...(preview ? { preview: true } : {}) })),
-  tradeV2Analysis: () => request<TradeV2GlobalResult>("/tools/trade-v2/analysis"),
+
   chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   watchlistFundamental: (id: string, code: string, force = false) =>

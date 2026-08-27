@@ -2078,7 +2078,7 @@ export interface TradeV2CheckResult {
 }
 
 /** 全局分析（跨组对比 + 时间线） */
-export interface TradeV2GlobalAnalysis {
+export interface TradeV2AggregateAnalysis {
   groups: TradeV2GroupSummary[];
   /** 全部组合合并持仓（跨组合按 code 合并，成本摊薄口径——服务端权威，前端不自行核算） */
   positions: TradeV2Position[];
@@ -2129,6 +2129,8 @@ export interface TradeV2GroupDetailResult {
   ok: boolean;
   group?: TradeV2Group;
   analysis?: TradeV2GroupAnalysis;
+  /** 聚合分组：来源分组条目并集（交易流水；memo 新增） */
+  entries?: TradeV2Entry[];
   message?: string;
 }
 
@@ -2149,7 +2151,7 @@ export interface TradeV2CheckResponse {
 
 export interface TradeV2GlobalResult {
   ok: boolean;
-  analysis?: TradeV2GlobalAnalysis;
+  analysis?: TradeV2AggregateAnalysis;
   message?: string;
 }
 

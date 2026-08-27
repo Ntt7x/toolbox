@@ -12,7 +12,7 @@ import type {
   TradeV2CheckResult,
   TradeV2Entry,
   TradeV2EntryDraft,
-  TradeV2GlobalAnalysis,
+  TradeV2AggregateAnalysis,
   TradeV2Group,
   TradeV2Position,
 } from "@toolbox/shared";
@@ -63,7 +63,7 @@ export async function resolveStockNameCached(code: string): Promise<string> {
 import { getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
 import {
   analyzeGroup,
-  buildGlobalAnalysis,
+  buildAggregateAnalysis,
   buildGroupSummary,
   checkEntry,
 } from "./compute.js";
@@ -293,10 +293,28 @@ export class TradeV2AnalysisService extends Service {
     return out;
   }
 
-  /** 组分析（含行情附加；条目先补全名称——交易员可读性） */
-  async groupAnalysis(groupId: string): Promise<{ group: TradeV2Group; analysis: ReturnType<typeof analyzeGroup> } | null> {
+  /** 组分析（含行情附加；条目先补全名称——交易员可读性）
+   *  聚合分组（aggSources）：组合分析（buildAggregateAnalysis——跨来源分组合并 positions/时间线/归因，
+   *  借鉴原"全部组合"实现；聚合分组 = 组合分析的功能载体） */
+  async groupAnalysis(groupId: string): Promise<{ group: TradeV2Group; analysis: any; entries: TradeV2Entry[] } | null> {
     const group = this.ctx.tradeV2Group.get(groupId);
     if (!group) return null;
+    // 聚合分组：来源分组条目派生（getGroupEntries 已递归并集）→ 组合分析
+    if (Array.isArray(group.aggSources) && group.aggSources.length > 0) {
+      const srcGroups = group.aggSources.map((id) => this.ctx.tradeV2Group.get(id)).filter((g): g is TradeV2Group => !!g);
+      const entries = await this.ctx.tradeV2Ledger.enrichNames(this.ctx.tradeV2Ledger.listByGroup(groupId), srcGroups);
+      const inputs = await Promise.all(
+        srcGroups.map(async (g) => {
+          const gEntries = this.ctx.tradeV2Ledger.listByGroup(g.id);
+          const latestPrices = await this.latestPrices(gEntries);
+          const klines = await fetchKlinesForCodes(gEntries.map((e) => e.code));
+          return { group: g, entries: gEntries, latestPrices, klines };
+        }),
+      );
+      const analysis = buildAggregateAnalysis(inputs);
+      analysis.positions = await enrichPositions(analysis.positions ?? []);
+      return { group, analysis, entries };
+    }
     let entries = this.ctx.tradeV2Ledger.listByGroup(groupId);
     entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
     const prices = await this.latestPrices(entries);
@@ -305,7 +323,7 @@ export class TradeV2AnalysisService extends Service {
     const analysis = analyzeGroup(group, entries, prices, klines);
     // 附加行情字段（涨跌幅/今日盈亏/波动率——公共 enrichPositions，与全局共用）
     analysis.positions = await enrichPositions(analysis.positions);
-    return { group, analysis };
+    return { group, analysis, entries };
   }
 
   /** 约束校验（allEntries = 目标条目最终形态所在的全量列表） */
@@ -318,46 +336,7 @@ export class TradeV2AnalysisService extends Service {
     return checkEntry(group, allEntries, { targetDate, latestPrices: prices });
   }
 
-  /** 全局分析（跨组；条目补全名称） */
-  async global(): Promise<TradeV2GlobalAnalysis> {
-    const groups = this.ctx.tradeV2Group.list();
-    const inputs = await Promise.all(
-      // 虚盘分组（isPaper）不参与「全部组合 / 实盘实际金额」计算（memo mtbjkyro），仅作独立分组展示；
-      // 聚合分组（aggSources）是合并视图（标的来自来源分组），参与会与来源重复计算——同样排除（memo 新增）
-      groups.filter((g) => !g.isPaper && !(Array.isArray(g.aggSources) && g.aggSources.length > 0)).map(async (g) => {
-        let entries = this.ctx.tradeV2Ledger.listByGroup(g.id);
-        entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [g]);
-        const latestPrices = await this.latestPrices(entries);
-        const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
-        return { group: g, entries, latestPrices, klines };
-      }),
-    );
-    const analysis = buildGlobalAnalysis(inputs);
-    // 全局组合复用一般组合能力：positions 附加行情字段（公共 enrichPositions，与分组共用）
-    analysis.positions = await enrichPositions(analysis.positions ?? []);
-    // 全部组合首先是一般组合（mt52hjgp）：与分组同一数据结构 analyzeGroup 输出——
-    // 合成组（无约束）+ 全部标的 entries，positions/dailySeries/monthlySeries/归因/指标/deals 全齐，零强转
-    const allEntries: TradeV2Entry[] = [];
-    const allLatest: Record<string, number> = {};
-    const allKlines = new Map<string, Map<string, number>>();
-    for (const { entries, latestPrices, klines } of inputs) {
-      allEntries.push(...entries);
-      Object.assign(allLatest, latestPrices);
-      if (klines) for (const [code, m] of klines) allKlines.set(code, m);
-    }
-    const synthetic: TradeV2Group = {
-      id: "all", name: "全部组合",
-      totalCapital: Number.MAX_SAFE_INTEGER, dailyAddLimit: Number.MAX_SAFE_INTEGER,
-      stockLimits: [], allowShort: true,
-      createdAt: "", updatedAt: "",
-    };
-    const ga = analyzeGroup(synthetic, allEntries, allLatest, allKlines);
-    ga.positions = analysis.positions ?? ga.positions; // 复用已附加行情字段的（避免二次行情）
-    analysis.analysis = ga;
-    return analysis;
-  }
-
-  /** 组摘要（列表接口用） */
+    /** 组摘要（列表接口用） */
   async groupSummary(group: TradeV2Group): Promise<ReturnType<typeof buildGroupSummary>> {
     const entries = this.ctx.tradeV2Ledger.listByGroup(group.id);
     const prices = await this.latestPrices(entries);

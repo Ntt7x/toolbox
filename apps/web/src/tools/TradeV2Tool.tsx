@@ -16,7 +16,7 @@ import type {
   TradeV2Deal,
   TradeV2Entry,
   TradeV2EntryDraft,
-  TradeV2GlobalAnalysis,
+  TradeV2AggregateAnalysis,
   TradeV2Group,
   TradeV2GroupAnalysis,
   TradeV2GroupSummary,
@@ -96,12 +96,12 @@ function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {  if (!i
   );
 }
 
-/** 虚盘徽章（memo mtbjkyro：不参与全部组合/实盘金额计算） */
+/** 虚盘徽章（memo mtbjkyro：不参与聚合组合/实盘金额计算） */
 function PaperBadge({ isPaper }: { isPaper?: boolean }) {
   if (!isPaper) return null;
   return (
     <span
-      title="虚盘：仅独立记账，金额与标的不参与「全部组合 / 实盘实际金额」计算"
+      title="虚盘：仅独立记账，金额与标的不参与「聚合组合 / 实盘实际金额」计算"
       style={{
         marginLeft: 6, fontSize: "0.72rem", padding: "0.08rem 0.45rem", borderRadius: 999,
         background: "#f0fdf4", color: "#15803d", fontWeight: 700, whiteSpace: "nowrap", verticalAlign: "middle",
@@ -793,8 +793,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
           <Select value={isPaper ? "paper" : "real"} onValueChange={(v: string | null) => setIsPaper(v === "paper")}>
             <SelectTrigger style={{ height: 32 }}><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="real">实盘（参与全部组合/实际金额计算）</SelectItem>
-              <SelectItem value="paper">虚盘（仅独立记账，不参与全部组合/实盘金额）</SelectItem>
+              <SelectItem value="real">实盘（参与聚合/实盘实际金额计算）</SelectItem>
+              <SelectItem value="paper">虚盘（仅独立记账，不参与聚合/实盘金额）</SelectItem>
             </SelectContent>
           </Select>
                     </>
@@ -1034,7 +1034,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
         </TableBody>
       </Table>
       <div style={{ fontSize: "0.72rem", color: C.muted, marginTop: 8 }}>
-        {groupView ? "市值按最新行情（无行情时按成本口径）；已实现 = 该标的本组卖出/回补累计。" : "全部组合并视图：按成本口径估算（无行情标的）。"}
+        {groupView ? "市值按最新行情（无行情时按成本口径）；已实现 = 该标的本组卖出/回补累计。" : "组合视图（聚合分析）：按成本口径估算（无行情标的）。"}
         {positions.some((p) => p.quantity < 0) ? " 空头（做空）：数量显示为卖出股数，未实现 = 股数×(开空均价−现价)，价格下跌盈利。" : ""}
       </div>
     </CardContent></Card>
@@ -2000,10 +2000,14 @@ export default function TradeV2Tool() {
   const [pillHover, setPillHover] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string>(() => {
     const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
-    return saved ?? "all";
+    return saved ?? "";
   });
   const [detail, setDetail] = useState<{ group: TradeV2Group; analysis: TradeV2GroupAnalysis } | null>(null);
-  const [global, setGlobal] = useState<TradeV2GlobalAnalysis | null>(null);
+  const [global, setGlobal] = useState<TradeV2AggregateAnalysis | null>(null);
+  /** 聚合分组：当前选中的聚合分组对象（global 渲染的来源分组/名称） */
+  const [globalGroup, setGlobalGroup] = useState<TradeV2Group | null>(null);
+  /** 聚合分组：派生条目（服务端 groupAnalysis 返回的来源分组条目并集，交易流水用） */
+  const [aggEntries, setAggEntries] = useState<TradeV2Entry[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [tab, setTab] = useState("positions");   // 默认仓位明细（memo msvpak4x）
@@ -2033,15 +2037,23 @@ export default function TradeV2Tool() {
 
   const loadAnalysis = useCallback(async (groupId: string) => {
     try {
-      if (groupId === "all") {
-        const r = await api.tradeV2Analysis();
-        setGlobal(r.analysis ?? null);
-        setDetail(null);
+      if (!groupId) { setDetail(null); setGlobal(null); setGlobalGroup(null); setAggEntries(null); return; }
+      const r = await api.tradeV2Group(groupId);
+      if (r.analysis && r.group) {
+        // 聚合分组：分析是聚合结构（buildAggregateAnalysis）→ 走 global 渲染（组合分析/仓位/收益/流水）
+        if (r.group.aggSources && r.group.aggSources.length > 0) {
+          setGlobal(r.analysis as unknown as TradeV2AggregateAnalysis);
+          setGlobalGroup(r.group);
+          setAggEntries(r.entries ?? null);
+          setDetail(null);
+        } else {
+          setDetail({ group: r.group, analysis: r.analysis });
+          setGlobal(null);
+          setGlobalGroup(null);
+          setAggEntries(null);
+        }
       } else {
-        const r = await api.tradeV2Group(groupId);
-        if (r.analysis && r.group) setDetail({ group: r.group, analysis: r.analysis });
-        else setDetail(null);
-        setGlobal(null);
+        setDetail(null); setGlobal(null); setGlobalGroup(null); setAggEntries(null);
       }
     } catch (e) {
       setMsg("❌ 分析加载失败：" + errMsg(e));
@@ -2062,7 +2074,7 @@ export default function TradeV2Tool() {
     void (async () => {
       const loaded = (await loadOverview()) ?? []; // 填充 groups 并取回
       const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
-      const initialId = saved && loaded.some((g) => g.id === saved) ? saved : "all";
+      const initialId = saved && loaded.some((g) => g.id === saved) ? saved : loaded[0]?.id ?? "";
       setSelectedId(initialId);
       await loadAnalysis(initialId);
       setLoading(false);
@@ -2070,7 +2082,7 @@ export default function TradeV2Tool() {
   }, [loadOverview, loadAnalysis]);
 
   useEffect(() => {
-    if (selectedId === "all" || groups.some((g) => g.id === selectedId)) {
+    if (selectedId && groups.some((g) => g.id === selectedId)) {
       void loadAnalysis(selectedId);
     }
   }, [selectedId, groups, loadAnalysis]);
@@ -2116,7 +2128,7 @@ export default function TradeV2Tool() {
         avgDays: global.avgDays,
         negCount: global.negCount,
         positionPct: (() => {
-          // 全部组合：总市值 / 各分组总仓位上限之和（未设上限的分组不计入分母）
+          // 组合视图（聚合）：总市值 / 来源各分组总仓位上限之和（未设上限的分组不计入分母）
           const cap = groups.reduce((a, g) => a + (g.totalCapital > 0 ? g.totalCapital : 0), 0);
           return cap > 0 ? (global.totalMv / cap) * 100 : undefined;
         })(),
@@ -2283,16 +2295,17 @@ export default function TradeV2Tool() {
   }, [analysis, global, isGroupView]);
 
   const filteredEntries = useMemo(() => {
-    // 分组过滤跟随顶部选中分组（selectedId；memo msx4rs60：功能区 tab 不再单独选分组）
-    return entries.filter((e) => {
-      if (selectedId !== "all" && e.groupId !== selectedId) return false;
+    // 聚合分组：用派生条目（来源分组并集，服务端已过滤）；基础分组按 selectedId 过滤（memo msx4rs60）
+    const base = globalGroup ? (aggEntries ?? entries) : entries;
+    return base.filter((e) => {
+      if (!globalGroup && selectedId && e.groupId !== selectedId) return false;
       if (fAction !== "all" && e.action !== fAction) return false;
       if (fCode.trim() && !e.code.includes(fCode.trim()) && !(e.name ?? "").includes(fCode.trim())) return false;
       if (fFrom && e.date < fFrom) return false;
       if (fTo && e.date > fTo) return false;
       return true;
     });
-  }, [entries, selectedId, fAction, fCode, fFrom, fTo]);
+  }, [entries, aggEntries, globalGroup, selectedId, fAction, fCode, fFrom, fTo]);
 
   // 流水分页：每页 100（长流水不卡顿）
   const PAGE_SIZE = 100;
@@ -2378,14 +2391,11 @@ export default function TradeV2Tool() {
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: "0.8rem", fontWeight: 700, color: C.sub }}>分组</span>
-            <button onClick={() => { setSelectedId("all"); try { localStorage.setItem("tradeV2:selectedGroup", "all"); } catch {} }} onMouseEnter={() => setPillHover("all")} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(selectedId === "all", pillHover === "all")}>
-              全部组合（{groups.length}）
-            </button>
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper, g.isAgg)}
-                  title={`${g.name}${g.isAgg ? " · 聚合分组（标的 = 来源分组并集，合并视图）" : ""}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与全部组合/实盘金额）" : " · 实盘"}`}>
+                  title={`${g.name}${g.isAgg ? " · 聚合分组（标的 = 来源分组并集，合并视图）" : ""}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与聚合/实盘金额）" : " · 实盘"}`}>
                   {g.isAgg ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>🔗</span> : null}
                   {!g.isAgg && infoIcon(g.infoType) ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>{infoIcon(g.infoType)}</span> : null}
                   {g.name}
@@ -2411,7 +2421,7 @@ export default function TradeV2Tool() {
               <TabsTrigger value="analysis" style={{ flex: 1 }}>📊 收益分析</TabsTrigger>
               <TabsTrigger value="positions" style={{ flex: 1 }}>📈 仓位明细</TabsTrigger>
               <TabsTrigger value="ledger" style={{ flex: 1 }}>💹 交易流水</TabsTrigger>
-              {isGroupView && selectedGroup && <TabsTrigger value="group-settings" style={{ flex: 1 }}>⚙️ 分组设置</TabsTrigger>}
+              {(isGroupView && selectedGroup) || globalGroup ? <TabsTrigger value="group-settings" style={{ flex: 1 }}>⚙️ 分组设置</TabsTrigger> : null}
             </TabsList>
 
             {/* 共享统计区：仅「收益分析」tab 展示（资金概览与收益分析绑定） */}
@@ -2458,9 +2468,9 @@ export default function TradeV2Tool() {
               ]} />
             </div>
           )}
-          {/* 全部视图：分组贡献明细（点击行跳转该组） */}
+          {/* 组合视图：分组贡献明细（聚合分组=来源分组；点击行跳转该组） */}
           {!isGroupView && global && (
-            <GroupContributionTable groups={groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
+            <GroupContributionTable groups={globalGroup?.aggSources?.length ? groups.filter((g) => globalGroup.aggSources!.includes(g.id)) : groups} globalMv={global.totalMv} onSelect={(id) => { setSelectedId(id); try { localStorage.setItem("tradeV2:selectedGroup", id); } catch {} }} />
           )}
 
           {!isGroupView && (
@@ -2489,7 +2499,7 @@ export default function TradeV2Tool() {
             {(isGroupView && analysis) || (!isGroupView && global) ? (
               <TabsContent value="analysis">
                 {(() => {
-                  // 全部组合首先是一般组合：收益分析 tab 与分组完全一致（mt52hjgp），仅数据源不同
+                  // 组合视图（聚合分组）首先是一般组合：收益分析 tab 与分组完全一致（mt52hjgp），仅数据源不同
                   const src = isGroupView ? analysis : (global?.analysis ?? null);
                   if (!src) return null;
                   return (
@@ -2541,7 +2551,7 @@ export default function TradeV2Tool() {
                 positions={isGroupView && analysis ? analysis.positions : (global?.positions ?? positionsFromGlobal(entries))}
                 groupView={isGroupView}
                 onRowClick={(p) => setStockDlg({ code: p.code, name: p.name })}
-                exportName={isGroupView && selectedGroup ? `仓位明细_${selectedGroup.name}.csv` : "全部持仓.csv"}
+                exportName={isGroupView && selectedGroup ? `仓位明细_${selectedGroup.name}.csv` : globalGroup ? `仓位明细_${globalGroup.name}.csv` : "全部持仓.csv"}
                 positionPct={cur?.positionPct}
               />
             </TabsContent>
@@ -2550,8 +2560,8 @@ export default function TradeV2Tool() {
             <TabsContent value="ledger">
               {/* 信息-风险提醒（memo：无信息高波暂停/有信息降仓；放交易流水 tab） */}
               {isGroupView && selectedGroup && <InfoRiskAlert infoType={selectedGroup.infoType} positions={analysis?.positions} />}
-              {/* 日度交易汇总：流水 tab 最上方（memo mt2tzfw3） */}
-              <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
+              {/* 日度交易汇总：流水 tab 最上方（memo mt2tzfw3；聚合分组用派生条目） */}
+              <DailySummaryCard entries={globalGroup ? (aggEntries ?? entries) : entries.filter((e) => e.groupId === selectedId)} />
               {/* 分组视图：交易流水整合录入（记一笔/批量提交 → 流水下方即时可见） */}
               {isGroupView && selectedGroup && analysis && !(selectedGroup.aggSources && selectedGroup.aggSources.length > 0) && (
                 <OrderSheet
@@ -2648,7 +2658,7 @@ export default function TradeV2Tool() {
             {isGroupView && selectedGroup && (
               <TabsContent value="group-settings">
                 <Card><CardContent>
-                  <SectionTitle icon="⚙️" color={C.indigo}>分组设置 · {selectedGroup.name}（memo msvvra4c tab 化）</SectionTitle>
+                  <SectionTitle icon="⚙️" color={C.indigo}>分组设置 · {(globalGroup ?? selectedGroup)!.name}（memo msvvra4c tab 化）</SectionTitle>
                   {/* 分组概览统计（丰富内容） */}
                   {analysis && (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
@@ -2672,7 +2682,7 @@ export default function TradeV2Tool() {
                       </div>
                     </div>
                   )}
-                  <GroupEditor inline open initial={selectedGroup} onSaved={() => void reloadAll()} groups={groups} onClose={() => {}} />
+                  <GroupEditor inline open initial={globalGroup ?? selectedGroup} onSaved={() => void reloadAll()} groups={groups} onClose={() => {}} />
                 </CardContent></Card>
               </TabsContent>
             )}

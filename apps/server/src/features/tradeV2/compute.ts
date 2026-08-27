@@ -12,7 +12,7 @@ import type {
   TradeV2DayOrderSummary,
   TradeV2Deal,
   TradeV2Entry,
-  TradeV2GlobalAnalysis,
+  TradeV2AggregateAnalysis,
   TradeV2Group,
   TradeV2GroupAnalysis,
   TradeV2GroupSummary,
@@ -743,10 +743,10 @@ export function buildGroupSummary(
   };
 }
 
-/** 全局分析：跨组汇总 + 累计已实现盈亏时间线（closed 交易按清仓日累计） */
-export function buildGlobalAnalysis(
+/** 聚合分析（原全局分析——通用：对任意分组集合跨组汇总 + 累计已实现盈亏时间线；聚合分组/全部组合共用） */
+export function buildAggregateAnalysis(
   groups: { group: TradeV2Group; entries: TradeV2Entry[]; latestPrices: Record<string, number>; klines?: Map<string, Map<string, number>> }[],
-): TradeV2GlobalAnalysis {
+): TradeV2AggregateAnalysis {
   const summaries: TradeV2GroupSummary[] = [];
   let totalMv = 0;
   let totalCost = 0;

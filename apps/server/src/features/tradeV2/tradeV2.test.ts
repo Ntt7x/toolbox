@@ -9,7 +9,7 @@ import {
   analyzeGroup,
   buildDailySeries,
   buildDeals,
-  buildGlobalAnalysis,
+  buildAggregateAnalysis,
   buildGroupSummary,
   buildMonthlySeries,
   buildPnlAttribution,
@@ -264,7 +264,7 @@ test("全局分析：累计已实现盈亏时间线（按清仓日累计）", ()
     mkEntry({ code: "600519", date: "2026-02-01", action: "buy", quantity: 5, price: 100 }),
     mkEntry({ code: "600519", date: "2026-02-20", action: "sell", quantity: 5, price: 90 }), // -50 @ 02-20
   ];
-  const g = buildGlobalAnalysis([{ group, entries: entriesA, latestPrices: {} }]);
+  const g = buildAggregateAnalysis([{ group, entries: entriesA, latestPrices: {} }]);
   assert.equal(g.closedCount, 2);
   assert.equal(g.realizedPnl, 150);
   assert.equal(g.realizedTimeline.length, 2);
@@ -493,7 +493,7 @@ test("月度收益率（成本口径）：月PnL = 已实现 + 市值变动 − 
 test("全局分析：组合每日动态（跨组合按日合并市值/持仓数）", () => {
   const entriesA = [mkEntry({ code: "600519", date: "2026-01-02", action: "buy", quantity: 10, price: 100 })];
   const entriesB = [mkEntry({ code: "300750", date: "2026-01-02", action: "buy", quantity: 5, price: 50 })];
-  const g = buildGlobalAnalysis([
+  const g = buildAggregateAnalysis([
     { group, entries: entriesA, latestPrices: {} },
     { group: { ...group, id: "g2" }, entries: entriesB, latestPrices: {} },
   ]);
