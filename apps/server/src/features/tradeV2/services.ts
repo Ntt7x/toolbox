@@ -168,8 +168,8 @@ export class TradeV2GroupService extends Service {
     return getGroup(id);
   }
 
-  create(name: string, infoType?: "info" | "noinfo"): TradeV2Group {
-    return createGroup(name, infoType);
+  create(name: string, infoType?: "info" | "noinfo", isPaper?: boolean): TradeV2Group {
+    return createGroup(name, infoType, isPaper);
   }
 
   update(id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null }): TradeV2Group | null {

@@ -2305,10 +2305,11 @@ export default function TradeV2Tool() {
     };
   };
 
-  /** 分组右上角高亮小标签（信息类型 info/noinfo + 账本类型 real/paper）——memo mtbjkyro 增强区分度 */
-  const cornerTag = (text: string, color: string): React.CSSProperties => ({
-    fontSize: "0.58rem", fontWeight: 800, padding: "0 0.32rem", borderRadius: 4,
-    background: color, color: "#fff", lineHeight: "1.35rem", boxShadow: "0 1px 2px rgba(0,0,0,0.18)", whiteSpace: "nowrap",
+  /** 分组右上角高亮小标签（信息类型 info/noinfo + 账本类型 real/paper）——memo mtbjkyro 增强区分度
+   *  柔和胶囊风格（淡底深字，与 InfoTypeBadge 一致，避免高亮实底突兀） */
+  const cornerTag = (text: string, bg: string, fg: string): React.CSSProperties => ({
+    fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999,
+    background: bg, color: fg, lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid " + fg + "33",
   });
 
   return (
@@ -2340,10 +2341,10 @@ export default function TradeV2Tool() {
               return (
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}>
                   {g.name}
-                  {/* 右上角高亮小标签：信息类型 + 账本类型（明显区分） */}
-                  <span style={{ position: "absolute", top: -7, right: -4, display: "flex", gap: 3 }}>
-                    {g.infoType ? <span style={cornerTag(g.infoType === "info" ? "info" : "noinfo", g.infoType === "info" ? "#2563eb" : "#d97706")}>{g.infoType === "info" ? "info" : "noinfo"}</span> : null}
-                    <span style={cornerTag(g.isPaper ? "paper" : "real", g.isPaper ? "#7c3aed" : "#059669")}>{g.isPaper ? "paper" : "real"}</span>
+                  {/* 右上角柔和胶囊标签：信息类型 + 账本类型（明显区分且风格统一） */}
+                  <span style={{ position: "absolute", top: -9, right: -3, display: "flex", gap: 3 }}>
+                    {g.infoType ? <span style={cornerTag(g.infoType === "info" ? "info" : "noinfo", g.infoType === "info" ? "#eff6ff" : "#fffbeb", g.infoType === "info" ? "#2563eb" : "#d97706")}>{g.infoType === "info" ? "info" : "noinfo"}</span> : null}
+                    <span style={cornerTag(g.isPaper ? "paper" : "real", g.isPaper ? "#faf5ff" : "#ecfdf5", g.isPaper ? "#7c3aed" : "#059669")}>{g.isPaper ? "paper" : "real"}</span>
                   </span>
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
