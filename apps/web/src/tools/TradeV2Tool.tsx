@@ -2496,7 +2496,19 @@ export default function TradeV2Tool() {
               </TabsContent>
             )}
 
-            {(isGroupView && analysis) || (!isGroupView && global) ? (
+            
+            {/* 聚合分组设置（memo：聚合分组也是一般分组，可分组设置——名称/来源编辑） */}
+            {globalGroup && (
+              <TabsContent value="group-settings">
+                <Card><CardContent>
+                  <SectionTitle icon="⚙️" color={C.indigo}>分组设置 · {globalGroup.name}</SectionTitle>
+                  <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: 10 }}>聚合分组：标的是来源分组的并集（合并视图）；可编辑名称与来源分组（支持基础/聚合嵌套）。</div>
+                  <GroupEditor inline open initial={globalGroup} onSaved={() => void reloadAll()} groups={groups} onClose={() => {}} />
+                </CardContent></Card>
+              </TabsContent>
+            )}
+
+{(isGroupView && analysis) || (!isGroupView && global) ? (
               <TabsContent value="analysis">
                 {(() => {
                   // 组合视图（聚合分组）首先是一般组合：收益分析 tab 与分组完全一致（mt52hjgp），仅数据源不同
