@@ -704,6 +704,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
   const [name, setName] = useState("");
   const [infoType, setInfoType] = useState<"info" | "noinfo" | "">("");
   const [isPaper, setIsPaper] = useState(false);
+  const [aggType, setAggType] = useState<"base" | "agg">("base");
+  const [aggSources, setAggSources] = useState<string[]>([]);
   const [totalCapital, setTotalCapital] = useState(0);
   const [dailyAddLimit, setDailyAddLimit] = useState(0);
   const [limits, setLimits] = useState<{ code: string; name?: string; maxWeightPct?: number }[]>([{ code: "" }]);
@@ -717,6 +719,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     setName(initial?.name ?? "");
     setInfoType(initial?.infoType ?? "");
     setIsPaper(initial?.isPaper ?? false);
+    setAggType(initial?.aggSources && initial.aggSources.length > 0 ? "agg" : "base");
+    setAggSources(initial?.aggSources ?? []);
     setTotalCapital(initial?.totalCapital ?? 0);
     setDailyAddLimit(initial?.dailyAddLimit ?? 0);
     setLimits(initial && initial.stockLimits.length > 0 ? initial.stockLimits.map((s) => ({ ...s })) : [{ code: "" }]);
@@ -731,8 +735,9 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     setMsg(null);
     try {
       const stockLimits = limits.filter((l) => l.code.trim() && l.maxWeightPct !== undefined).map((l) => ({ code: l.code.trim(), ...(l.name ? { name: l.name } : {}), maxWeightPct: l.maxWeightPct! }));
-      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, isPaper, ...(infoType ? { infoType } : { infoType: null }) });
-      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined, isPaper);
+      const aggSourcesArg = aggType === "agg" && aggSources.length > 0 ? aggSources : null;
+      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, isPaper, aggSources: aggSourcesArg, ...(infoType ? { infoType } : { infoType: null }) });
+      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined, isPaper, aggSourcesArg ?? undefined);
       onSaved();
       if (!inline) onClose();
     } catch (e) {
@@ -763,6 +768,14 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
         <div className="col-span-2">
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">分组名称</label>
           <Input autoComplete="off" className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：稳健成长 / 网格策略" />
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">分组类型</label>
+          <Select value={aggType} onValueChange={(v: string | null) => setAggType((v as "base" | "agg") ?? "base")}>
+            <SelectTrigger style={{ height: 32 }}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="base">基础分组（自主管理标的）</SelectItem>
+              <SelectItem value="agg">聚合分组（标的是其他分组的并集）</SelectItem>
+            </SelectContent>
+          </Select>
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">信息分类（memo mt4hl5g9：交易噪声是否携带信息）</label>
           <Select value={infoType} onValueChange={(v: string | null) => setInfoType((v as "info" | "noinfo" | "") ?? "")}>
             <SelectTrigger style={{ height: 32 }}><SelectValue placeholder="未设置" /></SelectTrigger>
@@ -779,7 +792,25 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
               <SelectItem value="paper">虚盘（仅独立记账，不参与全部组合/实盘金额）</SelectItem>
             </SelectContent>
           </Select>
+          {aggType === "agg" && (
+            <div className="mt-2">
+              <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">来源分组（标的本分组的并集；支持基础/聚合嵌套）</label>
+              <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                {groups.filter((x) => x.id !== initial?.id).map((x) => (
+                  <label key={x.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: C.text, cursor: "pointer" }}>
+                    <input type="checkbox" checked={aggSources.includes(x.id)} onChange={(e) => setAggSources((prev) => (e.target.checked ? [...prev, x.id] : prev.filter((i) => i !== x.id)))} />
+                    {x.name}
+                    {x.isAgg ? <span style={{ fontSize: "0.68rem", color: C.sub }}>（聚合）</span> : null}
+                    {x.isPaper ? <span style={{ fontSize: "0.68rem", color: C.sub }}>（虚盘）</span> : null}
+                  </label>
+                ))}
+                {groups.filter((x) => x.id !== initial?.id).length === 0 && <span style={{ fontSize: "0.78rem", color: C.sub }}>暂无其他分组可作为来源</span>}
+              </div>
+            </div>
+          )}
         </div>
+        {aggType === "base" && (
+        <>
         <div>
           <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">总仓位上限（元）</label>
           <Input autoComplete="off" type="number" min={0} className="h-8" value={totalCapital || ""} placeholder="0 = 不限" onChange={(e) => setTotalCapital(Number(e.target.value) || 0)} />
@@ -809,6 +840,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
           </label>
           <span style={{ fontSize: "0.72rem", color: C.muted }}>开启后卖出数量可超过当前持仓，超卖部分形成空头；未开启时超卖视为异常被拒绝</span>
         </div>
+        </>)}
       </div>
       {msg && <div style={{ color: msg.startsWith("❌") ? C.gain : C.text, fontSize: "0.85rem", marginTop: 6 }}>{msg}</div>}
 
@@ -2284,8 +2316,8 @@ export default function TradeV2Tool() {
   const buyAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { buyAmount?: number }) => t + (d.buyAmount ?? 0), 0));
   const sellAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { sellAmount?: number }) => t + (d.sellAmount ?? 0), 0));
 
-  const groupTabStyle = (sel: boolean, hover = false, isPaper = false): React.CSSProperties => {
-    // 属性驱动外观（memo mtbjkyro 优化）：虚盘=紫色虚线（"虚拟"语义），实盘=蓝色实线（默认认知）
+  const groupTabStyle = (sel: boolean, hover = false, isPaper = false, isAgg = false): React.CSSProperties => {
+    // 属性驱动外观（memo mtbjkyro 优化）：虚盘=紫色虚线（"虚拟"语义），实盘=蓝色实线（默认认知），聚合=青色虚线（合并视图）
     const base: React.CSSProperties = { padding: "0.4rem 0.85rem", borderRadius: 10, fontSize: "0.82rem", cursor: "pointer", fontWeight: 600, transition: "all .15s ease", position: "relative" };
     if (isPaper) {
       return {
@@ -2294,6 +2326,15 @@ export default function TradeV2Tool() {
         background: sel ? "#faf5ff" : hover ? "#f7f3ff" : "#fcfaff",
         color: sel ? "#5b21b6" : "#7c5cc4",
         boxShadow: sel ? "0 1px 2px rgba(124,58,237,0.15)" : "none",
+      };
+    }
+    if (isAgg) {
+      return {
+        ...base,
+        border: "1.5px dashed " + (sel ? "#0d9488" : "#7dd3c8"),
+        background: sel ? "#f0fdfa" : hover ? "#f2fbf9" : "#fafefd",
+        color: sel ? "#115e59" : "#2d7d72",
+        boxShadow: sel ? "0 1px 2px rgba(13,148,136,0.15)" : "none",
       };
     }
     return {
@@ -2337,13 +2378,16 @@ export default function TradeV2Tool() {
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
-                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}
-                  title={`${g.name}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与全部组合/实盘金额）" : " · 实盘"}`}>
+                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper, g.isAgg)}
+                  title={`${g.name}${g.isAgg ? " · 聚合分组（标的 = 来源分组并集，合并视图）" : ""}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与全部组合/实盘金额）" : " · 实盘"}`}>
+                  {g.isAgg ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>🔗</span> : null}
                   {infoIcon(g.infoType) ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>{infoIcon(g.infoType)}</span> : null}
                   {g.name}
-                  {/* 右上角仅虚盘 paper 角标（属性已融入 pill 外观：实线蓝=实盘 / 虚线紫=虚盘） */}
+                  {/* 右上角角标：虚盘 paper / 聚合 agg（属性已融入 pill 外观） */}
                   {g.isPaper ? (
                     <span style={{ position: "absolute", top: -9, right: -3, fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999, background: "#faf5ff", color: "#7c3aed", lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid #7c3aed33" }}>paper</span>
+                  ) : g.isAgg ? (
+                    <span style={{ position: "absolute", top: -9, right: -3, fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999, background: "#f0fdfa", color: "#0d9488", lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid #0d948833" }}>agg</span>
                   ) : null}
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
@@ -2503,7 +2547,7 @@ export default function TradeV2Tool() {
               {/* 日度交易汇总：流水 tab 最上方（memo mt2tzfw3） */}
               <DailySummaryCard entries={selectedId === "all" ? entries : entries.filter((e) => e.groupId === selectedId)} />
               {/* 分组视图：交易流水整合录入（记一笔/批量提交 → 流水下方即时可见） */}
-              {isGroupView && selectedGroup && analysis && (
+              {isGroupView && selectedGroup && analysis && !(selectedGroup.aggSources && selectedGroup.aggSources.length > 0) && (
                 <OrderSheet
                   initialGroup={selectedGroup}
                   groups={groups}

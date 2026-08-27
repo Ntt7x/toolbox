@@ -74,6 +74,7 @@ import {
   deleteGroup,
   getEntry,
   getGroup,
+  getGroupEntries,
   listEntries,
   listEntriesByGroup,
   listGroups,
@@ -168,8 +169,8 @@ export class TradeV2GroupService extends Service {
     return getGroup(id);
   }
 
-  create(name: string, infoType?: "info" | "noinfo", isPaper?: boolean): TradeV2Group {
-    return createGroup(name, infoType, isPaper);
+  create(name: string, infoType?: "info" | "noinfo", isPaper?: boolean, aggSources?: string[]): TradeV2Group {
+    return createGroup(name, infoType, isPaper, aggSources);
   }
 
   update(id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null }): TradeV2Group | null {
@@ -197,7 +198,8 @@ export class TradeV2LedgerService extends Service {
 
   /** 组内交易（日期升序，重放顺序） */
   listByGroup(groupId: string): TradeV2Entry[] {
-    return listEntriesByGroup(groupId);
+    // 聚合分组（aggSources）：来源分组条目递归并集；基础分组行为不变
+    return getGroupEntries(groupId);
   }
 
   /** 组内标的列表（去重；供提交交易单空白补全——memo 补充：直接接口获取，前端不过滤） */
@@ -320,8 +322,9 @@ export class TradeV2AnalysisService extends Service {
   async global(): Promise<TradeV2GlobalAnalysis> {
     const groups = this.ctx.tradeV2Group.list();
     const inputs = await Promise.all(
-      // 虚盘分组（isPaper）不参与「全部组合 / 实盘实际金额」计算（memo mtbjkyro），仅作独立分组展示
-      groups.filter((g) => !g.isPaper).map(async (g) => {
+      // 虚盘分组（isPaper）不参与「全部组合 / 实盘实际金额」计算（memo mtbjkyro），仅作独立分组展示；
+      // 聚合分组（aggSources）是合并视图（标的来自来源分组），参与会与来源重复计算——同样排除（memo 新增）
+      groups.filter((g) => !g.isPaper && !(Array.isArray(g.aggSources) && g.aggSources.length > 0)).map(async (g) => {
         let entries = this.ctx.tradeV2Ledger.listByGroup(g.id);
         entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [g]);
         const latestPrices = await this.latestPrices(entries);

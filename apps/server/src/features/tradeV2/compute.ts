@@ -730,6 +730,7 @@ export function buildGroupSummary(
     stockLimitCount: group.stockLimits.length,
     infoType: group.infoType,
     ...(group.isPaper ? { isPaper: true } : {}),
+    ...(Array.isArray(group.aggSources) && group.aggSources.length > 0 ? { isAgg: true } : {}),
     entryCount: entries.length,
     openCount: a.openCount,
     totalMv: a.totalMv,

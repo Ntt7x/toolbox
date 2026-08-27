@@ -64,7 +64,7 @@ export function registerTradeV2Feature(app: Hono) {
   });
 
   app.post(`${API_PREFIX}/tools/trade-v2/groups`, async (c: Context) => {
-    const raw = (await c.req.json().catch(() => null)) as { name?: unknown; infoType?: unknown; isPaper?: unknown } | null;
+    const raw = (await c.req.json().catch(() => null)) as { name?: unknown; infoType?: unknown; isPaper?: unknown; aggSources?: unknown } | null;
     const name = typeof raw?.name === "string" ? raw.name.trim() : "";
     if (!name) return c.json({ ok: false, message: "分组名称不能为空" }, 400);
     if (listGroups().some((g) => g.name === name)) {
@@ -73,7 +73,8 @@ export function registerTradeV2Feature(app: Hono) {
     const ctx = await getTradeV2Ctx();
     const infoType = raw?.infoType === "info" || raw?.infoType === "noinfo" ? raw.infoType : undefined;
     const isPaper = raw?.isPaper === true;
-    return c.json({ ok: true, group: ctx.tradeV2Group.create(name, infoType, isPaper) });
+    const aggSources = Array.isArray(raw?.aggSources) ? raw.aggSources.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : undefined;
+    return c.json({ ok: true, group: ctx.tradeV2Group.create(name, infoType, isPaper, aggSources) });
   });
 
   app.put(`${API_PREFIX}/tools/trade-v2/groups/:id`, async (c: Context) => {
@@ -90,6 +91,7 @@ export function registerTradeV2Feature(app: Hono) {
       allowShort?: unknown;
       infoType?: unknown;
       isPaper?: unknown;
+      aggSources?: unknown;
     } | null;
     if (!raw || typeof raw !== "object") return c.json({ ok: false, message: "请求体无效" }, 400);
     if (typeof raw.name === "string" && raw.name.trim() && raw.name.trim() !== cur.name) {
@@ -121,6 +123,7 @@ export function registerTradeV2Feature(app: Hono) {
       ...(stockLimits !== undefined ? { stockLimits } : {}),
       ...(typeof raw.allowShort === "boolean" ? { allowShort: raw.allowShort } : {}),
       ...(typeof raw.isPaper === "boolean" ? { isPaper: raw.isPaper } : {}),
+      ...(raw.aggSources !== undefined ? { aggSources: Array.isArray(raw.aggSources) ? raw.aggSources.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : null } : {}),
       ...(raw.infoType === "info" || raw.infoType === "noinfo" || raw.infoType === null ? { infoType: raw.infoType } : {}),
     });
     return c.json({ ok: true, group: g });

@@ -40,7 +40,7 @@ export function getGroup(id: string): TradeV2Group | null {
   return g;
 }
 
-export function createGroup(name: string, infoType?: "info" | "noinfo", isPaper?: boolean): TradeV2Group {
+export function createGroup(name: string, infoType?: "info" | "noinfo", isPaper?: boolean, aggSources?: string[]): TradeV2Group {
   const now = new Date().toISOString();
   const g: TradeV2Group = {
     id: genId("g"),
@@ -50,6 +50,7 @@ export function createGroup(name: string, infoType?: "info" | "noinfo", isPaper?
     stockLimits: [],
     infoType,
     ...(isPaper ? { isPaper: true } : {}),
+    ...(Array.isArray(aggSources) && aggSources.length > 0 ? { aggSources } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -62,7 +63,7 @@ export function createGroup(name: string, infoType?: "info" | "noinfo", isPaper?
 
 export function updateGroup(
   id: string,
-  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null; isPaper?: boolean },
+  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null; isPaper?: boolean; aggSources?: string[] | null },
 ): TradeV2Group | null {
   const g = getGroup(id);
   if (!g) return null;
@@ -77,6 +78,7 @@ export function updateGroup(
   }
   if (patch.allowShort !== undefined) g.allowShort = patch.allowShort;
   if (patch.isPaper !== undefined) { if (patch.isPaper) g.isPaper = true; else delete g.isPaper; }
+  if (patch.aggSources !== undefined) { if (Array.isArray(patch.aggSources) && patch.aggSources.length > 0) g.aggSources = patch.aggSources; else delete g.aggSources; }
   g.updatedAt = new Date().toISOString();
   kvSet(GROUP_PREFIX + id, g);
   return g;
@@ -124,6 +126,31 @@ export function listEntriesByGroup(groupId: string): TradeV2Entry[] {
     .sort((a, b) =>
       a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1,
     );
+}
+
+/**
+ * 分组条目派生（聚合分组核心，memo 新增）：
+ * 基础分组 = 自有条目；聚合分组 = 来源分组（基础/聚合均可）条目递归并集。
+ * 环检测：聚合嵌套循环引用时跳过已访问分组，避免死循环。
+ */
+export function getGroupEntries(groupId: string): TradeV2Entry[] {
+  const seen = new Set<string>();
+  const out: TradeV2Entry[] = [];
+  const visit = (gid: string): void => {
+    if (seen.has(gid)) return;
+    seen.add(gid);
+    const g = getGroup(gid);
+    if (!g) return;
+    if (Array.isArray(g.aggSources) && g.aggSources.length > 0) {
+      for (const src of g.aggSources) visit(src);
+    } else {
+      out.push(...listEntriesByGroup(gid));
+    }
+  };
+  visit(groupId);
+  return out.sort((a, b) =>
+    a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1,
+  );
 }
 
 export function getEntry(id: string): TradeV2Entry | null {

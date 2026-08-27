@@ -1782,6 +1782,8 @@ export interface TradeV2Group {
   infoType?: "info" | "noinfo";
   /** 虚盘分组（memo mtbjkyro）：金额与标的不参与「全部组合 / 实盘实际金额」计算，仅作独立分组展示与记账 */
   isPaper?: boolean;
+  /** 聚合分组（memo 新增）：标的是来源分组（基础/聚合均可）的标的并集（递归派生）；作为合并视图参与分析/仓位，不参与全部组合与约束校验，不可直接记账 */
+  aggSources?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -2025,6 +2027,8 @@ export interface TradeV2GroupSummary {
   infoType?: "info" | "noinfo";
   /** 虚盘分组（memo mtbjkyro） */
   isPaper?: boolean;
+  /** 聚合分组（memo 新增）：标的是来源分组并集，作为合并视图 */
+  isAgg?: boolean;
   /** 交易笔数 */
   entryCount: number;
   /** 在仓标的数 */
