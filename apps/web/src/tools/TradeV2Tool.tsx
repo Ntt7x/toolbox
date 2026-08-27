@@ -91,7 +91,7 @@ function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {  if (!i
         fontWeight: 700, whiteSpace: "nowrap", verticalAlign: "middle",
       }}
     >
-      {infoType === "info" ? "💡 有信息" : "⚙️ 无信息"}
+      {infoType === "info" ? "💡 有信息" : "🗿 无信息"}
     </span>
   );
 }
@@ -2305,9 +2305,9 @@ export default function TradeV2Tool() {
     };
   };
 
-  /** 信息类型小图标（属性驱动：有信息💡思考/灯泡，无信息⚙️机械/死板——融入 pill 而非角标堆叠） */
+  /** 信息类型小图标（属性驱动：有信息💡思考/灯泡，无信息🗿死板/不动脑筋——融入 pill 而非角标堆叠） */
   const infoIcon = (infoType?: "info" | "noinfo"): string | null =>
-    infoType === "info" ? "💡" : infoType === "noinfo" ? "⚙️" : null;
+    infoType === "info" ? "💡" : infoType === "noinfo" ? "🗿" : null;
 
   
   return (
