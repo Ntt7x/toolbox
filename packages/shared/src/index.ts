@@ -2129,8 +2129,6 @@ export interface TradeV2GroupDetailResult {
   ok: boolean;
   group?: TradeV2Group;
   analysis?: TradeV2GroupAnalysis;
-  /** 聚合分组：来源分组条目并集（交易流水；memo 新增） */
-  entries?: TradeV2Entry[];
   message?: string;
 }
 

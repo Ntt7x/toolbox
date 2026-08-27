@@ -743,7 +743,9 @@ export function buildGroupSummary(
   };
 }
 
-/** 聚合分析（原全局分析——通用：对任意分组集合跨组汇总 + 累计已实现盈亏时间线；聚合分组/全部组合共用） */
+/** 聚合分析（通用纯函数：对任意分组集合跨组汇总 + 累计已实现盈亏时间线）
+ *  注意：聚合分组业务路径已统一走 analyzeGroup（基于派生条目即组合分析），
+ *  此函数保留作通用聚合工具/测试（tradeV2.test.ts 覆盖），不再参与前端渲染 */
 export function buildAggregateAnalysis(
   groups: { group: TradeV2Group; entries: TradeV2Entry[]; latestPrices: Record<string, number>; klines?: Map<string, Map<string, number>> }[],
 ): TradeV2AggregateAnalysis {

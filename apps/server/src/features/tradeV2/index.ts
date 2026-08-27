@@ -60,7 +60,7 @@ export function registerTradeV2Feature(app: Hono) {
     const ctx = await getTradeV2Ctx();
     const r = await ctx.tradeV2Analysis.groupAnalysis(c.req.param("id")!);
     if (!r) return c.json({ ok: false, message: "分组不存在" }, 404);
-    return c.json({ ok: true, group: r.group, analysis: r.analysis, entries: r.entries });
+    return c.json({ ok: true, group: r.group, analysis: r.analysis });
   });
 
   app.post(`${API_PREFIX}/tools/trade-v2/groups`, async (c: Context) => {

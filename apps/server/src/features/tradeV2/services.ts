@@ -12,7 +12,6 @@ import type {
   TradeV2CheckResult,
   TradeV2Entry,
   TradeV2EntryDraft,
-  TradeV2AggregateAnalysis,
   TradeV2Group,
   TradeV2Position,
 } from "@toolbox/shared";
@@ -63,7 +62,6 @@ export async function resolveStockNameCached(code: string): Promise<string> {
 import { getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
 import {
   analyzeGroup,
-  buildAggregateAnalysis,
   buildGroupSummary,
   checkEntry,
 } from "./compute.js";
@@ -294,27 +292,11 @@ export class TradeV2AnalysisService extends Service {
   }
 
   /** 组分析（含行情附加；条目先补全名称——交易员可读性）
-   *  聚合分组（aggSources）：组合分析（buildAggregateAnalysis——跨来源分组合并 positions/时间线/归因，
-   *  借鉴原"全部组合"实现；聚合分组 = 组合分析的功能载体） */
-  async groupAnalysis(groupId: string): Promise<{ group: TradeV2Group; analysis: any; entries: TradeV2Entry[] } | null> {
+   *  聚合分组与基础分组同路径：listByGroup 已按 aggSources 派生条目（来源并集），
+   *  analyzeGroup 基于派生条目即天然组合分析——聚合分组 = 一般分组（唯一差异：条目/标的派生） */
+  async groupAnalysis(groupId: string): Promise<{ group: TradeV2Group; analysis: ReturnType<typeof analyzeGroup> } | null> {
     const group = this.ctx.tradeV2Group.get(groupId);
     if (!group) return null;
-    // 聚合分组：来源分组条目派生（getGroupEntries 已递归并集）→ 组合分析
-    if (Array.isArray(group.aggSources) && group.aggSources.length > 0) {
-      const srcGroups = group.aggSources.map((id) => this.ctx.tradeV2Group.get(id)).filter((g): g is TradeV2Group => !!g);
-      const entries = await this.ctx.tradeV2Ledger.enrichNames(this.ctx.tradeV2Ledger.listByGroup(groupId), srcGroups);
-      const inputs = await Promise.all(
-        srcGroups.map(async (g) => {
-          const gEntries = this.ctx.tradeV2Ledger.listByGroup(g.id);
-          const latestPrices = await this.latestPrices(gEntries);
-          const klines = await fetchKlinesForCodes(gEntries.map((e) => e.code));
-          return { group: g, entries: gEntries, latestPrices, klines };
-        }),
-      );
-      const analysis = buildAggregateAnalysis(inputs);
-      analysis.positions = await enrichPositions(analysis.positions ?? []);
-      return { group, analysis, entries };
-    }
     let entries = this.ctx.tradeV2Ledger.listByGroup(groupId);
     entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
     const prices = await this.latestPrices(entries);
@@ -323,10 +305,8 @@ export class TradeV2AnalysisService extends Service {
     const analysis = analyzeGroup(group, entries, prices, klines);
     // 附加行情字段（涨跌幅/今日盈亏/波动率——公共 enrichPositions，与全局共用）
     analysis.positions = await enrichPositions(analysis.positions);
-    return { group, analysis, entries };
-  }
-
-  /** 约束校验（allEntries = 目标条目最终形态所在的全量列表） */
+    return { group, analysis };
+  }  /** 约束校验（allEntries = 目标条目最终形态所在的全量列表） */
   async check(
     group: TradeV2Group,
     allEntries: TradeV2Entry[],
