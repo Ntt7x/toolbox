@@ -729,6 +729,7 @@ export function buildGroupSummary(
     dailyAddLimit: group.dailyAddLimit,
     stockLimitCount: group.stockLimits.length,
     infoType: group.infoType,
+    ...(group.isPaper ? { isPaper: true } : {}),
     entryCount: entries.length,
     openCount: a.openCount,
     totalMv: a.totalMv,

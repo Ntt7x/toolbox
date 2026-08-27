@@ -1780,6 +1780,8 @@ export interface TradeV2Group {
   allowShort?: boolean;
   /** 信息分类（memo mt4hl5g9）：有信息（info）/无信息（noinfo）——交易噪声是否携带信息的策略定位 */
   infoType?: "info" | "noinfo";
+  /** 虚盘分组（memo mtbjkyro）：金额与标的不参与「全部组合 / 实盘实际金额」计算，仅作独立分组展示与记账 */
+  isPaper?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2021,6 +2023,8 @@ export interface TradeV2GroupSummary {
   stockLimitCount: number;
   /** 信息分类（memo mt4hl5g9） */
   infoType?: "info" | "noinfo";
+  /** 虚盘分组（memo mtbjkyro） */
+  isPaper?: boolean;
   /** 交易笔数 */
   entryCount: number;
   /** 在仓标的数 */

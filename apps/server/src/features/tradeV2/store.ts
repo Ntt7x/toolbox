@@ -40,7 +40,7 @@ export function getGroup(id: string): TradeV2Group | null {
   return g;
 }
 
-export function createGroup(name: string, infoType?: "info" | "noinfo"): TradeV2Group {
+export function createGroup(name: string, infoType?: "info" | "noinfo", isPaper?: boolean): TradeV2Group {
   const now = new Date().toISOString();
   const g: TradeV2Group = {
     id: genId("g"),
@@ -49,6 +49,7 @@ export function createGroup(name: string, infoType?: "info" | "noinfo"): TradeV2
     dailyAddLimit: 0,
     stockLimits: [],
     infoType,
+    ...(isPaper ? { isPaper: true } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -61,7 +62,7 @@ export function createGroup(name: string, infoType?: "info" | "noinfo"): TradeV2
 
 export function updateGroup(
   id: string,
-  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null },
+  patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: TradeV2Group["stockLimits"]; allowShort?: boolean; infoType?: "info" | "noinfo" | null; isPaper?: boolean },
 ): TradeV2Group | null {
   const g = getGroup(id);
   if (!g) return null;
@@ -75,6 +76,7 @@ export function updateGroup(
     for (const s of patch.stockLimits ?? []) enqueueVolUpdate(s?.code ?? "");
   }
   if (patch.allowShort !== undefined) g.allowShort = patch.allowShort;
+  if (patch.isPaper !== undefined) { if (patch.isPaper) g.isPaper = true; else delete g.isPaper; }
   g.updatedAt = new Date().toISOString();
   kvSet(GROUP_PREFIX + id, g);
   return g;

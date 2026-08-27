@@ -320,7 +320,8 @@ export class TradeV2AnalysisService extends Service {
   async global(): Promise<TradeV2GlobalAnalysis> {
     const groups = this.ctx.tradeV2Group.list();
     const inputs = await Promise.all(
-      groups.map(async (g) => {
+      // 虚盘分组（isPaper）不参与「全部组合 / 实盘实际金额」计算（memo mtbjkyro），仅作独立分组展示
+      groups.filter((g) => !g.isPaper).map(async (g) => {
         let entries = this.ctx.tradeV2Ledger.listByGroup(g.id);
         entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [g]);
         const latestPrices = await this.latestPrices(entries);

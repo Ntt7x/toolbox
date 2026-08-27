@@ -80,8 +80,7 @@ const pnlColor = (v: number | undefined | null): string => {
 };
 
 /** 信息分类徽章（memo mt4hl5g9 强化 UI：有信息📡/无信息📊） */
-function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {
-  if (!infoType) return null;
+function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {  if (!infoType) return null;
   return (
     <span
       title="信息分类：交易噪声是否携带信息（有信息=基于信息/逻辑判断，无信息=纯执行/统计规律）"
@@ -93,6 +92,22 @@ function InfoTypeBadge({ infoType }: { infoType?: "info" | "noinfo" }) {
       }}
     >
       {infoType === "info" ? "📡 有信息" : "📊 无信息"}
+    </span>
+  );
+}
+
+/** 虚盘徽章（memo mtbjkyro：不参与全部组合/实盘金额计算） */
+function PaperBadge({ isPaper }: { isPaper?: boolean }) {
+  if (!isPaper) return null;
+  return (
+    <span
+      title="虚盘：仅独立记账，金额与标的不参与「全部组合 / 实盘实际金额」计算"
+      style={{
+        marginLeft: 6, fontSize: "0.72rem", padding: "0.08rem 0.45rem", borderRadius: 999,
+        background: "#f0fdf4", color: "#15803d", fontWeight: 700, whiteSpace: "nowrap", verticalAlign: "middle",
+      }}
+    >
+      📝 虚盘
     </span>
   );
 }
@@ -609,7 +624,7 @@ useEffect(() => {
             <Select value={draft.groupId} onValueChange={(v: string | null) => set("groupId", v ?? "")}>
               <SelectTrigger className="w-full"><SelectValue>{groups.find((g) => g.id === draft.groupId)?.name ?? "选择分组"}</SelectValue></SelectTrigger>
               <SelectContent>
-                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}<InfoTypeBadge infoType={g.infoType} /></SelectItem>)}
+                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}<InfoTypeBadge infoType={g.infoType} /><PaperBadge isPaper={g.isPaper} /></SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -688,6 +703,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
 }) {
   const [name, setName] = useState("");
   const [infoType, setInfoType] = useState<"info" | "noinfo" | "">("");
+  const [isPaper, setIsPaper] = useState(false);
   const [totalCapital, setTotalCapital] = useState(0);
   const [dailyAddLimit, setDailyAddLimit] = useState(0);
   const [limits, setLimits] = useState<{ code: string; name?: string; maxWeightPct?: number }[]>([{ code: "" }]);
@@ -700,6 +716,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     if (!open) return;
     setName(initial?.name ?? "");
     setInfoType(initial?.infoType ?? "");
+    setIsPaper(initial?.isPaper ?? false);
     setTotalCapital(initial?.totalCapital ?? 0);
     setDailyAddLimit(initial?.dailyAddLimit ?? 0);
     setLimits(initial && initial.stockLimits.length > 0 ? initial.stockLimits.map((s) => ({ ...s })) : [{ code: "" }]);
@@ -714,8 +731,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     setMsg(null);
     try {
       const stockLimits = limits.filter((l) => l.code.trim() && l.maxWeightPct !== undefined).map((l) => ({ code: l.code.trim(), ...(l.name ? { name: l.name } : {}), maxWeightPct: l.maxWeightPct! }));
-      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, ...(infoType ? { infoType } : { infoType: null }) });
-      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined);
+      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, isPaper, ...(infoType ? { infoType } : { infoType: null }) });
+      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined, isPaper);
       onSaved();
       if (!inline) onClose();
     } catch (e) {
@@ -752,6 +769,14 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
             <SelectContent>
               <SelectItem value="info">有信息（基于信息/逻辑判断）</SelectItem>
               <SelectItem value="noinfo">无信息（纯执行/统计规律）</SelectItem>
+            </SelectContent>
+          </Select>
+          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">账本类型（memo mtbjkyro）</label>
+          <Select value={isPaper ? "paper" : "real"} onValueChange={(v: string | null) => setIsPaper(v === "paper")}>
+            <SelectTrigger style={{ height: 32 }}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="real">实盘（参与全部组合/实际金额计算）</SelectItem>
+              <SelectItem value="paper">虚盘（仅独立记账，不参与全部组合/实盘金额）</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -2302,6 +2327,7 @@ export default function TradeV2Tool() {
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id)}>
                   {g.name}
                   <InfoTypeBadge infoType={g.infoType} />
+                  <PaperBadge isPaper={g.isPaper} />
                   {g.openCount > 0 ? `（${g.openCount}）` : ""}
                   {g.riskCount ? <span style={{ marginLeft: 4, color: "#b45309" }}>⚠️{g.riskCount}</span> : null}
                 </button>

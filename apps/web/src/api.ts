@@ -202,8 +202,8 @@ export const api = {
   tradeV2Overview: () => request<TradeV2OverviewResult>("/tools/trade-v2"),
   tradeV2Group: (id: string) => request<TradeV2GroupDetailResult>("/tools/trade-v2/groups/" + encodeURIComponent(id)),
   tradeV2GroupStocks: (id: string) => request<{ ok: boolean; stocks?: { code: string; name?: string }[] }>("/tools/trade-v2/groups/" + encodeURIComponent(id) + "/stocks"),
-  tradeV2CreateGroup: (name: string, infoType?: "info" | "noinfo") => request<TradeV2GroupResult>("/tools/trade-v2/groups", jsonInit("POST", { name, ...(infoType ? { infoType } : {}) })),
-  tradeV2SaveGroup: (id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: { code: string; name?: string; maxWeightPct?: number }[]; allowShort?: boolean; infoType?: "info" | "noinfo" | null }) =>
+  tradeV2CreateGroup: (name: string, infoType?: "info" | "noinfo", isPaper?: boolean) => request<TradeV2GroupResult>("/tools/trade-v2/groups", jsonInit("POST", { name, ...(infoType ? { infoType } : {}), ...(isPaper ? { isPaper: true } : {}) })),
+  tradeV2SaveGroup: (id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: { code: string; name?: string; maxWeightPct?: number }[]; allowShort?: boolean; infoType?: "info" | "noinfo" | null; isPaper?: boolean }) =>
     request<TradeV2GroupResult>("/tools/trade-v2/groups/" + encodeURIComponent(id), jsonInit("PUT", patch)),
   tradeV2DeleteGroup: (id: string) => request<{ ok: boolean; message?: string }>("/tools/trade-v2/groups/" + encodeURIComponent(id), jsonInit("DELETE", {})),
   tradeV2CheckEntry: (draft: TradeV2EntryDraft) => request<TradeV2CheckResponse>("/tools/trade-v2/entries/check", jsonInit("POST", draft)),
