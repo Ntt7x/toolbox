@@ -98,6 +98,16 @@ export function deleteGroup(id: string): boolean {
     }),
   );
   kvSet(GROUP_LIST, listGroupIds().filter((x) => x !== id));
+  // 一致性：清理其他聚合分组对已删分组的来源引用（悬空 aggSources 不留脏数据）
+  for (const g of listGroups()) {
+    if (Array.isArray(g.aggSources) && g.aggSources.includes(id)) {
+      const next = g.aggSources.filter((x) => x !== id);
+      const g2 = { ...g };
+      if (next.length > 0) g2.aggSources = next;
+      else delete g2.aggSources;
+      kvSet(GROUP_PREFIX + g.id, g2);
+    }
+  }
   return true;
 }
 

@@ -268,6 +268,8 @@ export function analyzeGroup(
   entries: TradeV2Entry[],
   latestPrices: Record<string, number> = {},
   klinePrices?: Map<string, Map<string, number>>,
+  /** 仓位进度分母覆盖（聚合分组：来源分组 totalCapital 之和；基础分组缺省用 group.totalCapital） */
+  capOverride?: number,
 ): TradeV2GroupAnalysis {
   const positions = buildPositions(entries);
   const deals = buildDeals(entries);
@@ -304,7 +306,7 @@ export function analyzeGroup(
       unrealizedPnl: unreal,
       // 负成本：盈亏率无意义（比例分母为负）；仅正成本显示 %（V1 惯例）
       ...(p.costValue > 0 ? { unrealizedPnlPct: (unreal / p.costValue) * 100 } : {}),
-      ...(group.totalCapital > 0 ? { weightPct: Math.round((mv / group.totalCapital) * 1000) / 10 } : {}),
+      ...(((capOverride ?? group.totalCapital) > 0) ? { weightPct: Math.round((mv / (capOverride ?? group.totalCapital)) * 1000) / 10 } : {}),
     };
   });
 
@@ -339,8 +341,8 @@ export function analyzeGroup(
     realizedPnl,
     totalPnl: realizedPnl + (totalMv - totalCost),
     invested,
-    ...(group.totalCapital > 0 ? { positionPct: Math.round((totalMv / group.totalCapital) * 1000) / 10 } : {}),
-    remaining: group.totalCapital - totalMv,
+    ...(((capOverride ?? group.totalCapital) > 0) ? { positionPct: Math.round((totalMv / (capOverride ?? group.totalCapital)) * 1000) / 10 } : {}),
+    remaining: (capOverride ?? group.totalCapital) - totalMv,
     todayAdd,
     buyQty,
     sellQty,

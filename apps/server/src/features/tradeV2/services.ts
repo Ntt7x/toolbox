@@ -302,7 +302,19 @@ export class TradeV2AnalysisService extends Service {
     const prices = await this.latestPrices(entries);
     // 历史日 K（收益曲线真实市值口径）：组内全部标的并发拉取；无行情静默回退成本口径
     const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
-    const analysis = analyzeGroup(group, entries, prices, klines);
+    // 聚合分组：仓位进度分母 = 来源分组 totalCapital 之和（合并视图占用语义）
+    let capOverride: number | undefined;
+    if (Array.isArray(group.aggSources) && group.aggSources.length > 0) {
+      // 嵌套聚合：递归解析来源分组仓位上限（聚合分组本身无 totalCapital，取其来源并集上限）
+      const capOf = (id: string): number => {
+        const g = this.ctx.tradeV2Group.get(id);
+        if (!g) return 0;
+        if (Array.isArray(g.aggSources) && g.aggSources.length > 0) return g.aggSources.reduce((acc, sid) => acc + capOf(sid), 0);
+        return g.totalCapital ?? 0;
+      };
+      capOverride = group.aggSources.reduce((acc, sid) => acc + capOf(sid), 0);
+    }
+    const analysis = analyzeGroup(group, entries, prices, klines, capOverride);
     // 附加行情字段（涨跌幅/今日盈亏/波动率——公共 enrichPositions，与全局共用）
     analysis.positions = await enrichPositions(analysis.positions);
     return { group, analysis };

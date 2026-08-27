@@ -233,6 +233,20 @@ test("校验：总市值超总仓位 → error", () => {
 
 // ---------- 组分析 ----------
 
+test("组分析：capOverride（聚合分组）→ positionPct/weightPct/remaining 基于来源上限之和", () => {
+  const group = { id: "g-agg", name: "聚合", totalCapital: 0, aggSources: ["g-a", "g-b"], stockLimits: [] } as any;
+  const entries: any[] = [
+    { id: "e1", groupId: "g-a", code: "600000", name: "浦发银行", date: "2026-08-01", createdAt: "1", action: "buy", quantity: 100, price: 10, fee: 0 },
+    { id: "e2", groupId: "g-b", code: "600000", name: "浦发银行", date: "2026-08-01", createdAt: "2", action: "buy", quantity: 100, price: 10, fee: 0 },
+  ];
+  // 来源上限之和 = 80000 + 20000 = 100000
+  const a = analyzeGroup(group, entries, { "600000": 12 }, undefined, 100000);
+  assert.equal(a.positionPct, 2.4, "聚合市值 2400 / 来源上限 100000 = 2.4%");
+  assert.equal(a.remaining, 97600, "来源上限 - 市值");
+  const w = a.positions[0];
+  assert.ok(w.weightPct !== undefined, "行 weightPct 有值（聚合分组不再缺失）");
+  assert.equal(w.weightPct, 2.4, "行 weightPct = 市值/来源上限");
+});
 test("组分析：汇总（市值/盈亏/净投入/当日加仓/胜率/平均持仓）", () => {
   const today = todayStr();
   const entries = [
