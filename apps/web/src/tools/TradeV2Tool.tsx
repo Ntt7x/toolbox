@@ -736,8 +736,11 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
     try {
       const stockLimits = limits.filter((l) => l.code.trim() && l.maxWeightPct !== undefined).map((l) => ({ code: l.code.trim(), ...(l.name ? { name: l.name } : {}), maxWeightPct: l.maxWeightPct! }));
       const aggSourcesArg = aggType === "agg" && aggSources.length > 0 ? aggSources : null;
-      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, isPaper, aggSources: aggSourcesArg, ...(infoType ? { infoType } : { infoType: null }) });
-      else await api.tradeV2CreateGroup(name.trim(), infoType || undefined, isPaper, aggSourcesArg ?? undefined);
+      // 聚合分组无信息类型/账本类型基础属性（memo：仅基础分组有）——agg 时清空
+      const infoTypeArg = aggType === "base" ? (infoType || null) : null;
+      const isPaperArg = aggType === "base" ? isPaper : false;
+      if (initial) await api.tradeV2SaveGroup(initial.id, { name: name.trim(), totalCapital, dailyAddLimit, stockLimits, allowShort, isPaper: isPaperArg, aggSources: aggSourcesArg, ...(infoTypeArg ? { infoType: infoTypeArg } : { infoType: null }) });
+      else await api.tradeV2CreateGroup(name.trim(), infoTypeArg || undefined, isPaperArg, aggSourcesArg ?? undefined);
       onSaved();
       if (!inline) onClose();
     } catch (e) {
@@ -776,7 +779,9 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
               <SelectItem value="agg">聚合分组（标的是其他分组的并集）</SelectItem>
             </SelectContent>
           </Select>
-          <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">信息分类（memo mt4hl5g9：交易噪声是否携带信息）</label>
+          {aggType === "base" && (
+          <>
+<label className="text-[0.8rem] font-semibold text-slate-600 block mb-1 mt-2">信息分类（memo mt4hl5g9：交易噪声是否携带信息）</label>
           <Select value={infoType} onValueChange={(v: string | null) => setInfoType((v as "info" | "noinfo" | "") ?? "")}>
             <SelectTrigger style={{ height: 32 }}><SelectValue placeholder="未设置" /></SelectTrigger>
             <SelectContent>
@@ -792,7 +797,8 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
               <SelectItem value="paper">虚盘（仅独立记账，不参与全部组合/实盘金额）</SelectItem>
             </SelectContent>
           </Select>
-          {aggType === "agg" && (
+                    </>
+          )}{aggType === "agg" && (
             <div className="mt-2">
               <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">来源分组（标的本分组的并集；支持基础/聚合嵌套）</label>
               <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -2381,10 +2387,10 @@ export default function TradeV2Tool() {
                 <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper, g.isAgg)}
                   title={`${g.name}${g.isAgg ? " · 聚合分组（标的 = 来源分组并集，合并视图）" : ""}${g.infoType ? " · " + (g.infoType === "info" ? "有信息（基于信息/逻辑判断）" : "无信息（纯执行/统计规律）") : ""}${g.isPaper ? " · 虚盘（不参与全部组合/实盘金额）" : " · 实盘"}`}>
                   {g.isAgg ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>🔗</span> : null}
-                  {infoIcon(g.infoType) ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>{infoIcon(g.infoType)}</span> : null}
+                  {!g.isAgg && infoIcon(g.infoType) ? <span style={{ marginRight: 4, fontSize: "0.78rem" }}>{infoIcon(g.infoType)}</span> : null}
                   {g.name}
-                  {/* 右上角角标：虚盘 paper / 聚合 agg（属性已融入 pill 外观） */}
-                  {g.isPaper ? (
+                  {/* 右上角角标：虚盘 paper / 聚合 agg（聚合无信息/实虚属性，仅 🔗+agg） */}
+                  {g.isPaper && !g.isAgg ? (
                     <span style={{ position: "absolute", top: -9, right: -3, fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999, background: "#faf5ff", color: "#7c3aed", lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid #7c3aed33" }}>paper</span>
                   ) : g.isAgg ? (
                     <span style={{ position: "absolute", top: -9, right: -3, fontSize: "0.6rem", fontWeight: 700, padding: "0 0.4rem", borderRadius: 999, background: "#f0fdfa", color: "#0d9488", lineHeight: "1.35rem", whiteSpace: "nowrap", border: "1px solid #0d948833" }}>agg</span>
