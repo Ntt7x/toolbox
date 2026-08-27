@@ -2284,18 +2284,35 @@ export default function TradeV2Tool() {
   const buyAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { buyAmount?: number }) => t + (d.buyAmount ?? 0), 0));
   const sellAmt = Math.round((srcD?.dailySeries ?? []).reduce((t: number, d: { sellAmount?: number }) => t + (d.sellAmount ?? 0), 0));
 
-  const groupTabStyle = (sel: boolean, hover = false): React.CSSProperties => ({
-    padding: "0.4rem 0.85rem",
-    borderRadius: 10,
-    border: "1.5px solid " + (sel ? C.accent : C.faint),
-    background: sel ? C.accentBg : hover ? C.panel : "#fff",
-    color: sel ? "#1d4ed8" : C.sub,
-    fontSize: "0.82rem",
-    cursor: "pointer",
-    fontWeight: 600,
-    boxShadow: sel ? "0 1px 2px rgba(37,99,235,0.15)" : "none",
-    transition: "all .15s ease",
-  });
+  const groupTabStyle = (sel: boolean, hover = false, isPaper = false): React.CSSProperties => {
+    // 虚盘分组：虚线边框 + 淡绿底，视觉上与实盘区分（memo mtbjkyro 增强外观）
+    if (isPaper) {
+      return {
+        padding: "0.4rem 0.85rem",
+        borderRadius: 10,
+        border: "1.5px dashed " + (sel ? "#15803d" : "#86c98f"),
+        background: sel ? "#ecfdf5" : hover ? "#f0fdf4" : "#f7fdf9",
+        color: sel ? "#14532d" : "#3f7a52",
+        fontSize: "0.82rem",
+        cursor: "pointer",
+        fontWeight: 600,
+        boxShadow: sel ? "0 1px 2px rgba(21,128,61,0.15)" : "none",
+        transition: "all .15s ease",
+      };
+    }
+    return {
+      padding: "0.4rem 0.85rem",
+      borderRadius: 10,
+      border: "1.5px solid " + (sel ? C.accent : C.faint),
+      background: sel ? C.accentBg : hover ? C.panel : "#fff",
+      color: sel ? "#1d4ed8" : C.sub,
+      fontSize: "0.82rem",
+      cursor: "pointer",
+      fontWeight: 600,
+      boxShadow: sel ? "0 1px 2px rgba(37,99,235,0.15)" : "none",
+      transition: "all .15s ease",
+    };
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2324,7 +2341,7 @@ export default function TradeV2Tool() {
             {groups.map((g) => {
               const sel = selectedId === g.id;
               return (
-                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id)}>
+                <button key={g.id} onClick={() => { setSelectedId(g.id); try { localStorage.setItem("tradeV2:selectedGroup", g.id); } catch {} }} onMouseEnter={() => setPillHover(g.id)} onMouseLeave={() => setPillHover(null)} style={groupTabStyle(sel, pillHover === g.id, g.isPaper)}>
                   {g.name}
                   <InfoTypeBadge infoType={g.infoType} />
                   <PaperBadge isPaper={g.isPaper} />
