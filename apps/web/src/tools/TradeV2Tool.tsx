@@ -1936,7 +1936,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   };
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle><NameCode name={name} code={code} /> <span style={{ fontSize: "0.75rem", color: C.muted, fontWeight: 400 }}>· {scopeName}</span></DialogTitle>
           <DialogDescription>该标的在此范围内的全部交易与盈亏归因（仓位/盈亏由账本自动派生）。</DialogDescription>
@@ -1985,6 +1985,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
         {codeDeals.length > 0 && (
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>📈 交易段（买入→清仓复盘）</div>
+            <div style={{ overflowX: "auto" }}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2012,12 +2013,14 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
               </TableBody>
             </Table>
           </div>
+          </div>
         )}
 
         <div>
           <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>💹 全部交易（{sortedEntries.length} 笔）</div>
           <div style={{ maxHeight: 280, overflowY: "auto" }}>
-            <Table>
+            <div style={{ overflowX: "auto" }}>
+<Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>日期</TableHead>
@@ -2047,6 +2050,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
                 ))}
               </TableBody>
             </Table>
+          </div>
           </div>
         </div>
 
