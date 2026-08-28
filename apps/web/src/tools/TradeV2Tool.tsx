@@ -2501,19 +2501,17 @@ export default function TradeV2Tool() {
                   {/* 持仓：仓位比例复杂化——嵌入仓位控制数据（今日加仓/剩余可用/累计净投入） */}
                   <StatGroup title="持仓" icon="📦" tone="blue" items={[
                     { label: "持仓市值", value: cny(cur.totalMv) },
-                    { label: "持仓成本", value: cny(cur.totalCost), sub: cur.negCount ? `不含 ${cur.negCount} 个负成本（已回本）` : undefined },
+                    { label: "持仓成本", value: cny(cur.totalCost), sub: [cur.negCount ? `不含 ${cur.negCount} 个负成本（已回本）` : `累计净投入 ${cny(cur.invested)}`, ...(cur.negCount ? [`累计净投入 ${cny(cur.invested)}`] : [])] },
                     { label: "仓位比例", value: cur.positionPct !== undefined ? pct(cur.positionPct) : "—", sub: [
-                      `占总仓位 ${cur.positionPct !== undefined ? pct(cur.positionPct) : "—"}`,
                       `今日加仓 ${cny(cur.todayAdd ?? 0)}`,
                       `剩余可用 ${cny(cur.remaining ?? 0)}`,
-                      `累计净投入 ${cny(cur.invested)}`,
                     ] },
                   ]} />
                   {/* 盈亏：已实现（落袋）+ 未实现（浮动）= 总盈亏，各带率 */}
                   <StatGroup title="盈亏" icon="💰" tone="red" items={[
+                    { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
                     { label: "已实现", value: pnlText(cur.realizedPnl), color: pnlColor(cur.realizedPnl), sub: cur.realizedPnl !== 0 && realizedRate !== undefined ? `率 ${pctSigned(realizedRate)}` : undefined },
                     { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: cur.unrealizedPnl !== 0 && unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
-                    { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
                   ]} />
                   {/* 交易量：累计买卖量 + 净买入（金额口径） */}
                   <StatGroup title="交易量" icon="🔄" tone="indigo" items={[
