@@ -862,7 +862,7 @@ function GroupEditor({ open, onClose, groups, initial, onSaved, inline }: {
 
 // ---------- 统计分组盒（逻辑相关数据合并展示） ----------
 
-interface StatItem { label: string; value: string; color?: string; sub?: string }
+interface StatItem { label: string; value: string; color?: string; sub?: string | string[] }
 /** 统计分组盒（V1 审美）：tint 图标徽章 + 三数据列 */
 function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon: string; items: StatItem[]; tone?: "blue" | "indigo" | "emerald" | "red" | "amber" }) {
   const chip = {
@@ -884,7 +884,7 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
             <div key={it.label} style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: "0.66rem", color: C.muted }}>{it.label}</div>
               <div style={{ fontSize: "0.98rem", fontWeight: 700, color: it.color ?? C.text, whiteSpace: "nowrap", marginTop: 1 }}>{it.value}</div>
-              {it.sub ? <div style={{ fontSize: "0.66rem", color: C.muted, marginTop: 1 }}>{it.sub}</div> : null}
+              {it.sub ? (Array.isArray(it.sub) ? it.sub.map((s, k) => <div key={k} style={{ fontSize: "0.66rem", color: C.muted, marginTop: 1 }}>{s}</div>) : <div style={{ fontSize: "0.66rem", color: C.muted, marginTop: 1 }}>{it.sub}</div>) : null}
             </div>
           ))}
         </div>
@@ -2420,39 +2420,7 @@ export default function TradeV2Tool() {
               {selectedGroup ? <TabsTrigger value="group-settings" style={{ flex: 1 }}>⚙️ 分组设置</TabsTrigger> : null}
             </TabsList>
 
-            {/* 共享统计区：仅「收益分析」tab 展示（资金概览与收益分析绑定） */}
-            <SectionTitle icon="📊" color={C.indigo}>资金概览（市值 − 成本 = 浮动盈亏；已实现 + 未实现 = 总盈亏；仓位控制在右下）</SectionTitle>
-            {activeTab === "analysis" && cur && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10 }}>
-              {/* 资金逻辑链①：市值 − 成本 = 浮动盈亏（金额与率成对） */}
-              <StatGroup title="持仓" icon="📦" tone="blue" items={[
-                { label: "持仓市值", value: cny(cur.totalMv) },
-                { label: "持仓成本", value: cny(cur.totalCost), sub: cur.negCount ? `不含 ${cur.negCount} 个负成本（已回本）· 净投入 ${cny(cur.invested)}` : `累计净投入 ${cny(cur.invested)}` },
-                { label: "仓位比例", value: cur.positionPct !== undefined ? pct(cur.positionPct) : "—", sub: cur.positionPct !== undefined ? `占总仓位 ${pct(cur.positionPct)}` : undefined },
-              ]} />
-              {/* 资金逻辑链②：已实现（落袋）+ 未实现（浮动）= 总盈亏，各带率 */}
-              <StatGroup title="盈亏" icon="💰" tone="red" items={[
-                { label: "已实现", value: pnlText(cur.realizedPnl), color: pnlColor(cur.realizedPnl), sub: cur.realizedPnl !== 0 && realizedRate !== undefined ? `率 ${pctSigned(realizedRate)}` : undefined },
-                { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: cur.unrealizedPnl !== 0 && unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
-                { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
-              ]} />
-              {/* 交易量统计（memo mt72jjg7）：累计买卖量 + 净买入 */}
-              <StatGroup title="交易量" icon="🔄" tone="indigo" items={[
-                { label: "累计买入", value: cny(buyAmt) },
-                { label: "累计卖出", value: cny(sellAmt) },
-                { label: "净买入", value: cny(buyAmt - sellAmt), color: buyAmt - sellAmt >= 0 ? C.gain : C.loss },
-              ]} />
-              {isGroupView ? (
-                <StatGroup title="仓位" icon="🏦" tone="emerald" items={[
-                  { label: "今日加仓", value: cny(cur.todayAdd ?? 0) },
-                  { label: "剩余可用", value: cny(cur.remaining ?? 0) },
-                  { label: "累计净投入", value: cny(cur.invested) },
-                ]} />
-              ) : null}
-            </div>
-          )}
-
-
+            
             {analysis && (
               <TabsContent value="analysis">
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2527,6 +2495,34 @@ export default function TradeV2Tool() {
             )}
 
             <TabsContent value="positions">
+              {/* 资金概览（从收益分析 tab 移入仓位明细顶部；无标题/说明——memo 用户需求） */}
+              {cur && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginBottom: 12 }}>
+                  {/* 持仓：仓位比例复杂化——嵌入仓位控制数据（今日加仓/剩余可用/累计净投入） */}
+                  <StatGroup title="持仓" icon="📦" tone="blue" items={[
+                    { label: "持仓市值", value: cny(cur.totalMv) },
+                    { label: "持仓成本", value: cny(cur.totalCost), sub: cur.negCount ? `不含 ${cur.negCount} 个负成本（已回本）` : undefined },
+                    { label: "仓位比例", value: cur.positionPct !== undefined ? pct(cur.positionPct) : "—", sub: [
+                      `占总仓位 ${cur.positionPct !== undefined ? pct(cur.positionPct) : "—"}`,
+                      `今日加仓 ${cny(cur.todayAdd ?? 0)}`,
+                      `剩余可用 ${cny(cur.remaining ?? 0)}`,
+                      `累计净投入 ${cny(cur.invested)}`,
+                    ] },
+                  ]} />
+                  {/* 盈亏：已实现（落袋）+ 未实现（浮动）= 总盈亏，各带率 */}
+                  <StatGroup title="盈亏" icon="💰" tone="red" items={[
+                    { label: "已实现", value: pnlText(cur.realizedPnl), color: pnlColor(cur.realizedPnl), sub: cur.realizedPnl !== 0 && realizedRate !== undefined ? `率 ${pctSigned(realizedRate)}` : undefined },
+                    { label: "未实现", value: pnlText(cur.unrealizedPnl), color: pnlColor(cur.unrealizedPnl), sub: cur.unrealizedPnl !== 0 && unrealizedRate !== undefined ? `率 ${pctSigned(unrealizedRate)}` : undefined },
+                    { label: "总盈亏", value: pnlText(cur.totalPnl), color: pnlColor(cur.totalPnl), sub: cur.totalPnl !== 0 && totalRate !== undefined ? `总率 ${pctSigned(totalRate)}` : undefined },
+                  ]} />
+                  {/* 交易量：累计买卖量 + 净买入（金额口径） */}
+                  <StatGroup title="交易量" icon="🔄" tone="indigo" items={[
+                    { label: "累计买入", value: cny(buyAmt) },
+                    { label: "累计卖出", value: cny(sellAmt) },
+                    { label: "净买入", value: cny(buyAmt - sellAmt), color: buyAmt - sellAmt >= 0 ? C.gain : C.loss },
+                  ]} />
+                </div>
+              )}
               <PositionsTable
                 positions={(analysis?.positions ?? positionsFromGlobal(entries))}
                 groupView={isGroupView}
