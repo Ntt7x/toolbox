@@ -65,6 +65,12 @@ async function enrichPositions(positions: TradeV2Position[]): Promise<TradeV2Pos
       ...(v && v.vol !== undefined ? { volatility: Math.round(v.vol * 100) / 100, volLevel: v.level } : {}),
       ...(pct !== undefined ? { changePct: pct } : {}),
       ...(todayPnl !== undefined ? { todayPnl } : {}),
+      // 港股通：港币原值（价格列 HK$ 显示——金额列仍为人民币换算口径）
+      ...(isHkCode(p.code) ? {
+        hkAvgCost: Math.round((p.avgCost / fxRate) * 1000) / 1000,
+        ...(p.costAvg !== undefined ? { hkCostAvg: Math.round((p.costAvg / fxRate) * 1000) / 1000 } : {}),
+        ...(typeof p.latestPrice === "number" ? { hkLatestPrice: Math.round((p.latestPrice / fxRate) * 1000) / 1000 } : {}),
+      } : {}),
     };
   });
 }

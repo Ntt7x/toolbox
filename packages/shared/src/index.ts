@@ -1829,6 +1829,10 @@ export interface TradeV2Position {
   costValue: number;
   /** 最新价（行情可得时） */
   latestPrice?: number;
+  /** 港股通：港币原值（买入均价/成本均价/最新价 ÷ HKD/CNY 汇率——价格列显示 HK$ 港币，金额列保持人民币） */
+  hkAvgCost?: number;
+  hkCostAvg?: number;
+  hkLatestPrice?: number;
   /** 实时涨跌幅 %（最新价 vs 昨收，行情可得时） */
   changePct?: number;
   /** 今日盈亏（涨跌额 × 持仓数量，行情可得时） */

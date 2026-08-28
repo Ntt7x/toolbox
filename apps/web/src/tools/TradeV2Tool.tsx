@@ -896,6 +896,8 @@ function StatGroup({ title, icon, items, tone = "blue" }: { title: string; icon:
 }
 
 // ---------- 仓位明细表 ----------
+// 港股判定（与行情 parseSecCode 一致：hk 前缀或裸 3~5 位数字）——价格列显示 HK$ 港币
+const isHkCodeF = (c: string): boolean => /^hk/i.test(c.trim()) || /^\d{3,5}$/.test(c.trim());
 
 function PositionsTable({ positions, groupView, onRowClick, exportName, positionPct }: { positions: TradeV2Position[]; groupView: boolean; onRowClick?: (p: TradeV2Position) => void; exportName?: string; positionPct?: number }) {
   const [sortKey, setSortKey] = useState<"quantity" | "avgCost" | "costAvg" | "changePct" | "marketValue" | "realizedPnl" | "unrealizedPnl" | "totalPnl" | "totalPnlPct" | "weightPct" | null>("marketValue");   // 默认按市值降序（memo msuu4cw4）
@@ -998,9 +1000,9 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
               <TableCell className="text-right" style={{ color: p.changePct === undefined ? C.sub : p.changePct > 0 ? C.gain : p.changePct < 0 ? C.loss : C.sub, fontWeight: 600 }}>{p.changePct !== undefined ? `${p.changePct > 0 ? "+" : ""}${p.changePct}%` : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.todayPnl) }}>{p.todayPnl !== undefined ? cny2(p.todayPnl) : "—"}</TableCell>
               <TableCell className="text-right">{qtyFmt(Math.abs(p.quantity))}{p.quantity < 0 ? <span style={{ color: "#c2410c", fontSize: "0.72rem", marginLeft: 4 }}>卖</span> : null}</TableCell>
-              <TableCell className="text-right" style={{ color: p.latestPrice !== undefined && p.latestPrice > 0 ? C.text : C.sub, fontWeight: 600 }} title="实时市价">{p.latestPrice !== undefined && p.latestPrice > 0 ? costFmt(p.latestPrice) : "—"}</TableCell>
-              <TableCell className="text-right">{costFmt(p.avgCost)}</TableCell>
-              <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降" : "未持仓"}>{p.costAvg !== undefined ? costFmt(p.costAvg) : "—"}</TableCell>
+              <TableCell className="text-right" style={{ color: p.latestPrice !== undefined && p.latestPrice > 0 ? C.text : C.sub, fontWeight: 600 }} title="实时市价" >{p.latestPrice !== undefined && p.latestPrice > 0 ? (p.hkLatestPrice !== undefined ? "HK$" + costFmt(p.hkLatestPrice) : costFmt(p.latestPrice)) : "—"}</TableCell>
+              <TableCell className="text-right">{p.hkAvgCost !== undefined ? "HK$" + costFmt(p.hkAvgCost) : costFmt(p.avgCost)}</TableCell>
+              <TableCell className="text-right" title={p.costAvg !== undefined ? "摊薄成本：把已实现盈亏摊入剩余持仓，卖出盈利后下降（港股 HK$ 港币原值）" : "未持仓"}>{p.hkCostAvg !== undefined ? "HK$" + costFmt(p.hkCostAvg) : (p.costAvg !== undefined ? costFmt(p.costAvg) : "—")}</TableCell>
               <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
@@ -1620,7 +1622,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
                       {e.initial && <Badge style={{ marginLeft: 4, background: "#fef3c7", color: "#b45309" }}>期初</Badge>}
                     </TableCell>
                     <TableCell className="text-right">{qtyFmt(e.quantity)}</TableCell>
-                    <TableCell className="text-right">{costFmt(e.price)}</TableCell>
+                    <TableCell className="text-right">{isHkCodeF(e.code) ? "HK$" + costFmt(e.price) : costFmt(e.price)}</TableCell>
                     <TableCell className="text-right">{cny2(e.quantity * e.price)}</TableCell>
                     <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                     <TableCell style={{ color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
@@ -1760,7 +1762,7 @@ function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
                     <TableCell>{e.code}</TableCell>
                     <TableCell>{e.name ?? "—"}</TableCell>
                     <TableCell className="text-right">{qtyFmt(Math.abs(e.quantity))}</TableCell>
-                    <TableCell className="text-right">{costFmt(e.price)}</TableCell>
+                    <TableCell className="text-right">{isHkCodeF(e.code) ? "HK$" + costFmt(e.price) : costFmt(e.price)}</TableCell>
                     <TableCell className="text-right">{cny2(Math.abs(e.quantity * e.price))}</TableCell>
                   </TableRow>
                 ))}
@@ -2035,7 +2037,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
                       {e.initial && <Badge style={{ marginLeft: 4, background: "#fef3c7", color: "#b45309" }}>期初</Badge>}
                     </TableCell>
                     <TableCell className="text-right">{qtyFmt(e.quantity)}</TableCell>
-                    <TableCell className="text-right">{costFmt(e.price)}</TableCell>
+                    <TableCell className="text-right">{isHkCodeF(e.code) ? "HK$" + costFmt(e.price) : costFmt(e.price)}</TableCell>
                     <TableCell className="text-right">{cny2(e.quantity * e.price)}</TableCell>
                     <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                     <TableCell style={{ color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
@@ -2607,7 +2609,7 @@ export default function TradeV2Tool() {
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">{qtyFmt(e.quantity)}</TableCell>
-                            <TableCell className="text-right">{costFmt(e.price)}</TableCell>
+                            <TableCell className="text-right">{isHkCodeF(e.code) ? "HK$" + costFmt(e.price) : costFmt(e.price)}</TableCell>
                             <TableCell className="text-right">{cny2(amount)}</TableCell>
                             <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                             <TableCell style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
