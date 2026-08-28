@@ -988,7 +988,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
             <TableHead className="text-right">成本</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
             {sortableHead("占总仓位", "weightPct", "text-right")}
-            {sortableHead("未实现%", "unrealizedPnl", "text-right")}
+
             {sortableHead("总盈亏", "totalPnl", "text-right")}
             {sortableHead("总盈亏%", "totalPnlPct", "text-right")}
           </TableRow>
@@ -1006,8 +1006,7 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
               <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)), fontWeight: 600 }}>{pnlText(totalPnlOf(p))}</TableCell>
+                            <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)), fontWeight: 600 }}>{pnlText(totalPnlOf(p))}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)) }}>{totalPnlPctOf(p)}</TableCell>
             </TableRow>
           ))}
@@ -1628,7 +1627,6 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
                     <TableCell style={{ color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
                     <TableCell>
                       <span style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEditEntry?.(e)}>编辑</Button>
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-500 hover:bg-red-50" onClick={() => onDeleteEntry?.(e)}>删除</Button>
                       </span>
                     </TableCell>
@@ -2023,6 +2021,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
 <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>编辑</TableHead>
                   <TableHead>日期</TableHead>
                   <TableHead>操作</TableHead>
                   <TableHead className="text-right">数量</TableHead>
@@ -2036,6 +2035,9 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
               <TableBody>
                 {sortedEntries.map((e) => (
                   <TableRow key={e.id}>
+                    <TableCell>
+                      <Button size="sm" variant="ghost" style={{ height: 24, padding: "0 0.3rem", fontSize: "0.7rem" }} title="编辑该笔交易" onClick={() => onEditEntry(e)}>✎</Button>
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">{e.date}</TableCell>
                     <TableCell>
                       <Badge style={e.action === "buy" ? { background: C.gainBg, color: C.gain } : { background: C.lossBg, color: C.loss }}>{e.action === "buy" ? "买入" : "卖出"}</Badge>
