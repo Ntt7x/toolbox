@@ -304,6 +304,8 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
     const investedSeries = filtered.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
     const p0 = investedSeries[0] ?? 0;
     const navSeries = filtered.map((d, i) => Math.round((p0 + d.marketValue - investedSeries[i]) * 100) / 100);
+    // 累计盈亏（总盈亏含已实现）= 市值 − 累计净投入 = 净值 − 期初本金
+    const pnlSeries = navSeries.map((v) => Math.round((v - p0) * 100) / 100);
     // ① 净值收益率（时间加权 TWR，默认）：区间起点净值归一，r=∏(1+日收益率)−1=NAV末/NAV初−1
     const base = navSeries[0] || 1;
     const navPct = navSeries.map((v) => Math.round((v / base - 1) * 10000) / 100);
@@ -312,7 +314,7 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
     const mcPct = navSeries.map((v) => (cMax > 0 ? Math.round(((v - p0) / cMax) * 10000) / 100 : 0));
     return {
       tooltip: { trigger: "axis" },
-      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "净值收益率%", "最大成本收益率%"], top: 0, textStyle: { fontSize: 11 } },
+      legend: { data: ["累计盈亏", "持仓市值(成本)", "累计已实现", "净值收益率%", "最大成本收益率%"], top: 0, textStyle: { fontSize: 11 } },
       grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
       xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
       yAxis: [
@@ -320,7 +322,7 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
         { type: "value", axisLabel: { fontSize: 10, formatter: "{value}%" }, splitLine: { show: false } },
       ],
       series: [
-        { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
+        { name: "累计盈亏", type: "line", smooth: true, showSymbol: false, data: pnlSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
         { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
         { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
         { name: "净值收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: navPct, lineStyle: { color: "#f59e0b", width: 1.5 } },
