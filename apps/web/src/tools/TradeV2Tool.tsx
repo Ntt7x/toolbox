@@ -294,8 +294,7 @@ function EChart({ option, height = 280, style, emptyText }: { option: echarts.EC
 function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; height?: number }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  // 收益率口径（memo：行业两种标准——净值收益率 TWR 默认 / 最大成本收益率 可切换）
-  const [retMode, setRetMode] = useState<"nav" | "maxCost">("nav");
+  // 收益率双口径图例（memo mtcop4jf：净值收益率 + 最大成本收益率 同时展示，去切换按钮）
   const filtered = useMemo(() => daily.filter((d) => (!from || d.date >= from) && (!to || d.date <= to)), [daily, from, to]);
   const option = useMemo<echarts.EChartsOption>(() => {
     if (filtered.length === 0) return {};
@@ -311,11 +310,9 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
     // ② 最大成本收益率：累计收益(NAV−期初本金) ÷ 历史最大净投入成本 C_max（保守口径）
     const cMax = Math.max(...investedSeries, 0);
     const mcPct = navSeries.map((v) => (cMax > 0 ? Math.round(((v - p0) / cMax) * 10000) / 100 : 0));
-    const pctSeries = retMode === "nav" ? navPct : mcPct;
-    const pctName = retMode === "nav" ? "净值收益率%" : "最大成本收益率%";
     return {
       tooltip: { trigger: "axis" },
-      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", pctName], top: 0, textStyle: { fontSize: 11 } },
+      legend: { data: ["组合净值", "持仓市值(成本)", "累计已实现", "净值收益率%", "最大成本收益率%"], top: 0, textStyle: { fontSize: 11 } },
       grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
       xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
       yAxis: [
@@ -326,10 +323,11 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
         { name: "组合净值", type: "line", smooth: true, showSymbol: false, data: navSeries, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
         { name: "持仓市值(成本)", type: "line", smooth: true, showSymbol: false, data: filtered.map((d) => Math.round(d.marketValue)), lineStyle: { color: C.muted, width: 1.5, type: "dashed" } },
         { name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: cumRealized, lineStyle: { color: C.gain, width: 1.5, type: "dotted" } },
-        { name: pctName, type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pctSeries, lineStyle: { color: "#f59e0b", width: 1.5 } },
+        { name: "净值收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: navPct, lineStyle: { color: "#f59e0b", width: 1.5 } },
+        { name: "最大成本收益率%", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: mcPct, lineStyle: { color: "#10b981", width: 1.5, type: "dashed" } },
       ],
     };
-  }, [filtered, retMode]);
+  }, [filtered]);
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
@@ -338,26 +336,9 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
         <span style={{ color: C.muted, fontSize: "0.8rem" }}>—</span>
         <Input autoComplete="off" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
         {(from || to) && <Button size="sm" variant="ghost" onClick={() => { setFrom(""); setTo(""); }}>重置</Button>}
-        <div style={{ display: "flex", gap: 4, marginLeft: "auto", alignItems: "center" }}>
-          <span style={{ fontSize: "0.7rem", color: C.muted }}>收益率口径</span>
-          {(["nav", "maxCost"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setRetMode(m)}
-              style={{
-                fontSize: "0.72rem", padding: "0.16rem 0.55rem", borderRadius: 999, cursor: "pointer",
-                border: "1px solid " + (retMode === m ? C.accent : "#e2e8f0"),
-                background: retMode === m ? C.accentBg : "#fff",
-                color: retMode === m ? "#1d4ed8" : "#64748b",
-                fontWeight: retMode === m ? 700 : 500,
-              }}
-            >
-              {m === "nav" ? "净值收益率" : "最大成本收益率"}
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: "0.7rem", color: C.muted }}>收益率口径（双图例：净值收益率 / 最大成本收益率）</span>
         <span style={{ fontSize: "0.7rem", color: C.muted, width: "100%" }}>
-          {retMode === "nav" ? "净值收益率（时间加权 TWR）：区间起点净值归一 100%，r = ∏(1+日收益率) − 1，剔除资金进出影响" : "最大成本收益率：累计收益 ÷ 历史最大净投入成本，保守反映实际赚钱效率"}
+          净值收益率（时间加权 TWR）：区间起点净值归一 100%，r = ∏(1+日收益率) − 1，剔除资金进出影响；最大成本收益率：累计收益 ÷ 历史最大净投入成本，保守反映实际赚钱效率
         </span>
       </div>
       <EChart option={option} height={height} emptyText={filtered.length === 0 ? "暂无交易数据——录入交易后生成净值曲线" : filtered.length === 1 ? "仅 1 个交易日（单点，暂无法成曲线）" : undefined} />
@@ -1003,8 +984,6 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
             <TableHead className="text-right">成本</TableHead>
             {sortableHead("市值", "marketValue", "text-right")}
             {sortableHead("占总仓位", "weightPct", "text-right")}
-            {sortableHead("已实现", "realizedPnl", "text-right")}
-            {sortableHead("未实现", "unrealizedPnl", "text-right")}
             {sortableHead("未实现%", "unrealizedPnl", "text-right")}
             {sortableHead("总盈亏", "totalPnl", "text-right")}
             {sortableHead("总盈亏%", "totalPnlPct", "text-right")}
@@ -1023,8 +1002,6 @@ function PositionsTable({ positions, groupView, onRowClick, exportName, position
               <TableCell className="text-right" style={{ color: costOf(p) !== undefined && costOf(p)! < 0 ? C.loss : C.text }}>{costOf(p) !== undefined ? cny2(costOf(p)!) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: p.marketValue < 0 ? C.loss : C.text, fontWeight: 700 }}>{cny2(p.marketValue)}</TableCell>
               <TableCell className="text-right" style={{ color: weightOf(p) !== undefined && weightOf(p)! > 100 ? C.amber : C.sub, fontWeight: weightOf(p) !== undefined && weightOf(p)! > 100 ? 700 : 500 }}>{weightOf(p) !== undefined ? pct(weightOf(p)) : "—"}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(p.realizedPnl), fontWeight: 600 }}>{pnlText(p.realizedPnl)}</TableCell>
-              <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 600 }}>{pnlText(p.unrealizedPnl)}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(p.unrealizedPnl), fontWeight: 700 }}>{p.unrealizedPnlPct !== undefined ? pct(p.unrealizedPnlPct) : "—"}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)), fontWeight: 600 }}>{pnlText(totalPnlOf(p))}</TableCell>
               <TableCell className="text-right" style={{ color: pnlColor(totalPnlOf(p)) }}>{totalPnlPctOf(p)}</TableCell>
@@ -1723,6 +1700,7 @@ function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
     return [...m.entries()].map(([date, v]) => ({ date, ...v, codes: v.codes.size })).sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [entries]);
   const [sel, setSel] = useState<string>("");
+  const [dlg, setDlg] = useState<{ date: string; dir: "buy" | "sell" } | null>(null); // memo mtcrwxdk：点击买入/卖出金额浮窗流水
   useEffect(() => {
     if (byDate.length > 0 && !byDate.some((d) => d.date === sel)) setSel(byDate[0]!.date);
   }, [byDate, sel]);
@@ -1750,13 +1728,48 @@ function DailySummaryCard({ entries }: { entries: TradeV2Entry[] }) {
             { label: net >= 0 ? "净卖出（卖−买）" : "净买入（买−卖）", value: cny2(Math.abs(net)), tone: net >= 0 ? C.gain : C.loss },
             { label: "涉及标的", value: `${cur.codes} 只` },
           ].map((it) => (
-            <div key={it.label} style={{ background: C.panel, borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7" }}>
-              <div style={{ fontSize: "0.68rem", color: C.muted }}>{it.label}</div>
+            <div key={it.label} onClick={(it.label.startsWith("买入金额") || it.label.startsWith("卖出回款")) && cur ? () => setDlg({ date: cur.date, dir: it.label.startsWith("买入金额") ? "buy" : "sell" }) : undefined} style={{ background: C.panel, borderRadius: 8, padding: "0.5rem 0.7rem", border: "1px solid #eef2f7", ...((it.label.startsWith("买入金额") || it.label.startsWith("卖出回款")) ? { cursor: "pointer", transition: "border-color .2s" } : {}) }} title={(it.label.startsWith("买入金额") || it.label.startsWith("卖出回款")) ? "点击查看当日流水" : undefined}>
+              <div style={{ fontSize: "0.68rem", color: C.muted }}>{it.label}{(it.label.startsWith("买入金额") || it.label.startsWith("卖出回款")) ? " 🔍" : ""}</div>
               <div style={{ fontSize: "1rem", fontWeight: 700, color: it.tone ?? C.text }}>{it.value}</div>
             </div>
           ))}
         </div>
       )}
+      {/* memo mtcrwxdk：点击买入/卖出金额 → 浮窗当日该方向流水 */}
+      <Dialog open={!!dlg} onOpenChange={(o) => { if (!o) setDlg(null); }}>
+        <DialogContent style={{ maxWidth: 560 }}>
+          <DialogHeader>
+            <DialogTitle>{dlg ? `${dlg.date} · ${dlg.dir === "buy" ? "买入" : "卖出"}流水（${entries.filter((e) => e.date === dlg.date && e.action === dlg.dir).length} 笔）` : ""}</DialogTitle>
+          </DialogHeader>
+          <div style={{ maxHeight: 360, overflowY: "auto" }}>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>代码</TableHead>
+                  <TableHead>名称</TableHead>
+                  <TableHead className="text-right">数量</TableHead>
+                  <TableHead className="text-right">价格</TableHead>
+                  <TableHead className="text-right">金额</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dlg && entries.filter((e) => e.date === dlg.date && e.action === dlg.dir).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)).map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell>{e.code}</TableCell>
+                    <TableCell>{e.name ?? "—"}</TableCell>
+                    <TableCell className="text-right">{qtyFmt(Math.abs(e.quantity))}</TableCell>
+                    <TableCell className="text-right">{costFmt(e.price)}</TableCell>
+                    <TableCell className="text-right">{cny2(Math.abs(e.quantity * e.price))}</TableCell>
+                  </TableRow>
+                ))}
+                {dlg && entries.filter((e) => e.date === dlg.date && e.action === dlg.dir).length === 0 && (
+                  <TableRow><TableCell colSpan={5} style={{ textAlign: "center", color: C.muted }}>当日无{dlg.dir === "buy" ? "买入" : "卖出"}流水</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </CardContent></Card>
   );
 }
@@ -1830,6 +1843,30 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   const sortedEntries = [...codeEntries].sort((a, b) => (a.date < b.date ? 1 : -1));
   const pos = positions.find((p) => p.code === code);
   const codeDeals = deals.filter((d) => d.code === code);
+  // memo mtcorcho：单标的盈亏曲线（累计已实现按清仓日 + 当前未实现/总盈亏）
+  const pnlTimeline = useMemo(() => {
+    const realized: { date: string; cum: number }[] = [];
+    let cum = 0;
+    for (const d of [...codeDeals].sort((a, b) => ((a.exitDate ?? a.entryDate) < (b.exitDate ?? b.entryDate) ? -1 : 1))) {
+      if (typeof d.pnl === "number") { cum += d.pnl; realized.push({ date: d.exitDate ?? d.entryDate, cum: Math.round(cum * 100) / 100 }); }
+    }
+    const unreal = pos?.unrealizedPnl ?? 0;
+    return { realized, unreal, total: Math.round((cum + unreal) * 100) / 100 };
+  }, [codeDeals, pos]);
+  const pnlOption = useMemo<echarts.EChartsOption>(() => {
+    if (pnlTimeline.realized.length < 2) return {};
+    return {
+      tooltip: { trigger: "axis", formatter: (p: unknown) => {
+        const arr = (p as { axisValue: string; value: unknown }[]);
+        const v = typeof arr[0]?.value === "number" ? arr[0].value : 0;
+        return `${arr[0]?.axisValue ?? ""}<br/>累计已实现：<b>${cny2(v)}</b>`;
+      } },
+      grid: { left: 8, right: 8, bottom: 0, top: 24, containLabel: true },
+      xAxis: { type: "category", data: pnlTimeline.realized.map((r) => r.date), axisLabel: { fontSize: 10 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
+      series: [{ name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: pnlTimeline.realized.map((r) => r.cum), lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } }],
+    };
+  }, [pnlTimeline]);
   const fromGroupId = codeEntries[0]?.groupId ?? "";
   // 加载该标的分组限制（memo mt4hgp8b：标的下沉页直接配置"标的限制"）
   useEffect(() => {
@@ -1916,6 +1953,19 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
             <span>已实现 <b style={{ color: pnlColor(pos.realizedPnl) }}>{pnlText(pos.realizedPnl)}</b></span>
             <span>未实现 <b style={{ color: pnlColor(pos.unrealizedPnl) }}>{pnlText(pos.unrealizedPnl)}</b></span>
           </div>
+        )}
+
+        {/* memo mtcorcho：单标的盈亏曲线（累计已实现按清仓日） */}
+        {pnlTimeline.realized.length >= 2 && (
+          <Card><CardContent>
+            <SectionTitle icon="📈" color={C.accent}>盈亏曲线（累计已实现，按清仓日）</SectionTitle>
+            <div style={{ display: "flex", gap: 14, fontSize: "0.8rem", color: C.sub, marginBottom: 8, flexWrap: "wrap" }}>
+              <span>已实现 <b style={{ color: pnlColor(pnlTimeline.realized.at(-1)?.cum ?? 0) }}>{cny2(pnlTimeline.realized.at(-1)?.cum ?? 0)}</b></span>
+              <span>未实现 <b style={{ color: pnlColor(pnlTimeline.unreal) }}>{cny2(pnlTimeline.unreal)}</b></span>
+              <span>总盈亏 <b style={{ color: pnlColor(pnlTimeline.total) }}>{cny2(pnlTimeline.total)}</b></span>
+            </div>
+            <EChart option={pnlOption} height={200} />
+          </CardContent></Card>
         )}
 
         {codeDeals.length > 0 && (
