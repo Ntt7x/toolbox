@@ -554,7 +554,7 @@ useEffect(() => {
   const set = <K extends keyof TradeV2EntryDraft>(k: K, v: TradeV2EntryDraft[K]) => setDraft((p) => ({ ...p, [k]: v }));
 
   const doCheck = async () => {
-    if (!draft.code.trim() || draft.quantity <= 0 || draft.price <= 0) {
+    if (!draft.code.trim() || draft.quantity <= 0 || draft.price === 0) {
       setMsg("请先填写代码、数量与价格");
       return;
     }
@@ -574,7 +574,7 @@ useEffect(() => {
     if (!draft.groupId) { setMsg("请选择所属分组"); return; }
     if (!stock.code.trim()) { setMsg("请填写标的代码"); return; }
     if (!draft.quantity || draft.quantity <= 0) { setMsg("数量必须为正整数"); return; }
-    if (!draft.price || draft.price <= 0) { setMsg("价格必须大于 0"); return; }
+    if (draft.price === 0) { setMsg("价格不能为 0"); return; }
     setSaving(true);
     setMsg(null);
     try {
@@ -634,7 +634,7 @@ useEffect(() => {
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">成交价（元）</label>
-            <Input autoComplete="off" type="number" min={0} step={0.01} className="h-8" value={draft.price || ""} placeholder="如 10.50" onChange={(e) => set("price", Number(e.target.value) || 0)} />
+            <Input autoComplete="off" type="number" step={0.01} className="h-8" value={draft.price || ""} placeholder="如 10.50" onChange={(e) => set("price", Number(e.target.value) || 0)} />
           </div>
           <div>
             <label className="text-[0.8rem] font-semibold text-slate-600 block mb-1">手续费（可选）</label>
