@@ -1532,7 +1532,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
             <TableHead className="w-40">价格（元）</TableHead>
             <TableHead className="w-28">手续费（自动算）</TableHead>
             <TableHead>备注</TableHead>
-            <TableHead className="w-10" />
+            <TableHead className="w-24" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1603,7 +1603,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
               <TableHeader>
                 <TableRow>
                   <TableHead>标的</TableHead>
-                  <TableHead>操作</TableHead>
+                  <TableHead className="w-24" />
                   <TableHead className="text-right">数量</TableHead>
                   <TableHead className="text-right">价格</TableHead>
                   <TableHead className="text-right">金额</TableHead>
@@ -1626,7 +1626,8 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
                     <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                     <TableCell style={{ color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
                     <TableCell>
-                      <span style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                      <span style={{ display: "flex", gap: 4, justifyContent: "flex-start" }}>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEditEntry?.(e)}>编辑</Button>
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-500 hover:bg-red-50" onClick={() => onDeleteEntry?.(e)}>删除</Button>
                       </span>
                     </TableCell>
@@ -1649,7 +1650,7 @@ function OrderSheet({ initialGroup, groups, allEntries, todayAdd, positions, onS
       )}
       {msg && <div style={{ color: msg.startsWith("✅") ? C.loss : C.gain, fontSize: "0.85rem", marginTop: 8 }}>{msg}</div>}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" }}>
         {result && !result.ok && <span style={{ fontSize: "0.78rem", color: C.gain, marginRight: "auto" }}>✖ 校验未通过：请修正后重新校验</span>}
         <Button variant="outline" onClick={() => void doCheck()} disabled={busy !== null}>{busy === "check" ? "校验中…" : "🔍 校验"}</Button>
         <Button onClick={() => void submit()} disabled={busy !== null || valid.length === 0 || (result !== null && !result.ok)}>{busy === "submit" ? "提交中…" : "📤 提交交易单（整批入库）"}</Button>
@@ -1825,7 +1826,7 @@ function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV
 
 // ---------- 标的交易历史下钻 ----------
 
-function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals, groups, onMoved, onEditEntry }: {
+function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals, groups, onMoved, onEditEntry, onDeleteEntry }: {
   open: boolean;
   onClose: () => void;
   code: string;
@@ -1836,7 +1837,8 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   deals: TradeV2Deal[];
   groups: TradeV2GroupSummary[];
   onMoved: () => void;
-  onEditEntry: (e: TradeV2Entry) => void; // memo 新增：下沉页编辑交易流水
+  onEditEntry: (e: TradeV2Entry) => void; // 下沉页编辑交易流水
+  onDeleteEntry?: (e: TradeV2Entry) => void;
 }) {
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
@@ -1934,7 +1936,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   };
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-4xl">
+      <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle><NameCode name={name} code={code} /> <span style={{ fontSize: "0.75rem", color: C.muted, fontWeight: 400 }}>· {scopeName}</span></DialogTitle>
           <DialogDescription>该标的在此范围内的全部交易与盈亏归因（仓位/盈亏由账本自动派生）。</DialogDescription>
@@ -2021,7 +2023,6 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
 <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>编辑</TableHead>
                   <TableHead>日期</TableHead>
                   <TableHead>操作</TableHead>
                   <TableHead className="text-right">数量</TableHead>
@@ -2035,9 +2036,6 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
               <TableBody>
                 {sortedEntries.map((e) => (
                   <TableRow key={e.id}>
-                    <TableCell>
-                      <Button size="sm" variant="ghost" style={{ height: 24, padding: "0 0.3rem", fontSize: "0.7rem" }} title="编辑该笔交易" onClick={() => onEditEntry(e)}>✎</Button>
-                    </TableCell>
                     <TableCell className="whitespace-nowrap">{e.date}</TableCell>
                     <TableCell>
                       <Badge style={e.action === "buy" ? { background: C.gainBg, color: C.gain } : { background: C.lossBg, color: C.loss }}>{e.action === "buy" ? "买入" : "卖出"}</Badge>
@@ -2048,6 +2046,12 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
                     <TableCell className="text-right">{cny2(e.quantity * e.price)}</TableCell>
                     <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                     <TableCell style={{ color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
+                    <TableCell>
+                      <span style={{ display: "flex", gap: 4, justifyContent: "flex-start" }}>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEditEntry(e)}>编辑</Button>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-500 hover:bg-red-50" onClick={() => onDeleteEntry?.(e)}>删除</Button>
+                      </span>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -2622,7 +2626,7 @@ export default function TradeV2Tool() {
                             <TableCell className="text-right">{e.fee ? cny2(e.fee) : "—"}</TableCell>
                             <TableCell style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.sub, fontSize: "0.8rem" }}>{e.note ?? ""}</TableCell>
                             <TableCell>
-                              <span style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                              <span style={{ display: "flex", gap: 4, justifyContent: "flex-start" }}>
                                 <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openEdit(e)}>编辑</Button>
                                 <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-500 hover:bg-red-50" onClick={() => void removeEntry(e)}>删除</Button>
                               </span>
