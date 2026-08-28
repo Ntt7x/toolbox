@@ -314,7 +314,7 @@ function NetValueChart({ daily, height = 240 }: { daily: TradeV2DailyPoint[]; he
     const mcPct = navSeries.map((v) => (cMax > 0 ? Math.round(((v - p0) / cMax) * 10000) / 100 : 0));
     return {
       tooltip: { trigger: "axis" },
-      legend: { data: ["累计盈亏", "持仓市值(成本)", "累计已实现", "净值收益率%", "最大成本收益率%"], top: 0, textStyle: { fontSize: 11 } },
+      legend: { data: ["累计盈亏", "持仓市值(成本)", "累计已实现", "净值收益率%", "最大成本收益率%"], selected: { "持仓市值(成本)": false }, top: 0, textStyle: { fontSize: 11 } },
       grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
       xAxis: { type: "category", data: filtered.map((d) => d.date), axisLabel: { fontSize: 10 } },
       yAxis: [
