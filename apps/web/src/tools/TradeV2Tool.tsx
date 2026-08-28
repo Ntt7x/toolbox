@@ -1827,7 +1827,7 @@ function GroupContributionTable({ groups, globalMv, onSelect }: { groups: TradeV
 
 // ---------- 标的交易历史下钻 ----------
 
-function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals, groups, onMoved }: {
+function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, positions, deals, groups, onMoved, onEditEntry }: {
   open: boolean;
   onClose: () => void;
   code: string;
@@ -1838,6 +1838,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   deals: TradeV2Deal[];
   groups: TradeV2GroupSummary[];
   onMoved: () => void;
+  onEditEntry: (e: TradeV2Entry) => void; // memo 新增：下沉页编辑交易流水
 }) {
   const [moveTo, setMoveTo] = useState<string>("");
   const [moving, setMoving] = useState(false);
@@ -2026,6 +2027,7 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
                   <TableHead className="text-right">金额</TableHead>
                   <TableHead className="text-right">手续费</TableHead>
                   <TableHead>备注</TableHead>
+                  <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2681,6 +2683,7 @@ export default function TradeV2Tool() {
         deals={analysis?.deals ?? []}
         groups={groups}
         onMoved={() => void reloadAll()}
+        onEditEntry={openEdit}
       />
     </div>
   );
