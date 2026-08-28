@@ -1843,31 +1843,45 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
   const sortedEntries = [...codeEntries].sort((a, b) => (a.date < b.date ? 1 : -1));
   const pos = positions.find((p) => p.code === code);
   const codeDeals = deals.filter((d) => d.code === code);
-  // memo mtcorcho：单标的盈亏曲线（累计已实现按清仓日 + 当前未实现/总盈亏）
-  const pnlTimeline = useMemo(() => {
-    const realized: { date: string; cum: number }[] = [];
-    let cum = 0;
-    for (const d of [...codeDeals].sort((a, b) => ((a.exitDate ?? a.entryDate) < (b.exitDate ?? b.entryDate) ? -1 : 1))) {
-      if (typeof d.pnl === "number") { cum += d.pnl; realized.push({ date: d.exitDate ?? d.entryDate, cum: Math.round(cum * 100) / 100 }); }
-    }
-    const unreal = pos?.unrealizedPnl ?? 0;
-    return { realized, unreal, total: Math.round((cum + unreal) * 100) / 100 };
-  }, [codeDeals, pos]);
-  const pnlOption = useMemo<echarts.EChartsOption>(() => {
-    if (pnlTimeline.realized.length < 2) return {};
+    const fromGroupId = codeEntries[0]?.groupId ?? "";
+  // memo mtcorcho：标的下沉页——单标的逐日盈亏曲线（金额 + 收益率；服务端按 code 过滤重放 + 历史价市值）
+  const [stockSeries, setStockSeries] = useState<TradeV2DailyPoint[] | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  useEffect(() => {
+    if (!open || !fromGroupId || !code) return;
+    setSeriesLoading(true);
+    api.tradeV2StockSeries(fromGroupId, code).then((r) => { setStockSeries(r.series ?? null); }).catch(() => setStockSeries(null)).finally(() => setSeriesLoading(false));
+  }, [open, fromGroupId, code]);
+  const stockOption = useMemo<echarts.EChartsOption>(() => {
+    const ss = stockSeries ?? [];
+    if (ss.length < 2) return {};
+    let inv = 0;
+    const invested = ss.map((d) => { inv += d.buyAmount - d.sellAmount; return Math.round(inv * 100) / 100; });
+    const pnl = ss.map((d, i) => Math.round((d.marketValue - invested[i]) * 100) / 100); // 总盈亏（含已实现）= 市值 − 累计净投入
+    const maxInv = Math.max(1, ...invested.map((v) => Math.abs(v)));
+    const pnlPct = pnl.map((v) => Math.round((v / maxInv) * 10000) / 100);
     return {
-      tooltip: { trigger: "axis", formatter: (p: unknown) => {
-        const arr = (p as { axisValue: string; value: unknown }[]);
-        const v = typeof arr[0]?.value === "number" ? arr[0].value : 0;
-        return `${arr[0]?.axisValue ?? ""}<br/>累计已实现：<b>${cny2(v)}</b>`;
+      tooltip: { trigger: "axis", axisPointer: { type: "cross" }, formatter: (p: unknown) => {
+        const arr = (p as { axisValue: string; value: unknown; seriesName: string }[]);
+        const parts = arr.map((it) => {
+          const v = typeof it.value === "number" ? it.value : 0;
+          return it.seriesName.includes("收益") ? `${it.seriesName}：<b>${v}%</b>` : `${it.seriesName}：<b>${cny2(v)}</b>`;
+        });
+        return `${arr[0]?.axisValue ?? ""}<br/>${parts.join("<br/>")}`;
       } },
-      grid: { left: 8, right: 8, bottom: 0, top: 24, containLabel: true },
-      xAxis: { type: "category", data: pnlTimeline.realized.map((r) => r.date), axisLabel: { fontSize: 10 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
-      series: [{ name: "累计已实现", type: "line", smooth: true, showSymbol: false, data: pnlTimeline.realized.map((r) => r.cum), lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.18)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } }],
+      legend: { data: ["总盈亏(金额)", "总盈亏(收益率%)"], top: 0, textStyle: { fontSize: 11 } },
+      grid: { left: 8, right: 44, bottom: 0, top: 28, containLabel: true },
+      xAxis: { type: "category", data: ss.map((d) => d.date), axisLabel: { fontSize: 10 } },
+      yAxis: [
+        { type: "value", axisLabel: { fontSize: 10, formatter: (v: number) => `${v >= 10000 ? (v / 10000).toFixed(1) + "万" : v}` } },
+        { type: "value", axisLabel: { fontSize: 10, formatter: "{value}%" }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: "总盈亏(金额)", type: "line", smooth: true, showSymbol: false, data: pnl, lineStyle: { color: C.accent, width: 2 }, areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(37,99,235,.15)" }, { offset: 1, color: "rgba(37,99,235,.02)" }] } } },
+        { name: "总盈亏(收益率%)", type: "line", smooth: true, showSymbol: false, yAxisIndex: 1, data: pnlPct, lineStyle: { color: "#f59e0b", width: 1.5, type: "dashed" } },
+      ],
     };
-  }, [pnlTimeline]);
-  const fromGroupId = codeEntries[0]?.groupId ?? "";
+  }, [stockSeries]);
   // 加载该标的分组限制（memo mt4hgp8b：标的下沉页直接配置"标的限制"）
   useEffect(() => {
     if (!open || !fromGroupId) return;
@@ -1955,16 +1969,11 @@ function StockHistoryDialog({ open, onClose, code, name, scopeName, entries, pos
           </div>
         )}
 
-        {/* memo mtcorcho：单标的盈亏曲线（累计已实现按清仓日） */}
-        {pnlTimeline.realized.length >= 2 && (
+        {/* memo mtcorcho：单标的逐日盈亏曲线（金额 + 收益率） */}
+        {(seriesLoading || (stockSeries ?? []).length >= 2) && (
           <Card><CardContent>
-            <SectionTitle icon="📈" color={C.accent}>盈亏曲线（累计已实现，按清仓日）</SectionTitle>
-            <div style={{ display: "flex", gap: 14, fontSize: "0.8rem", color: C.sub, marginBottom: 8, flexWrap: "wrap" }}>
-              <span>已实现 <b style={{ color: pnlColor(pnlTimeline.realized.at(-1)?.cum ?? 0) }}>{cny2(pnlTimeline.realized.at(-1)?.cum ?? 0)}</b></span>
-              <span>未实现 <b style={{ color: pnlColor(pnlTimeline.unreal) }}>{cny2(pnlTimeline.unreal)}</b></span>
-              <span>总盈亏 <b style={{ color: pnlColor(pnlTimeline.total) }}>{cny2(pnlTimeline.total)}</b></span>
-            </div>
-            <EChart option={pnlOption} height={200} />
+            <SectionTitle icon="📈" color={C.accent}>盈亏曲线（逐日 · 金额 + 收益率）</SectionTitle>
+            {seriesLoading ? <div style={{ color: C.muted, fontSize: "0.8rem", padding: "1rem 0", textAlign: "center" }}>曲线加载中…</div> : <EChart option={stockOption} height={200} />}
           </CardContent></Card>
         )}
 

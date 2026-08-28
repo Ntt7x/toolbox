@@ -56,6 +56,11 @@ export function registerTradeV2Feature(app: Hono) {
     if (!group) return c.json({ ok: false, message: "分组不存在" }, 404);
     return c.json({ ok: true, stocks: await ctx.tradeV2Ledger.stocksOfGroup(id) });
   });
+  app.get(`${API_PREFIX}/tools/trade-v2/groups/:id/stock-series`, async (c: Context) => {
+    const ctx = await getTradeV2Ctx();
+    const r = await ctx.tradeV2Analysis.stockSeries(c.req.param("id")!, c.req.query("code") ?? "");
+    return c.json(r);
+  });
   app.get(`${API_PREFIX}/tools/trade-v2/groups/:id`, async (c: Context) => {
     const ctx = await getTradeV2Ctx();
     const r = await ctx.tradeV2Analysis.groupAnalysis(c.req.param("id")!);

@@ -80,6 +80,7 @@ import {
   type TreasuryFxRequest,
   type TreasuryFxResponse,
   type TradeV2OverviewResult,
+  type TradeV2StockSeriesResult,
   type TradeV2GroupResult,
   type TradeV2GroupDetailResult,
   type TradeV2EntryDraft,
@@ -201,6 +202,7 @@ export const api = {
   /** 仓位管理 v2：逐笔交易账本 + 仓位明细（自动派生）+ 分组约束 */
   tradeV2Overview: () => request<TradeV2OverviewResult>("/tools/trade-v2"),
   tradeV2Group: (id: string) => request<TradeV2GroupDetailResult>("/tools/trade-v2/groups/" + encodeURIComponent(id)),
+  tradeV2StockSeries: (groupId: string, code: string) => request<TradeV2StockSeriesResult>(`/tools/trade-v2/groups/${encodeURIComponent(groupId)}/stock-series?code=${encodeURIComponent(code)}`),
   tradeV2GroupStocks: (id: string) => request<{ ok: boolean; stocks?: { code: string; name?: string }[] }>("/tools/trade-v2/groups/" + encodeURIComponent(id) + "/stocks"),
   tradeV2CreateGroup: (name: string, infoType?: "info" | "noinfo", isPaper?: boolean, aggSources?: string[]) => request<TradeV2GroupResult>("/tools/trade-v2/groups", jsonInit("POST", { name, ...(infoType ? { infoType } : {}), ...(isPaper ? { isPaper: true } : {}), ...(aggSources && aggSources.length > 0 ? { aggSources } : {}) })),
   tradeV2SaveGroup: (id: string, patch: { name?: string; totalCapital?: number; dailyAddLimit?: number; stockLimits?: { code: string; name?: string; maxWeightPct?: number }[]; allowShort?: boolean; infoType?: "info" | "noinfo" | null; isPaper?: boolean; aggSources?: string[] | null }) =>

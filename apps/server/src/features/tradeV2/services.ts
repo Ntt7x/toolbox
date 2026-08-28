@@ -10,6 +10,7 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {
   TradeV2CheckResult,
+  TradeV2DailyPoint,
   TradeV2Entry,
   TradeV2EntryDraft,
   TradeV2Group,
@@ -62,6 +63,7 @@ export async function resolveStockNameCached(code: string): Promise<string> {
 import { getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
 import {
   analyzeGroup,
+  buildDailySeries,
   buildGroupSummary,
   checkEntry,
 } from "./compute.js";
@@ -289,6 +291,18 @@ export class TradeV2AnalysisService extends Service {
       }),
     );
     return out;
+  }
+
+  /** 标的下沉页盈亏曲线（memo mtcorcho）：单个标的逐日序列——金额/收益率（前端算） */
+  async stockSeries(groupId: string, code: string): Promise<{ ok: boolean; code?: string; name?: string; series?: TradeV2DailyPoint[]; message?: string }> {
+    const group = this.ctx.tradeV2Group.get(groupId);
+    if (!group) return { ok: false, message: "分组不存在" };
+    const entries = getGroupEntries(groupId).filter((e) => e.code === code);
+    if (entries.length === 0) return { ok: false, message: "该分组无此标的交易记录" };
+    const enriched = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
+    const klines = await fetchKlinesForCodes([code]);
+    const series = buildDailySeries(enriched, klines);
+    return { ok: true, code, name: enriched[0]?.name, series };
   }
 
   /** 组分析（含行情附加；条目先补全名称——交易员可读性）

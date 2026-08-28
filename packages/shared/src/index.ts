@@ -2132,6 +2132,16 @@ export interface TradeV2GroupDetailResult {
   message?: string;
 }
 
+/** 标的下沉页盈亏曲线（memo mtcorcho：单个标的的逐日盈亏——金额/收益率） */
+export interface TradeV2StockSeriesResult {
+  ok: boolean;
+  code?: string;
+  name?: string;
+  /** 该标的逐日序列（buildDailySeries：按 code 过滤条目重放 + 历史价市值） */
+  series?: TradeV2DailyPoint[];
+  message?: string;
+}
+
 export interface TradeV2EntryResult {
   ok: boolean;
   entry?: TradeV2Entry;
