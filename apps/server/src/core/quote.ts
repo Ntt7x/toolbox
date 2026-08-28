@@ -334,7 +334,7 @@ async function fetchDailyRows(
   }
 }
 
-export async function fetchFx(code: "EURJPY" | "USDJPY" | "EURUSD"): Promise<{ price: number; prevClose: number; changePct: number } | null> {
+export async function fetchFx(code: "EURJPY" | "USDJPY" | "EURUSD" | "HKDCNY" | "USDCNY"): Promise<{ price: number; prevClose: number; changePct: number } | null> {
   try {
     const r = await fetch(`https://qt.gtimg.cn/q=wh${code}`, { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(8000) });
     const t = await r.text();

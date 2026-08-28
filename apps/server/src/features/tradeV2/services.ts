@@ -19,6 +19,32 @@ import type {
 import { kvGet } from "../../core/kvStore.js";
 import { fetchKlinesForCodes } from "../../core/kline.js";
 import { getStockVolatilities } from "../../core/volatilityStore.js";
+// 港股通人民币口径（memo mtd5uf43）：港股行情/成本按港币计价，计算时 × HKD/CNY 汇率换算人民币
+let fxCache: { rate: number; at: number } | null = null;
+async function getHkdCnyRate(): Promise<number> {
+  if (fxCache && Date.now() - fxCache.at < 24 * 3600 * 1000) return fxCache.rate;
+  const f = await fetchFx("HKDCNY").catch(() => null);
+  const rate = f && f.price > 0 ? f.price : 0.858; // 拉取失败用 0.858 近似兜底
+  fxCache = { rate, at: Date.now() };
+  return rate;
+}
+/** 港股代码判定（hk 前缀） */
+function isHkCode(code: string): boolean {
+  const c = code.trim();
+  return /^hk/i.test(c) || /^\d{3,5}$/.test(c); // 裸 3~5 位数字 = 港股（00189→hk00189，与 parseSecCode 一致）
+}
+/** 条目换算（副本）：港股 price/fee × 汇率 → 人民币（存储保持港币原值，计算链路换算） */
+function convertHkEntries(entries: TradeV2Entry[], rate: number): TradeV2Entry[] {
+  if (rate === 1) return entries;
+  return entries.map((e) => (isHkCode(e.code) ? { ...e, price: e.price * rate, fee: typeof e.fee === "number" ? e.fee * rate : e.fee } : e));
+}
+/** 价格表换算（副本）：港股最新价/历史 K 收盘 × 汇率 → 人民币 */
+function convertHkPrices(prices: Record<string, number>, rate: number): Record<string, number> {
+  if (rate === 1) return prices;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(prices)) out[k] = isHkCode(k) ? v * rate : v;
+  return out;
+}
 
 /** 公共：positions 附加行情字段（涨跌幅/今日盈亏/波动率分级）——分组/全局共用（DRY） */
 async function enrichPositions(positions: TradeV2Position[]): Promise<TradeV2Position[]> {
@@ -27,11 +53,13 @@ async function enrichPositions(positions: TradeV2Position[]): Promise<TradeV2Pos
   const vols = await getStockVolatilities(codes);
   const quotes = await getQuoteSnapshots(codes);
   const quoteOf = (code: string) => quotes.find((q) => q.code === code || q.code.endsWith(code) || code.endsWith(q.code.replace(/^[a-z]{2}/, "")));
+  const fxRate = await getHkdCnyRate(); // 港股通：今日盈亏港币 → 人民币
   return positions.map((p) => {
     const v = vols.get(p.code);
     const q = quoteOf(p.code);
     const pct = typeof q?.pct === "number" ? Math.round(q.pct * 100) / 100 : undefined;
-    const todayPnl = typeof q?.change === "number" ? Math.round(q.change * Math.abs(p.quantity) * 100) / 100 : undefined;
+    const fx = isHkCode(p.code) ? fxRate : 1;
+    const todayPnl = typeof q?.change === "number" ? Math.round(q.change * fx * Math.abs(p.quantity) * 100) / 100 : undefined;
     return {
       ...p,
       ...(v && v.vol !== undefined ? { volatility: Math.round(v.vol * 100) / 100, volLevel: v.level } : {}),
@@ -60,7 +88,7 @@ export async function resolveStockNameCached(code: string): Promise<string> {
     return "";
   }
 }
-import { getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
+import { fetchFx, getQuoteSnapshot, getQuoteSnapshots } from "../../core/quote.js";
 import {
   analyzeGroup,
   buildDailySeries,
@@ -297,10 +325,13 @@ export class TradeV2AnalysisService extends Service {
   async stockSeries(groupId: string, code: string): Promise<{ ok: boolean; code?: string; name?: string; series?: TradeV2DailyPoint[]; message?: string }> {
     const group = this.ctx.tradeV2Group.get(groupId);
     if (!group) return { ok: false, message: "分组不存在" };
-    const entries = getGroupEntries(groupId).filter((e) => e.code === code);
+    let entries = getGroupEntries(groupId).filter((e) => e.code === code);
     if (entries.length === 0) return { ok: false, message: "该分组无此标的交易记录" };
-    const enriched = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
+    let enriched = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
+    const fxRate = await getHkdCnyRate();
+    enriched = convertHkEntries(enriched, fxRate);
     const klines = await fetchKlinesForCodes([code]);
+    if (fxRate !== 1 && isHkCode(code)) for (const mm of klines.values()) for (const [dd, v] of mm) mm.set(dd, v * fxRate);
     const series = buildDailySeries(enriched, klines);
     return { ok: true, code, name: enriched[0]?.name, series };
   }
@@ -313,9 +344,15 @@ export class TradeV2AnalysisService extends Service {
     if (!group) return null;
     let entries = this.ctx.tradeV2Ledger.listByGroup(groupId);
     entries = await this.ctx.tradeV2Ledger.enrichNames(entries, [group]);
-    const prices = await this.latestPrices(entries);
+    // 港股通人民币口径：港股 price/fee/行情 × HKD/CNY 汇率（存储保持港币原值）
+    const fxRate = await getHkdCnyRate();
+    entries = convertHkEntries(entries, fxRate);
+    const prices = convertHkPrices(await this.latestPrices(entries), fxRate);
     // 历史日 K（收益曲线真实市值口径）：组内全部标的并发拉取；无行情静默回退成本口径
     const klines = await fetchKlinesForCodes(entries.map((e) => e.code));
+    if (fxRate !== 1) {
+      for (const [code, mm] of klines) if (isHkCode(code)) for (const [d, v] of mm) mm.set(d, v * fxRate);
+    }
     // 聚合分组：仓位进度分母 = 来源分组 totalCapital 之和（合并视图占用语义）
     let capOverride: number | undefined;
     if (Array.isArray(group.aggSources) && group.aggSources.length > 0) {
