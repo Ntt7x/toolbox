@@ -29,6 +29,7 @@ const TOOLS = [
   { cmd: "browser", script: "browser-run.mjs", group: "验证", desc: "浏览器冒烟运行器（playwright 模板固化：TMP/日志/Chrome 自动处理）", example: "toolbox browser <script.mjs> [url]" },
   // ---- 数据 ----
   { cmd: "kv", script: "kv.mjs", group: "数据", desc: "KV/DB 检查与备份（list/count/get/backup/restore）", example: "toolbox kv count|list|get <key>" },
+  { cmd: "dbdiag", script: "dbdiag.mjs", group: "数据", desc: "SQLite 诊断与 WAL 恢复排查（health/compare/prefix/wal/ids）", example: "toolbox dbdiag wal .file\\toolbox.db-wal --prefix tradeV2:trade:" },
   { cmd: "memo", script: "memo.mjs", group: "数据", desc: "改进备忘录 CLI（每轮「处理备忘录」必用）", example: "toolbox memo list|stats|bypage <关键词>|done <id>...|add <text>" },
   // ---- 提交 ----
   { cmd: "commit", script: "commit.mjs", group: "提交", desc: "git 提交包装（消息引号安全，自动 add+commit+push）", example: "toolbox commit 'feat(x): 说明'" },

@@ -13,7 +13,7 @@
 | **架构层（理解）** | `dev.md §1` + 仓库源码树 | 目录结构、分层铁律、工具注册流程、RPC 形态 | 改架构 / 新增工具时 |
 | **领域层（按需）** | `domains/` | 专业领域经验：frontend-experience / reasonix / shadcn / llm / features / data-sources | 涉足对应领域时（见下方索引） |
 | **记录层（检索）** | `history/` | 历史会话归档（时间线，只增不改） | 了解已完成/遗留；开工前查最新 + INDEX |
-| **规划层（存档）** | `plans/` | 阶段性规划/路线图/调研结论（束之高阁待触发）：`modularization.md`、`akshare-python-backend.md`、`server-microservices.md`、`python-backtest.md`、`chrome-extension.md` | 涉及规划/改造方向时参考 |
+| **规划层（存档）** | `plans/` | 阶段性规划/路线图/调研结论（束之高阁待触发）：`modularization.md`、`akshare-python-backend.md`、`server-microservices.md`、`python-backtest.md`、`chrome-extension.md`、`sqlite-safety.md`（SQLite 直连红线 + WAL 恢复排查法） | 涉及规划/改造方向时参考 |
 | **脚本层（执行）** | `scripts/README.md` | 开发辅助脚本指南（toolbox 统一入口） | 用脚本时先看入口说明 |
 
 ## 新会话启动清单（5 步，约 1 分钟）

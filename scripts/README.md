@@ -24,6 +24,7 @@ scripts/
     ├── e2e.mjs               API E2E 断言脚手架（库）
     ├── memo.mjs              改进备忘录 CLI
     ├── kv.mjs                KV/DB 检查与备份（list/count/get/backup/restore）
+    ├── dbdiag.mjs            SQLite 诊断与 WAL 恢复排查（health/compare/prefix/wal/ids）
     ├── patch.mjs             文件文本替换执行器（patch.json 驱动）
     ├── check-change.mjs      改动健康检查
     ├── browser-probe.mjs     浏览器探针
