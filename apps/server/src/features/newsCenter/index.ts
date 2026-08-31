@@ -2,6 +2,7 @@
 // 业务模块：新闻中心（features/newsCenter）
 // 多新闻源配置 + 展示（新闻源可拓展：registerNewsSource 即接入）
 // 配置存本地设置数据（settings:news.sources），展示区按启用源拉取（每源缓存 10 分钟）
+// 文本加工（打标/高亮/黑名单，非 LLM）见同目录 textRules.ts
 // ============================================================
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -9,6 +10,7 @@ import { API_PREFIX } from "@toolbox/shared";
 import { kvGet, kvSet } from "../../core/kvStore.js";
 import { getSetting, setSetting } from "../../core/settingsStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
+import { getTextConfig, processNews, processTextItem, sanitizeTextConfig, saveTextConfig } from "./textRules.js";
 
 export const meta = {
   id: "news-center",
@@ -152,12 +154,54 @@ export function register(app: Hono): void {
   });
 
   // 拉取新闻（?sources=id1,id2 可选；?page=N 分页，默认 1——分页获取更多，memo msq32kgv）
+  // 返回为**加工后**条目：tags（打标）/ hits（高亮区间）/ blocked（黑名单）+ blockedCount（被剔除条数）
   route.get("/items", async (c: Context) => {
     const q = c.req.query("sources");
     const ids = q ? q.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
     const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
     const r = await fetchNews(ids, page);
-    return c.json({ ok: r.ok, items: r.items, errors: r.errors, fromCache: r.fromCache, page });
+    const processed = processNews(r.items);
+    return c.json({
+      ok: r.ok,
+      items: processed.items,
+      errors: r.errors,
+      fromCache: r.fromCache,
+      page,
+      blockedCount: processed.blockedCount,
+    });
+  });
+
+  // ---------- 文本加工配置（打标规则 / 高亮词组 / 黑名单词组） ----------
+
+  // 读取配置
+  route.get("/rules", (c: Context) => c.json({ ok: true, config: getTextConfig() }));
+
+  // 保存配置
+  route.post("/rules", async (c: Context) => {
+    const raw = (await c.req.json().catch(() => null)) as { config?: unknown } | null;
+    if (!raw || typeof raw.config !== "object" || raw.config === null) {
+      return c.json({ ok: false, message: "缺少 config" }, 400);
+    }
+    const r = saveTextConfig(raw.config);
+    if (!r.ok) return c.json({ ok: false, config: r.config, message: r.message }, 400);
+    return c.json({ ok: true, config: r.config });
+  });
+
+  // 试跑（不落库）：用给定配置加工当前新闻流前 N 条，或加工一段自定义文本
+  route.post("/preview", async (c: Context) => {
+    const body = (await c.req.json().catch(() => null)) as { config?: unknown; text?: string; limit?: number } | null;
+    const cfg = sanitizeTextConfig(body?.config ?? getTextConfig());
+    const text = typeof body?.text === "string" ? body.text.trim() : "";
+    if (text) {
+      // 自定义文本：与新闻流同一套语义（黑名单 hide 时不返回条目，只回计数）
+      const item = processTextItem(text, cfg);
+      const hidden = item.blocked && cfg.blacklist.enabled && cfg.blacklist.action === "hide";
+      return c.json({ ok: true, items: hidden ? [] : [item], blockedCount: hidden ? 1 : 0 });
+    }
+    const limit = Math.min(Math.max(1, Number(body?.limit ?? 20) || 20), 100);
+    const r = await fetchNews(undefined, 1);
+    const processed = processNews(r.items.slice(0, limit), cfg);
+    return c.json({ ok: true, items: processed.items, blockedCount: processed.blockedCount });
   });
 
   app.route(`${API_PREFIX}/tools/news`, route);

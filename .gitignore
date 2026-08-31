@@ -6,3 +6,6 @@ dist/
 .vscode/
 .file/
 /k/
+.venv/
+__pycache__/
+services/**/.install.log

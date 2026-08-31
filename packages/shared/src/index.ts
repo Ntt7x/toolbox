@@ -2263,3 +2263,113 @@ export interface DataInfraQueueStats {
   failed: number;
   total: number;
 }
+
+// ============================================================
+// 新闻中心：文本加工数据工程（非 LLM：精准/模糊匹配 → 打标/高亮/黑名单）
+// 加工流水线全部为纯函数（服务端 core/newsText 原子能力 + features/newsCenter 编排）
+// ============================================================
+
+/** 匹配模式：exact=精准（归一化子串/整词）；fuzzy=模糊（编辑距离相似度） */
+export type NewsMatchMode = "exact" | "fuzzy";
+
+/** 打标规则：命中关键词 → 给新闻打上标签 */
+export interface NewsTagRule {
+  id: string;
+  /** 标签名（打标结果，如「重要」「美联储」「地产」） */
+  name: string;
+  mode: NewsMatchMode;
+  /** 关键词/词组（逗号、顿号、分号、换行分隔输入，存储为数组） */
+  keywords: string[];
+  /** 徽章展示色（缺省用默认色） */
+  color?: string;
+  enabled: boolean;
+}
+
+/** 高亮词组配置：命中的词组在展示区高亮 */
+export interface NewsHighlightConfig {
+  enabled: boolean;
+  mode: NewsMatchMode;
+  words: string[];
+}
+
+/** 黑名单词组配置：命中的新闻 hide=剔除出流 / mark=保留但标记 */
+export interface NewsBlacklistConfig {
+  enabled: boolean;
+  mode: NewsMatchMode;
+  words: string[];
+  action: "hide" | "mark";
+}
+
+/** 新闻文本加工完整配置（存本地设置数据 settings:news.textConfig） */
+export interface NewsTextConfig {
+  rules: NewsTagRule[];
+  highlight: NewsHighlightConfig;
+  blacklist: NewsBlacklistConfig;
+}
+
+/** 单处命中（下标基于**原始字符串**，前端可直接切片渲染） */
+export interface NewsTextHit {
+  /** 命中字段 */
+  field: "title" | "digest";
+  /** 左闭右开区间 */
+  start: number;
+  end: number;
+  /** 命中文本 */
+  text: string;
+  /** 命中的词组 */
+  word: string;
+}
+
+/** 加工后的新闻条目（原字段 + 加工产物） */
+export interface ProcessedNewsItem {
+  title: string;
+  digest: string;
+  time: string;
+  url: string;
+  source: string;
+  sourceName: string;
+  /** 命中的标签名（按规则顺序去重） */
+  tags: string[];
+  /** 命中的黑名单词 */
+  blockHits: string[];
+  /** 是否命中黑名单（action=hide 时已从流中剔除，不会下发） */
+  blocked: boolean;
+  /** 高亮命中位置（title + digest） */
+  hits: NewsTextHit[];
+}
+
+/** 加工配置读写响应 */
+export interface NewsRulesResult {
+  ok: boolean;
+  config?: NewsTextConfig;
+  message?: string;
+}
+
+/** 试跑请求（不落库：用当前配置对当前新闻流/自定义文本做加工预览） */
+export interface NewsPreviewRequest {
+  config: NewsTextConfig;
+  /** 自定义文本（缺省用当前新闻流前 N 条）；传入则只加工这一条文本 */
+  text?: string;
+  /** 最多加工条数（缺省 20） */
+  limit?: number;
+}
+
+export interface NewsPreviewResult {
+  ok: boolean;
+  items?: ProcessedNewsItem[];
+  /** 被黑名单 hide 的条数 */
+  blockedCount?: number;
+  message?: string;
+}
+
+/** 新闻流响应（items 为加工后结果） */
+export interface NewsItemsResult {
+  ok: boolean;
+  items: ProcessedNewsItem[];
+  errors: string[];
+  fromCache: boolean[];
+  page: number;
+  /** 本页因黑名单被剔除的条数 */
+  blockedCount?: number;
+  message?: string;
+}

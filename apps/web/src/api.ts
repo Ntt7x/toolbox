@@ -88,6 +88,10 @@ import {
   type TradeV2CheckResponse,
   type TradeV2GlobalResult,
   type TradeV2BatchResult,
+  type NewsItemsResult,
+  type NewsPreviewResult,
+  type NewsRulesResult,
+  type NewsTextConfig,
 } from "@toolbox/shared";
 
 // API 客户端：前端唯一访问后端的入口。
@@ -233,10 +237,18 @@ export const api = {
     request<{ ok: boolean; prompt?: string; fromCache?: boolean; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", { ...(force ? { force: true } : {}) })),
   newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
   newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
+  /** 新闻流（服务端加工：tags 打标 / hits 高亮 / blocked 黑名单） */
   newsItems: (sources?: string[], page = 1) =>
-    request<{ ok: boolean; items: { title: string; digest: string; time: string; url: string; source: string; sourceName: string }[]; errors: string[]; fromCache: boolean[]; page: number; message?: string }>(
+    request<NewsItemsResult>(
       `/tools/news/items${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}${sources && sources.length ? "&" : "?"}page=${page}`,
     ),
+  /** 文本加工配置（打标规则 / 高亮 / 黑名单） */
+  newsRules: () => request<NewsRulesResult>("/tools/news/rules"),
+  newsSaveRules: (config: NewsTextConfig) =>
+    request<NewsRulesResult>("/tools/news/rules", jsonInit("POST", { config })),
+  /** 试跑（不落库）：对当前新闻流或自定义文本加工预览 */
+  newsPreview: (config: NewsTextConfig, text?: string, limit = 20) =>
+    request<NewsPreviewResult>("/tools/news/preview", jsonInit("POST", { config, ...(text ? { text } : {}), limit })),
   // 改进备忘录（TODO list）
   memoList: () => request<MemoListResult>("/tools/memo"),
   memoCreate: (text: string, kind?: MemoKind) => request<MemoCreateResult>("/tools/memo", jsonInit("POST", { text, ...(kind ? { kind } : {}) })),
