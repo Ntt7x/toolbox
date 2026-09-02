@@ -36,6 +36,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { xueqiuUrl } from "./watchlist/shared";
 
 // ---------- 配色（友好可读） ----------
 
@@ -222,20 +223,6 @@ function NameCode({ name, code, size = "0.85rem" }: { name?: string; code: strin
       <a href={xueqiuUrl(code)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title={`雪球 ${code}`} style={{ marginLeft: 4, color: C.muted, textDecoration: "none", fontSize: "0.75rem" }}>🔗</a>
     </span>
   );
-}
-
-/** 雪球外链 URL（A/H 股市场前缀转换；北交所/未知代码返回 # 不跳转） */
-function xueqiuUrl(code: string): string {
-  const c = code.trim().toUpperCase();
-  let sym = "";
-  if (/^(SH|SZ|BJ)\d+/.test(c)) sym = c;
-  else if (/^(HK)\d+/.test(c)) sym = c.slice(2); // 港股雪球 URL 不带 HK 前缀：/S/00189
-  else if (/^\d{6}$/.test(c)) {
-    if (/^[56]\d{5}$/.test(c)) sym = "SH" + c;      // 沪市 A 股（6 开头）/ 沪市 ETF（5 开头，如 512800）
-    else if (/^[013]\d{5}$/.test(c)) sym = "SZ" + c; // 深市 A 股/ETF（0/1/3 开头，如 159745）
-    else if (/^[489]\d{5}$/.test(c)) sym = "BJ" + c; // 北交所（4/8/9 开头）
-  } else if (/^\d{3,5}$|^0\d{4}$/.test(c)) sym = c; // 港股：裸代码（雪球格式 /S/00189）
-  return sym ? `https://xueqiu.com/S/${sym}` : "#";
 }
 
 // ---------- ECharts 容器 ----------

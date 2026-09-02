@@ -1,8 +1,9 @@
 // ============================================================
 // 自选股：以「标的」为核心，以「多级 tag」为筛选维度
 // ------------------------------------------------------------
-// 布局（视口级，页面不整体滚动）：
-//   左栏 = 筛选区：上「tag 树管理」（树形目录 + 创建/删除/移动），下「标的列表」（以标的为核心）
+// 三栏布局（视口级，页面不整体滚动）：
+//   左栏 = 标签列表（TagTree，可整体收起，紧凑）
+//   中栏 = 标的列表（ItemList，以标的为核心，紧凑）
 //   右栏 = 单一标的的四个功能面：行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置 · 逻辑确认
 // 关键：四个功能面的服务对象是**单一标的**（不是分组、也不是 tag）。
 // ============================================================
@@ -15,7 +16,7 @@ import type {
   WatchTagNode,
 } from "@toolbox/shared";
 import { WATCH_ROOT_TAG } from "@toolbox/shared";
-import { C, Empty, Loading, SegTabs, btnSmall, input, pctColor, fmtPct, fmtPrice } from "./watchlist/shared";
+import { C, Empty, Loading, SegTabs, btnSmall, input, pctColor, fmtPct, fmtPrice, stockDetailUrl } from "./watchlist/shared";
 import { ConfirmButton } from "./watchlist/ui";
 import { TagTree } from "./watchlist/TagTree";
 import { ItemList, tagNameMap } from "./watchlist/ItemList";
@@ -33,60 +34,55 @@ const TABS: { value: TabKey; label: string }[] = [
   { value: "logic", label: "逻辑确认" },
 ];
 
-/** 左栏宽度（localStorage 记忆，frontend-experience §4 侧边栏拉伸） */
+/** 左栏（标签树）宽度（localStorage 记忆，frontend-experience §4 侧边栏拉伸） */
 const LEFT_W_KEY = "watchlist:leftWidth";
-const LEFT_DEFAULT = 300;
-const LEFT_MIN = 220;
-const LEFT_MAX = 520;
+const LEFT_DEFAULT = 224;
+const LEFT_MIN = 170;
+const LEFT_MAX = 420;
+/** 左栏整体收起后的窄条宽度 */
+const LEFT_COLLAPSED_W = 34;
+
+/** 中栏（标的列表）宽度（localStorage 记忆） */
+const MID_W_KEY = "watchlist:midWidth";
+const MID_DEFAULT = 288;
+const MID_MIN = 220;
+const MID_MAX = 460;
 
 function readLeftWidth(): number {
   const n = Number(localStorage.getItem(LEFT_W_KEY));
   return Number.isFinite(n) && n >= LEFT_MIN && n <= LEFT_MAX ? n : LEFT_DEFAULT;
 }
-
-/** 左栏上区（标签筛选）展开时占比（%）；默认折叠，展开后向下挤压标的列表 */
-const TOP_RATIO_KEY = "watchlist:topRatio";
-const TOP_DEFAULT = 42; // 展开时 标签筛选 42% : 标的列表 58%
-const TOP_MIN = 15;
-const TOP_MAX = 85;
-/** 标签筛选区默认折叠（状态持久化；展开时弹性挤压下方标的列表） */
-const TAG_COLLAPSED_KEY = "watchlist:tagCollapsed";
-const TAG_COLLAPSED_DEFAULT = true;
-
-function readTopRatio(): number {
-  const n = Number(localStorage.getItem(TOP_RATIO_KEY));
-  return Number.isFinite(n) && n >= TOP_MIN && n <= TOP_MAX ? n : TOP_DEFAULT;
+function readMidWidth(): number {
+  const n = Number(localStorage.getItem(MID_W_KEY));
+  return Number.isFinite(n) && n >= MID_MIN && n <= MID_MAX ? n : MID_DEFAULT;
+}
+/** 左栏整体收起（仅留窄条 + 展开按钮），给中栏更多横向空间 */
+const LEFT_COLLAPSED_KEY = "watchlist:leftCollapsed";
+function readLeftCollapsed(): boolean {
+  return localStorage.getItem(LEFT_COLLAPSED_KEY) === "1";
 }
 
-function readTagCollapsed(): boolean {
-  const v = localStorage.getItem(TAG_COLLAPSED_KEY);
-  return v === null ? TAG_COLLAPSED_DEFAULT : v === "1";
-}
-
-/** 左右分栏拖拽把手（与上下分区把手共用样式） */
+/** 竖直分栏拖拽把手（左右调宽） */
 function DragHandle({
-  dir,
   onStart,
   onDoubleClick,
+  title,
 }: {
-  dir: "v" | "h";
   onStart: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
+  title: string;
 }) {
-  const vertical = dir === "v"; // v = 竖直分隔条（左右调宽）；h = 水平分隔条（上下调高）
   return (
     <div
       onMouseDown={onStart}
       onDoubleClick={onDoubleClick}
-      title={vertical ? "拖动调整筛选区宽度（双击复位）" : "拖动调整两区高度（双击复位）"}
+      title={title}
       style={{
         flexShrink: 0,
         background: "transparent",
-        cursor: vertical ? "col-resize" : "row-resize",
-        width: vertical ? 5 : undefined,
-        height: vertical ? undefined : 5,
-        borderLeft: vertical ? `1px solid ${C.border}` : undefined,
-        borderTop: vertical ? undefined : `1px solid ${C.border}`,
+        cursor: "col-resize",
+        width: 5,
+        borderLeft: `1px solid ${C.border}`,
       }}
       onMouseEnter={(e) => (e.currentTarget.style.background = C.accentBorder)}
       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
@@ -105,10 +101,11 @@ export function WatchlistTool() {
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
   const [leftWidth, setLeftWidth] = useState(readLeftWidth);
-  const [topRatio, setTopRatio] = useState(readTopRatio);
-  const [tagCollapsed, setTagCollapsed] = useState(readTagCollapsed);
-  const dragRef = useRef<{ x: number; y: number; w: number; ratio: number; dir: "v" | "h" } | null>(null);
+  const [midWidth, setMidWidth] = useState(readMidWidth);
+  const [leftCollapsed, setLeftCollapsed] = useState(readLeftCollapsed);
+  const dragRef = useRef<{ x: number; w: number; which: "left" | "mid" } | null>(null);
   const leftRef = useRef<HTMLDivElement | null>(null);
+  const midRef = useRef<HTMLDivElement | null>(null);
 
   const errOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -243,10 +240,10 @@ export function WatchlistTool() {
       await api.watchlistItemUpdate(code, patch);
     }, "已保存");
 
-  // ---------- 左栏宽度 / 上下分区高度 拖拽 ----------
-  const startDrag = (dir: "v" | "h") => (e: React.MouseEvent) => {
-    dragRef.current = { x: e.clientX, y: e.clientY, w: leftWidth, ratio: topRatio, dir };
-    document.body.style.cursor = dir === "v" ? "col-resize" : "row-resize";
+  // ---------- 左栏宽度 / 中栏宽度 拖拽 ----------
+  const startDrag = (which: "left" | "mid") => (e: React.MouseEvent) => {
+    dragRef.current = { x: e.clientX, w: which === "left" ? leftWidth : midWidth, which };
+    document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   };
 
@@ -254,21 +251,19 @@ export function WatchlistTool() {
     const onMove = (e: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      if (d.dir === "v") {
-        setLeftWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, d.w + (e.clientX - d.x))));
+      const delta = e.clientX - d.x;
+      if (d.which === "left") {
+        setLeftWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, d.w + delta)));
       } else {
-        const box = leftRef.current?.getBoundingClientRect();
-        if (!box || box.height === 0) return;
-        const next = d.ratio + ((e.clientY - d.y) / box.height) * 100;
-        setTopRatio(Math.min(TOP_MAX, Math.max(TOP_MIN, next)));
+        setMidWidth(Math.min(MID_MAX, Math.max(MID_MIN, d.w + delta)));
       }
     };
     const onUp = () => {
       if (!dragRef.current) return;
-      const dir = dragRef.current.dir;
+      const which = dragRef.current.which;
       dragRef.current = null;
-      if (dir === "v") localStorage.setItem(LEFT_W_KEY, String(leftWidth));
-      else localStorage.setItem(TOP_RATIO_KEY, String(topRatio));
+      if (which === "left") localStorage.setItem(LEFT_W_KEY, String(leftWidth));
+      else localStorage.setItem(MID_W_KEY, String(midWidth));
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
@@ -278,7 +273,7 @@ export function WatchlistTool() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [leftWidth, topRatio]);
+  }, [leftWidth, midWidth]);
 
   // ---------- 渲染 ----------
 
@@ -314,13 +309,72 @@ export function WatchlistTool() {
         </div>
       ) : null}
 
-      {/* 主区：左筛选区 + 右单标的详情（各自独立滚动） */}
+      {/* 主区：左标签树 + 中标的数据列表 + 右单标的详情（各自独立滚动） */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", gap: 0 }}>
-        {/* 左栏：筛选区（上 tag 树 / 下标的列表） */}
+        {/* 左栏：标签树（可整体收起） */}
+        {leftCollapsed ? (
+          <div
+            ref={leftRef}
+            style={{
+              width: LEFT_COLLAPSED_W,
+              flexShrink: 0,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              borderRight: `1px solid ${C.border}`,
+              background: "#fff",
+              cursor: "pointer",
+            }}
+            title="展开标签树"
+            onClick={() => {
+              setLeftCollapsed(false);
+              localStorage.setItem(LEFT_COLLAPSED_KEY, "0");
+            }}
+          >
+            <div style={{ padding: "0.5rem 0", fontSize: "1rem", color: C.accent, writingMode: "vertical-rl", letterSpacing: "0.15rem" }}>
+              🏷 标签
+            </div>
+          </div>
+        ) : (
+          <aside
+            ref={leftRef}
+            style={{
+              width: leftWidth,
+              flexShrink: 0,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              borderRight: `1px solid ${C.border}`,
+              background: "#fff",
+            }}
+          >
+            <TagTree
+              tags={tags}
+              selected={selectedTag}
+              onCollapse={() => {
+                setLeftCollapsed(true);
+                localStorage.setItem(LEFT_COLLAPSED_KEY, "1");
+              }}
+              onSelect={setSelectedTag}
+              onCreate={onCreateTag}
+              onRename={onRenameTag}
+              onMove={onMoveTag}
+              onDelete={onDeleteTag}
+            />
+          </aside>
+        )}
+
+        {/* 左栏宽度拖拽把手（收起时隐藏） */}
+        {leftCollapsed ? null : (
+          <DragHandle onStart={startDrag("left")} onDoubleClick={() => setLeftWidth(LEFT_DEFAULT)} title="拖动调整标签树宽度（双击复位）" />
+        )}
+
+        {/* 中栏：标的列表（以标的为核心） */}
         <aside
-          ref={leftRef}
+          ref={midRef}
           style={{
-            width: leftWidth,
+            width: midWidth,
             flexShrink: 0,
             minHeight: 0,
             display: "flex",
@@ -329,54 +383,19 @@ export function WatchlistTool() {
             background: "#fff",
           }}
         >
-          {/* 上：tag 树管理区（默认折叠；展开后按 topRatio 弹性挤压下方标的列表） */}
-          <div
-            style={{
-              flex: tagCollapsed ? "0 0 auto" : `0 0 ${topRatio}%`,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            <TagTree
-              tags={tags}
-              selected={selectedTag}
-              collapsed={tagCollapsed}
-              onToggleCollapsed={() => {
-                const next = !tagCollapsed;
-                setTagCollapsed(next);
-                localStorage.setItem(TAG_COLLAPSED_KEY, next ? "1" : "0");
-              }}
-              onSelect={setSelectedTag}
-              onCreate={onCreateTag}
-              onRename={onRenameTag}
-              onMove={onMoveTag}
-              onDelete={onDeleteTag}
-            />
-          </div>
-
-          {/* 上下分区拖拽把手：展开时可调两区高度（折叠时隐藏） */}
-          {tagCollapsed ? null : (
-            <DragHandle dir="h" onStart={startDrag("h")} onDoubleClick={() => setTopRatio(TOP_DEFAULT)} />
-          )}
-
-          {/* 下：标的列表（以标的为核心） */}
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <ItemList
-              items={items}
-              allTags={tags}
-              selectedCode={selectedCode}
-              tagName={tagName}
-              onSelect={setSelectedCode}
-              onAdd={onAddItem}
-              onUpdateTags={(code, nextTags) => onUpdateItem(code, { tags: nextTags })}
-            />
-          </div>
+          <ItemList
+            items={items}
+            allTags={tags}
+            selectedCode={selectedCode}
+            tagName={tagName}
+            onSelect={setSelectedCode}
+            onAdd={onAddItem}
+            onUpdateTags={(code, nextTags) => onUpdateItem(code, { tags: nextTags })}
+          />
         </aside>
 
-        {/* 左右分栏拖拽把手：调左栏宽度 */}
-        <DragHandle dir="v" onStart={startDrag("v")} onDoubleClick={() => setLeftWidth(LEFT_DEFAULT)} />
+        {/* 中栏宽度拖拽把手 */}
+        <DragHandle onStart={startDrag("mid")} onDoubleClick={() => setMidWidth(MID_DEFAULT)} title="拖动调整标的列表宽度（双击复位）" />
 
         {/* 右栏：单一标的的四个功能面 */}
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -386,7 +405,7 @@ export function WatchlistTool() {
             </div>
           ) : !current ? (
             <div style={{ padding: "1rem" }}>
-              <Empty>{items.length === 0 ? `「${tagName}」下暂无标的——先在左下角添加，或换个标签` : "请在左侧选择一个标的"}</Empty>
+              <Empty>{items.length === 0 ? `「${tagName}」下暂无标的——先在中栏添加，或换个标签` : "请在中栏选择一个标的"}</Empty>
             </div>
           ) : (
             <ItemDetail
@@ -457,7 +476,7 @@ function ItemDetail({
       <div style={{ padding: "0.5rem 0.9rem 0.45rem", borderBottom: `1px solid ${C.border}`, background: "#fff", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
           <a
-            href={`https://xueqiu.com/S/${item.code.toUpperCase()}`}
+            href={stockDetailUrl(item.code, item.kind)}
             target="_blank"
             rel="noreferrer"
             style={{ fontSize: "1.15rem", fontWeight: 800, color: C.text, textDecoration: "none" }}

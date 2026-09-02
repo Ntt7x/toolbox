@@ -1,10 +1,10 @@
 // ============================================================
-// 自选股·左侧筛选区（上）：tag 树管理
+// 自选股·左栏：tag 树管理
 // ------------------------------------------------------------
 // 手写树（vscode 资源管理器范式；shadcn 生态无文件树组件，见 frontend-experience §9）：
 //   默认展开一级 · 折叠箭头与点击选择分离 · 内联重命名 · hover 操作按钮 · 拖拽移动改层级
 // 每行：缩进 · 折叠箭头 · 标签名 · 标的数 · 平均涨跌幅 · 新建/重命名/删除
-// 删除走 ConfirmButton（确认模态），避免误删。
+// 删除走 ConfirmButton（确认模态），避免误删。紧凑布局（左栏较窄）。
 //
 // 顶级 tag「全部」**不渲染为树节点**，其功能合并进本区头部：
 //   · 点头部「全部」= 不筛选（等价选中根 tag）
@@ -20,8 +20,7 @@ import { ConfirmButton } from "./ui";
 export function TagTree({
   tags,
   selected,
-  collapsed: panelCollapsed = false,
-  onToggleCollapsed,
+  onCollapse,
   onSelect,
   onCreate,
   onRename,
@@ -30,9 +29,8 @@ export function TagTree({
 }: {
   tags: WatchTagNode[];
   selected: string;
-  /** 整个筛选区折叠（只显示头部）；默认折叠，点击头部展开并向下挤压标的列表 */
-  collapsed?: boolean;
-  onToggleCollapsed?: () => void;
+  /** 折叠整个左栏（由外层 WatchlistTool 管理收起态） */
+  onCollapse?: () => void;
   onSelect: (id: string) => void;
   onCreate: (name: string, parentId: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
@@ -125,8 +123,9 @@ export function TagTree({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
+      {/* 行内管理按钮（✚子标签/重命名/删除）平时隐藏，悬停整行才出现，避免窄栏拥挤 */}
+      <style>{`.wl-tagrow .wl-rowacts{opacity:0;transition:opacity .12s} .wl-tagrow:hover .wl-rowacts{opacity:1}`}</style>
       <div
-        onClick={onToggleCollapsed}
         onDragOver={(e) => {
           if (!dragId || dragId === WATCH_ROOT_TAG) return;
           e.preventDefault();
@@ -134,21 +133,19 @@ export function TagTree({
         }}
         onDragLeave={() => setDropId((cur) => (cur === WATCH_ROOT_TAG ? null : cur))}
         onDrop={handleRootDrop}
-        title={panelCollapsed ? "展开标签筛选（向下挤压标的列表）" : "收起标签筛选"}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "0.4rem",
-          padding: "0.45rem 0.7rem",
+          gap: "0.3rem",
+          padding: "0.3rem 0.45rem",
           borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
-          cursor: onToggleCollapsed ? "pointer" : "default",
           userSelect: "none",
           background: dropId === WATCH_ROOT_TAG ? "#f1f5f9" : undefined,
         }}
       >
-        <span style={{ width: 4, height: 14, borderRadius: 999, background: C.accent, flexShrink: 0 }} />
-        <span style={{ fontWeight: 700, fontSize: "0.9rem", color: C.text }}>🏷 标签筛选</span>
+        <span style={{ width: 3, height: 12, borderRadius: 999, background: C.accent, flexShrink: 0 }} />
+        <span style={{ fontWeight: 700, fontSize: "0.82rem", color: C.text, whiteSpace: "nowrap" }}>🏷 标签</span>
 
         {/* 「全部」入口：替代被隐藏的顶级 tag 节点，点击即取消筛选 */}
         <button
@@ -163,8 +160,8 @@ export function TagTree({
             background: allActive ? C.accent : "transparent",
             color: allActive ? "#fff" : C.faintest,
             fontWeight: allActive ? 700 : 500,
-            fontSize: "0.75rem",
-            padding: "0.05rem 0.4rem",
+            fontSize: "0.72rem",
+            padding: "0.03rem 0.35rem",
             borderRadius: 999,
             cursor: "pointer",
             flexShrink: 0,
@@ -175,32 +172,33 @@ export function TagTree({
         </button>
         {/* 「全部」的平均涨跌幅（与树内每行口径一致） */}
         {rootStats && typeof rootStats.avgPct === "number" ? (
-          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: pctColor(rootStats.avgPct), flexShrink: 0 }} title={`全部 ${rootStats.avgCount ?? 0} 只有行情标的的等权平均涨跌幅`}>
+          <span style={{ fontSize: "0.72rem", fontWeight: 700, color: pctColor(rootStats.avgPct), flexShrink: 0 }} title={`全部 ${rootStats.avgCount ?? 0} 只有行情标的的等权平均涨跌幅`}>
             {fmtPct(rootStats.avgPct)}
           </span>
         ) : null}
-
-        {/* 折叠时提示当前生效的筛选，避免「看不见却生效」 */}
-        {panelCollapsed && !allActive && activeName ? (
-          <span style={{ fontSize: "0.78rem", color: C.accent, background: C.accentBg, borderRadius: 999, padding: "0 0.45rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {activeName}
-          </span>
-        ) : null}
         <span style={{ flex: 1 }} />
-        {panelCollapsed ? null : (
-          <button
-            type="button"
-            title="新建顶层标签"
-            onClick={(e) => {
-              e.stopPropagation();
-              setAddingTo(WATCH_ROOT_TAG);
-            }}
-            style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "1rem", color: C.accent, padding: "0 0.25rem", lineHeight: 1 }}
-          >
-            ✚
-          </button>
-        )}
-        <span style={{ fontSize: "0.7rem", color: C.faintest }}>{panelCollapsed ? "▼" : "▲"}</span>
+        <button
+          type="button"
+          title="新建顶层标签"
+          onClick={(e) => {
+            e.stopPropagation();
+            setAddingTo(WATCH_ROOT_TAG);
+          }}
+          style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.85rem", color: C.accent, padding: "0 0.15rem", lineHeight: 1, flexShrink: 0 }}
+        >
+          ✚
+        </button>
+        <button
+          type="button"
+          title="收起标签树"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCollapse?.();
+          }}
+          style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem", color: C.faintest, padding: "0 0.1rem", lineHeight: 1, flexShrink: 0 }}
+        >
+          ◀
+        </button>
       </div>
 
       <div
@@ -208,12 +206,11 @@ export function TagTree({
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
-          padding: "0.3rem 0.4rem",
-          display: panelCollapsed ? "none" : undefined,
+          padding: "0.2rem 0.3rem",
         }}
       >
         {visibleNodes.length === 0 ? (
-          <div style={{ color: C.faintest, fontSize: "0.8rem", padding: "0.6rem", textAlign: "center", lineHeight: 1.6 }}>
+          <div style={{ color: C.faintest, fontSize: "0.75rem", padding: "0.5rem", textAlign: "center", lineHeight: 1.6 }}>
             暂无标签
             <br />
             点上方 ✚ 新建（如「通胀」）
@@ -246,7 +243,7 @@ export function TagTree({
         )}
 
         {addingTo ? (
-          <div style={{ padding: "0.35rem 0.6rem" }}>
+          <div style={{ padding: "0.3rem 0.45rem" }}>
             <input
               autoFocus
               value={newName}
@@ -260,7 +257,7 @@ export function TagTree({
                 }
               }}
               placeholder="新标签名称，回车确认"
-              style={{ ...input, width: "100%", fontSize: "0.88rem", padding: "0.3rem 0.5rem" }}
+              style={{ ...input, width: "100%", fontSize: "0.82rem", padding: "0.25rem 0.45rem" }}
             />
           </div>
         ) : null}
@@ -342,18 +339,19 @@ function TagRow({
           if (from && from !== node.id) void onMove(from, node.id);
         }}
         onClick={() => onSelect(node.id)}
+        className="wl-tagrow"
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "0.3rem",
-          padding: "0.3rem 0.4rem",
-          paddingLeft: 4 + depth * 15,
-          borderRadius: 6,
+          gap: "0.25rem",
+          padding: "0.2rem 0.35rem",
+          paddingLeft: 4 + depth * 13,
+          borderRadius: 5,
           cursor: "pointer",
           background: active ? C.accentBg : isDropTarget ? "#f1f5f9" : "transparent",
           color: active ? C.accent : C.text,
           fontWeight: active ? 700 : 500,
-          fontSize: "0.9rem",
+          fontSize: "0.82rem",
           userSelect: "none",
         }}
       >
@@ -364,13 +362,13 @@ function TagRow({
               e.stopPropagation();
               onToggle(node.id);
             }}
-            style={{ width: 14, fontSize: "0.7rem", color: C.faintest, flexShrink: 0 }}
+            style={{ width: 12, fontSize: "0.62rem", color: C.faintest, flexShrink: 0 }}
             title={isCollapsed ? "展开" : "收起"}
           >
             {isCollapsed ? "▶" : "▼"}
           </span>
         ) : (
-          <span style={{ width: 14, flexShrink: 0 }} />
+          <span style={{ width: 12, flexShrink: 0 }} />
         )}
 
         {isEditing ? (
@@ -394,14 +392,14 @@ function TagRow({
             </span>
 
             {/* 平均涨跌幅（该标签含子标签下标的的等权平均） */}
-            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: pctColor(node.avgPct), flexShrink: 0 }} title={`${node.avgCount ?? 0} 只有行情标的的等权平均涨跌幅`}>
+            <span style={{ fontSize: "0.74rem", fontWeight: 700, color: pctColor(node.avgPct), flexShrink: 0 }} title={`${node.avgCount ?? 0} 只有行情标的的等权平均涨跌幅`}>
               {fmtPct(node.avgPct)}
             </span>
-            <span style={{ fontSize: "0.78rem", color: active ? C.accent : C.faintest, flexShrink: 0, minWidth: 18, textAlign: "right" }} title="含子标签的标的总数">
+            <span style={{ fontSize: "0.72rem", color: active ? C.accent : C.faintest, flexShrink: 0, minWidth: 16, textAlign: "right" }} title="含子标签的标的总数">
               {node.totalCount}
             </span>
 
-            <span style={{ display: "flex", gap: "0.05rem", flexShrink: 0 }}>
+            <span className="wl-rowacts" style={{ display: "flex", gap: "0.02rem", flexShrink: 0 }}>
               <IconBtn title="新建子标签" onClick={() => onAddChild(node.id)}>✚</IconBtn>
               <IconBtn
                 title={node.preset ? "预置标签不可重命名" : "重命名"}
@@ -498,8 +496,8 @@ function IconBtn({
         background: "transparent",
         cursor: dim ? "not-allowed" : "pointer",
         opacity: dim ? 0.3 : 0.55,
-        fontSize: "0.75rem",
-        padding: "0 0.15rem",
+        fontSize: "0.7rem",
+        padding: "0 0.1rem",
         lineHeight: 1,
         color: C.faint,
       }}

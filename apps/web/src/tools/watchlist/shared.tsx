@@ -79,17 +79,30 @@ export function fmtNum(v: number | undefined, digits = 2): string {
   return v.toFixed(digits);
 }
 
-/** 标的详情页跳转：场外基金 → 天天基金；股票/ETF → 雪球；无法识别 → 雪球搜索 */
+/**
+ * 雪球外链 URL（与「仓位管理 v2」共用同一套转换逻辑：A/H 股市场前缀转换；
+ * 北交所/未知代码回退到雪球搜索，避免跳到错误页）。
+ * - 已带市场前缀（SH/SZ/BJ/HK + 数字）→ 原样
+ * - 6 位纯数字：5/6 开头→SH（沪市 A/ETF），0/1/3→SZ（深市 A/ETF），4/8/9→BJ（北交所）
+ * - 3~5 位（或 0 前缀 4 位）→ 港股裸码（雪球 /S/00189 不带 HK 前缀）
+ */
+export function xueqiuUrl(code: string): string {
+  const c = code.trim().toUpperCase();
+  if (/^(SH|SZ|BJ)\d+/.test(c)) return `https://xueqiu.com/S/${c}`;
+  if (/^HK\d+/.test(c)) return `https://xueqiu.com/S/${c.slice(2)}`; // 港股雪球 URL 不带 HK 前缀
+  if (/^\d{6}$/.test(c)) {
+    if (/^[56]\d{5}$/.test(c)) return `https://xueqiu.com/S/SH${c}`; // 沪市 A 股（6 开头）/ 沪市 ETF（5 开头）
+    if (/^[013]\d{5}$/.test(c)) return `https://xueqiu.com/S/SZ${c}`; // 深市 A 股/ETF（0/1/3 开头）
+    if (/^[489]\d{5}$/.test(c)) return `https://xueqiu.com/S/BJ${c}`; // 北交所（4/8/9 开头）
+  }
+  if (/^\d{3,5}$|^0\d{4}$/.test(c)) return `https://xueqiu.com/S/${c}`; // 港股裸码
+  return `https://xueqiu.com/k?q=${encodeURIComponent(code)}`; // 未知 → 雪球搜索兜底
+}
+
+/** 标的详情页跳转：场外基金 → 天天基金；股票/ETF → 雪球（复用 xueqiuUrl） */
 export function stockDetailUrl(code: string, kind?: string): string {
   if (kind === "fund") return `https://fund.eastmoney.com/${code}.html`;
-  const c = code.trim().toUpperCase();
-  if (/^HK\d{5}$/.test(c)) return `https://xueqiu.com/S/${c}`;
-  if (/^(SH|SZ)\d{6}$/.test(c)) return `https://xueqiu.com/S/${c}`;
-  if (/^\d{6}$/.test(c)) {
-    if (/^[0-3]/.test(c) || /^6/.test(c)) return `https://xueqiu.com/S/${c.startsWith("6") ? "SH" : "SZ"}${c}`;
-    return `https://xueqiu.com/k?q=${c}`;
-  }
-  return `https://xueqiu.com/k?q=${encodeURIComponent(code)}`;
+  return xueqiuUrl(code);
 }
 
 /** 区块小标题 */

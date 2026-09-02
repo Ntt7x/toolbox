@@ -169,9 +169,11 @@ export function ItemList({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.6rem", borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-        <span style={{ width: 4, height: 14, borderRadius: 999, background: C.accent, flexShrink: 0 }} />
-        <span style={{ fontWeight: 700, fontSize: "0.88rem", color: C.text }}>🎯 标的</span>
+      {/* 行内「移出标签」按钮平时隐藏，悬停整行才出现，避免窄栏拥挤 */}
+      <style>{`.wl-itemrow .wl-rowacts{opacity:0;transition:opacity .12s} .wl-itemrow:hover .wl-rowacts{opacity:1}`}</style>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.3rem 0.5rem", borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <span style={{ width: 3, height: 12, borderRadius: 999, background: C.accent, flexShrink: 0 }} />
+        <span style={{ fontWeight: 700, fontSize: "0.82rem", color: C.text }}>🎯 标的</span>
         <span style={{ fontSize: "0.72rem", color: C.faintest, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${tagName} · ${items.length} 只`}>
           {tagName} · {items.length}
         </span>
@@ -317,11 +319,12 @@ export function ItemList({
               <div
                 key={it.code}
                 onClick={() => onSelect(it.code)}
+                className="wl-itemrow"
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "0.35rem",
-                  padding: "0.28rem 0.55rem",
+                  gap: "0.3rem",
+                  padding: "0.2rem 0.5rem",
                   cursor: "pointer",
                   borderBottom: `1px solid #f1f5f9`,
                   background: active ? C.accentBg : "transparent",
@@ -329,12 +332,12 @@ export function ItemList({
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "0.8rem", fontWeight: active ? 700 : 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: "0.78rem", fontWeight: active ? 700 : 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {it.name || it.code}
-                    {it.reviewCount ? <span style={{ marginLeft: "0.25rem", fontSize: "0.68rem" }} title="待逻辑复核">🧭</span> : null}
-                    {it.alertCount ? <span style={{ marginLeft: "0.15rem", fontSize: "0.68rem" }} title="已触发提醒">🔔{it.alertCount}</span> : null}
+                    {it.reviewCount ? <span style={{ marginLeft: "0.25rem", fontSize: "0.66rem" }} title="待逻辑复核">🧭</span> : null}
+                    {it.alertCount ? <span style={{ marginLeft: "0.15rem", fontSize: "0.66rem" }} title="已触发提醒">🔔{it.alertCount}</span> : null}
                   </div>
-                  <div style={{ fontSize: "0.68rem", color: C.faintest, display: "flex", gap: "0.25rem", alignItems: "center", minWidth: 0 }}>
+                  <div style={{ fontSize: "0.66rem", color: C.faintest, display: "flex", gap: "0.25rem", alignItems: "center", minWidth: 0 }}>
                     <span style={{ fontFamily: "ui-monospace, monospace" }}>{it.code}</span>
                     {otherNames.length > 0 ? (
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`同时属于：${otherNames.join("、")}`}>
@@ -344,24 +347,26 @@ export function ItemList({
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: "0.8rem", fontWeight: 600, color: pctColor(it.pct) }}>{fmtPrice(it.price)}</div>
-                  <div style={{ fontSize: "0.7rem", color: pctColor(it.pct) }}>{fmtPct(it.pct)}</div>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 600, color: pctColor(it.pct) }}>{fmtPrice(it.price)}</div>
+                  <div style={{ fontSize: "0.68rem", color: pctColor(it.pct) }}>{fmtPct(it.pct)}</div>
                 </div>
                 {currentTagId ? (
-                  <ConfirmButton
-                    title="移出当前标签"
-                    confirmText="移出"
-                    description={
-                      <>
-                        将 <b>{it.name || it.code}</b> 从标签 <b>{tagName}</b> 中移出。
-                        <br />
-                        标的本身<b>不会被删除</b>，仍保留在它所属的其它标签下。
-                      </>
-                    }
-                    onConfirm={() => onUpdateTags(it.code, it.tags.filter((t) => t !== currentTagId))}
-                  >
-                    ✕
-                  </ConfirmButton>
+                  <span className="wl-rowacts" style={{ flexShrink: 0 }}>
+                    <ConfirmButton
+                      title="移出当前标签"
+                      confirmText="移出"
+                      description={
+                        <>
+                          将 <b>{it.name || it.code}</b> 从标签 <b>{tagName}</b> 中移出。
+                          <br />
+                          标的本身<b>不会被删除</b>，仍保留在它所属的其它标签下。
+                        </>
+                      }
+                      onConfirm={() => onUpdateTags(it.code, it.tags.filter((t) => t !== currentTagId))}
+                    >
+                      ✕
+                    </ConfirmButton>
+                  </span>
                 ) : (
                   <span style={{ width: 6 }} />
                 )}

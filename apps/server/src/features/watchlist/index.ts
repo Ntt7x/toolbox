@@ -174,13 +174,14 @@ async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; trigg
     Promise.all(chunk(fundCodes, QUOTES_BATCH).map((c) => getFundSnapshots(c))),
   ]);
   // 索引：normCode（sh600519）+ 裸码（600519）双键 → 兼容用户输入的任意写法
-  const snapByCode = new Map<string, { pct?: number; price?: number }>();
+  const snapByCode = new Map<string, { pct?: number; price?: number; name?: string }>();
   for (const q of [...stockGroups.flat(), ...fundGroups.flat()]) {
     if (!q.ok) continue;
     const price = (q as { price?: number }).price ?? (q as { nav?: number }).nav;
-    const rec: { pct?: number; price?: number } = {};
+    const rec: { pct?: number; price?: number; name?: string } = {};
     if (typeof q.pct === "number") rec.pct = q.pct;
     if (typeof price === "number") rec.price = price;
+    if (typeof q.name === "string" && q.name) rec.name = q.name;
     snapByCode.set(q.code, rec);
     const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
     if (bare !== q.code) snapByCode.set(bare, rec);
@@ -205,9 +206,11 @@ async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; trigg
     const last = history.length > 0 ? history[history.length - 1] : null;
     // 待复核：有理由/预期但从未复核，或最近一次结论非 hold
     const needReview = (it.reason || it.expectation) && (!last || last.suggestion !== "hold");
+    // 缺名标的：先用本次已取的快照名回填（零额外成本），拿不到再走行情工具二次解析
+    const resolvedName = !it.name ? snap?.name || "" : it.name;
     return {
       code: it.code,
-      ...(it.name ? { name: it.name } : {}),
+      ...(resolvedName ? { name: resolvedName } : {}),
       ...(it.kind ? { kind: it.kind } : {}),
       reason: it.reason,
       ...(it.expectation ? { expectation: it.expectation } : {}),
@@ -220,6 +223,19 @@ async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; trigg
       ...(triggeredByCode.has(it.code) ? { alertCount: triggeredByCode.get(it.code) as number } : {}),
     };
   });
+
+  // 持久化缺名标的的解析结果（快照名优先；缺失则异步行情工具补，写回 KV 避免下次仍显示代码）。
+  // 仅对确有名称可补的标的落库，避免空名覆盖/空写。
+  await Promise.all(
+    items
+      .filter((it) => !it.name)
+      .map(async (it) => {
+        const fromSnap = snapByCode.get(it.code)?.name;
+        const name = fromSnap || (await resolveStockName(it.code, it.kind));
+        if (name) updateItem(it.code, { name });
+      }),
+  );
+
   return { rows, triggeredByCode };
 }
 
