@@ -48,11 +48,9 @@ const SUGGEST_COLOR: Record<WatchLogicReview["suggestion"], string> = {
 /** 单标的的逻辑确认卡（理由 / 预期 / 锚点 / 最近复核 / 操作） */
 function LogicCard({
   item,
-  groupId,
   onReviewed,
 }: {
   item: WatchLogicItem;
-  groupId: string;
   onReviewed: () => void;
 }) {
   const [reviewing, setReviewing] = useState(false);
@@ -70,7 +68,7 @@ function LogicCard({
     setReviewing(true);
     setErr(null);
     try {
-      const t = await api.watchlistLogicReview(groupId, item.code, force);
+      const t = await api.watchlistLogicReview(item.code, force);
       if (t.ok && t.status === "done") { onReviewed(); return; }
       if (t.ok && t.taskId) {
         for (let i = 0; i < 90; i++) {
@@ -95,16 +93,13 @@ function LogicCard({
     setErr(null);
     try {
       const tp = targetPrice.trim() ? Number(targetPrice) : undefined;
-      const r2 = await api.watchlistUpdate(groupId, {
-        updateItems: [{
-          code: item.code,
-          ...(item.name ? { name: item.name } : {}),
-          ...(item.kind ? { kind: item.kind } : {}),
-          reason: item.reason,
-          ...(expectation.trim() ? { expectation: expectation.trim() } : {}),
-          ...(typeof tp === "number" && Number.isFinite(tp) && tp > 0 ? { targetPrice: tp } : {}),
-          addedAt: item.addedAt,
-        }],
+      const r2 = await api.watchlistItemUpdate(item.code, {
+        ...(item.name ? { name: item.name } : {}),
+        ...(item.kind ? { kind: item.kind } : {}),
+        reason: item.reason,
+        ...(expectation.trim() ? { expectation: expectation.trim() } : {}),
+        ...(typeof tp === "number" && Number.isFinite(tp) && tp > 0 ? { targetPrice: tp } : {}),
+        addedAt: item.addedAt,
       });
       if (r2.ok) {
         setEditing(false);
@@ -120,7 +115,7 @@ function LogicCard({
   const loadHistory = async () => {
     if (history) { setHistory(null); return; }
     try {
-      const r3 = await api.watchlistLogicHistory(groupId, item.code);
+      const r3 = await api.watchlistLogic(item.code);
       if (r3.ok) setHistory(r3.reviews.filter((x): x is WatchLogicReview => !!x));
     } catch {
       setHistory([]);
@@ -270,17 +265,16 @@ function LogicCard({
   );
 }
 
-export default function LogicPanel({ groupId, items }: { groupId: string; items: WatchItem[] }) {
+export function LogicPanel({ code, name }: { code: string; name?: string }) {
   const [data, setData] = useState<import("@toolbox/shared").WatchLogicResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | "pending" | "risk">("all");
 
   const load = useCallback(async (force = false) => {
     setLoading(true);
     setErr(null);
     try {
-      const r = await api.watchlistLogic(groupId, force);
+      const r = await api.watchlistLogic(code, force);
       if (r.ok) setData(r);
       else setErr(r.message ?? "加载失败");
     } catch (e) {
@@ -288,7 +282,7 @@ export default function LogicPanel({ groupId, items }: { groupId: string; items:
     } finally {
       setLoading(false);
     }
-  }, [groupId]);
+  }, [code]);
 
   useEffect(() => {
     setData(null);
@@ -297,56 +291,24 @@ export default function LogicPanel({ groupId, items }: { groupId: string; items:
 
   if (loading && !data) return <Loading text="加载逻辑确认（采集行情锚点与新闻证据）…" />;
   if (err) return <div style={{ color: "#b91c1c", fontSize: "0.85rem" }}>{err}</div>;
-  if (!data) return null;
-
-  const risky = (it: WatchLogicItem) => !!it.review && it.review.suggestion !== "hold";
-  const pending = (it: WatchLogicItem) => !it.review && !!(it.reason || it.expectation);
-  const list = data.items.filter((it) => (filter === "pending" ? pending(it) : filter === "risk" ? risky(it) : true));
+  if (!data?.item) return null;
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: "0.3rem" }}>
-          {([
-            { value: "all", label: `全部（${data.items.length}）` },
-            { value: "pending", label: `待复核（${data.items.filter(pending).length}）` },
-            { value: "risk", label: `逻辑动摇（${data.items.filter(risky).length}）` },
-          ] as const).map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => setFilter(o.value)}
-              style={{
-                padding: "0.28rem 0.7rem",
-                borderRadius: 999,
-                border: filter === o.value ? `1px solid ${C.accentBorder}` : "1px solid transparent",
-                background: filter === o.value ? C.accentBg : "transparent",
-                color: filter === o.value ? C.accent : C.faint,
-                fontSize: "0.78rem",
-                fontWeight: filter === o.value ? 700 : 500,
-                cursor: "pointer",
-              }}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: "0.85rem", color: C.faint }}>
+          {name ? `${name}（${code}）` : code} 的入选逻辑是否仍成立
+        </span>
         <span style={{ flex: 1 }} />
         <button type="button" style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }} onClick={() => void load(true)} disabled={loading}>
-          🔄 刷新
+          🔄 重新采集锚点
         </button>
       </div>
 
       <Caveats meta={data.meta} />
       <MetaBar meta={data.meta} />
 
-      {items.length === 0 ? (
-        <Empty>该分组暂无标的</Empty>
-      ) : list.length === 0 ? (
-        <Empty>没有符合该筛选条件的标的</Empty>
-      ) : (
-        list.map((it) => <LogicCard key={it.code} item={it} groupId={groupId} onReviewed={() => void load()} />)
-      )}
+      <LogicCard item={data.item} onReviewed={() => void load()} />
 
       <SectionTitle>说明</SectionTitle>
       <div style={{ fontSize: "0.76rem", color: C.faint, lineHeight: 1.7 }}>

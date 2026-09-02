@@ -12,8 +12,8 @@ import { cachedFetch, peekCache } from "../../core/cache.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
 import { getFundSnapshot } from "../../core/fund.js";
 import { extractShare } from "../../core/deepseekShare.js";
-import { createGroup, getGroup, updateGroup } from "./store.js";
-import type { WatchFundamentalResult, WatchGroup, WatchItem } from "@toolbox/shared";
+import { createItem, createTag, getItem, getTag, listItems, updateItem } from "./store.js";
+import type { WatchFundamentalResult, WatchItem } from "@toolbox/shared";
 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
 export const FUNDAMENTAL_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
@@ -193,6 +193,7 @@ function normalizeImportedItem(s: unknown): WatchItem | null {
     ...(kind ? { kind } : {}),
     reason: reason || "（由 Chat 对话导入）",
     addedAt: new Date().toISOString(),
+    tags: [], // tag 归属由导入流程（建 tag / 挂到指定 tag）决定
   };
 }
 
@@ -242,6 +243,7 @@ export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal
         code,
         reason: extractReasonFromText(rawText, code) || "（由 Chat 对话代码提取）",
         addedAt: new Date().toISOString(),
+        tags: [],
       })));
     }
   }
@@ -254,28 +256,49 @@ export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal
 }
 
 /**
- * Chat 导入：解析分享链接 → 提取对话 → LLM 整理分组 → 自动创建。
- * groupId 提供时：**追加**到现有分组（已有代码去重更新），否则新建。
+ * Chat 导入：解析分享链接 → 提取对话 → LLM 整理标的 → 建 tag 并挂标的。
+ * tagId 提供时：**追加**到该 tag（已有代码去重更新），否则新建同名 tag。
  * 失败抛错（由路由层转 4xx）。
  */
-export async function importFromChat(shareUrl: string, signal?: AbortSignal, groupId?: string): Promise<WatchGroup> {
+export async function importFromChat(
+  shareUrl: string,
+  signal?: AbortSignal,
+  tagId?: string,
+): Promise<{ tagId: string; tagName: string; items: WatchItem[] }> {
   const { name, description, items } = await parseImportFromChat(shareUrl, signal);
+  const codes = items.map((s) => s.code).filter(Boolean);
 
-  // 追加模式：合并进现有分组（addItems 按 code 去重更新），分组名/介绍不变
-  if (groupId) {
-    const existing = getGroup(groupId);
-    if (!existing) throw new Error("分组不存在");
-    const updated = updateGroup(groupId, { addItems: items });
-    if (!updated) throw new Error("补充失败");
-    return updated;
+  // 追加模式：标的并入现有 tag（已存在标的按 code 去重更新描述字段）
+  if (tagId) {
+    const existing = getTag(tagId);
+    if (!existing) throw new Error("标签不存在");
+    for (const it of items) {
+      if (!it.code) continue;
+      const cur = getItem(it.code);
+      const tags = Array.from(new Set([...(cur?.tags ?? []), tagId]));
+      if (cur) updateItem(it.code, {
+        tags,
+        ...(it.reason ? { reason: it.reason } : {}),
+        ...(it.expectation ? { expectation: it.expectation } : {}),
+      });
+      else createItem({ ...it, tags });
+    }
+    return { tagId, tagName: existing.name, items: listItems().filter((x) => x.tags.includes(tagId)) };
   }
 
-  const group = createGroup(name, description);
-  if (items.length > 0) {
-    const updated = updateGroup(group.id, { addItems: items });
-    if (updated) return updated;
+  // 新建模式：以对话标题建 tag（挂「全部」下），标的统一挂上去
+  const tag = createTag(name, null);
+  if (!tag) throw new Error("创建标签失败");
+  for (const it of items) {
+    if (!it.code) continue;
+    const cur = getItem(it.code);
+    const tags = Array.from(new Set([...(cur?.tags ?? []), tag.id]));
+    if (cur) updateItem(it.code, { tags, ...(it.reason ? { reason: it.reason } : {}) });
+    else createItem({ ...it, tags });
   }
-  return group;
+  void description; // 新模型下 tag 无介绍字段（历史分组介绍已在升级时兜底为标的选择理由）
+  void codes;
+  return { tagId: tag.id, tagName: tag.name, items: listItems().filter((x) => x.tags.includes(tag.id)) };
 }
 
 // ============================================================
@@ -318,16 +341,16 @@ export async function optimizeReason(
 const EXTEND_PREFIX = "watchlist:extend:v2:";
 
 export async function extendPrompt(
-  group: { name: string; description?: string; items: { code: string; name?: string; reason?: string }[] },
+  bag: { name: string; items: { code: string; name?: string; reason?: string }[] },
   opts: { signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; prompt?: string; message?: string }> {
   const itemsText =
-    group.items.length > 0
-      ? group.items.map((s) => `- ${s.code} ${s.name ?? ""}${s.reason ? `：${s.reason}` : ""}`).join("\n")
+    bag.items.length > 0
+      ? bag.items.map((s) => `- ${s.code} ${s.name ?? ""}${s.reason ? `：${s.reason}` : ""}`).join("\n")
       : "（暂无标的）";
-  const user = `分组名称：${group.name}\n分组介绍：${group.description?.trim() || "（无）"}\n已有标的与理由：\n${itemsText}`;
+  const user = `标签：${bag.name}\n该标签下的标的与理由：\n${itemsText}`;
   const system = getPromptTemplate("watchlist.extend");
-  // 缓存 key = 内容哈希（分组名称/介绍/标的内容变了才失效），避免用 updatedAt 伪版本化
+  // 缓存 key = 内容哈希（标签名/标的内容变了才失效），避免用 updatedAt 伪版本化
   const key = `${EXTEND_PREFIX}${hashText(user).slice(0, 16)}`;
   try {
     const r = await cachedFetch(

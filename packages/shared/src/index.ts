@@ -1198,17 +1198,26 @@ export type LocalDataResult =
   | LocalDataErrorResponse;
 
 // ============================================================
-// 自选股（watchlist）：以「标的」为跟踪主体，以「分组」为组织单元
+// 自选股（watchlist）：以「标的」为核心，以「多级 tag」为筛选维度
 // ------------------------------------------------------------
-// 概念模型（2026-09-01 重构，原「专题自选股」）：
-//   标的 WatchItem    —— 一个被跟踪的代码 + 入选理由 + 预期（跟踪与管理的原子单位）
-//   分组 WatchGroup   —— 一组标的的集合；aggSources 非空即聚合分组（标的 = 源分组并集）
-//   四个功能面        —— 行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置（点位）· 逻辑确认
-// 技术标识沿用 `watchlist`（API 路径 /tools/watchlist 与 KV 前缀 watchlist: 不变），
-// 避免历史数据迁移风险；业务术语与契约字段全面切换到「分组 / 标的」。
+// 概念模型（2026-09-02 二次重构，弃用「分组 / 聚合分组」）：
+//   标的 WatchItem  —— 跟踪与管理的唯一主体（代码 + 入选理由 + 预期），可打多个 tag
+//   tag  WatchTag   —— 多层级筛选标签（树）。「全部」是预置根 tag，其下任意层级：
+//                      例：全部 → 通胀 → 高端服装（选「通胀」= 它与其后代的标的）
+//   四个功能面      —— 行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置 · 逻辑确认
+//                      服务对象一律是「单一标的」（不是分组、也不是 tag）
+// 关键变化（vs 分组模型）：
+//   · 标的是一等公民：独立存储（watchlist:item:<code>），不再隶属于任何容器
+//   · tag 只是筛选维度：一标的可属多个 tag，重叠分类不再需要「聚合分组」这种特例
+//   · 提醒规则 / 命中 / 复核历史挂标的（跨 tag 复用），不再挂分组
+// 技术标识沿用 `watchlist`（API 路径 /tools/watchlist 与 KV 前缀 watchlist: 不变）。
+// 历史「分组」数据由 store 一次性升级为「tag 树 + 标的」，原分组键保留不删（幂等、可回退）。
 // ============================================================
 
-/** 一个被跟踪的标的（原「专题内自选股」；逻辑围绕它展开） */
+/** 预置根 tag「全部」的 id：不可删除、不可移动 */
+export const WATCH_ROOT_TAG = "all";
+
+/** 一个被跟踪的标的（跟踪与管理的原子单位；页面右侧四个功能面都围绕它展开） */
 export interface WatchItem {
   /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700；场外基金为 6 位数字（如 161725） */
   code: string;
@@ -1224,90 +1233,176 @@ export interface WatchItem {
   targetPrice?: number;
   /** 入选时间（ISO；逻辑确认的时间基线——「随时间是否成立」的起点） */
   addedAt: string;
+  /** 所属 tag id 列表（多 tag；空 = 仅在「全部」可见） */
+  tags: string[];
+  updatedAt?: string;
 }
 
-/** 分组：一组标的的集合（原「专题」）。aggSources 非空 = 聚合分组 */
-export interface WatchGroup {
+/** tag（多级筛选标签）。parentId 为 null = 根（仅预置的「全部」） */
+export interface WatchTag {
   id: string;
   name: string;
-  /** 分组介绍（主题逻辑 / 选股思路，可选） */
-  description?: string;
-  /** 聚合分组的源分组 id 列表（基础分组缺省/空）；标的 = 源分组标的并集（按 code 去重） */
-  aggSources?: string[];
+  /** 父 tag id；根 tag 为 null */
+  parentId: string | null;
+  /** 同级排序（升序） */
+  sort: number;
   createdAt: string;
-  updatedAt: string;
-  /** 组内标的（顺序 = 优先级；聚合分组为源分组并集展开后的视图，落库仍只存 aggSources） */
-  items: WatchItem[];
-  /** 历史迁留：旧版「专题分组名」（新模型由聚合分组承担，仅归档不参与展示） */
-  legacyGroup?: string;
 }
 
-/** 分组列表项（轻量，带聚合后的运营统计） */
-export interface WatchGroupSummary {
+/** tag 树节点（左侧筛选区渲染用；含统计与子节点） */
+export interface WatchTagNode {
   id: string;
   name: string;
-  description?: string;
-  aggSources?: string[];
-  /** 标的数量：聚合分组 = 源分组并集数；基础分组 = items.length */
+  parentId: string | null;
+  sort: number;
+  /** 直接挂在该 tag 上的标的数量 */
   itemCount: number;
-  /** 等权平均日涨跌幅 %（组内有行情标的的算术平均；全部无行情时缺省） */
+  /** 含全部后代 tag 的标的数量（去重；「全部」= 全部标的数） */
+  totalCount: number;
+  /** 该 tag（含后代）下标的的等权平均日涨跌幅 %（全部无行情时缺省） */
   avgPct?: number;
-  /** 参与平均统计的标的数量 */
+  /** 参与平均统计的标的数量（有行情快照的） */
   avgCount?: number;
-  /** 待确认逻辑数（有理由/预期但从未复核，或最近复核结论为 review/exit） */
-  reviewCount?: number;
-  /** 已触发未读提醒数 */
-  alertCount?: number;
-  updatedAt: string;
+  /** 是否预置根 tag（不可删除/移动） */
+  preset?: boolean;
+  children: WatchTagNode[];
 }
 
-export interface WatchGroupListResult {
+// ---------- tag 管理 ----------
+
+export interface WatchTagListResult {
   ok: true;
-  groups: WatchGroupSummary[];
+  /** 树（根节点为「全部」） */
+  tags: WatchTagNode[];
+  /** 全量标的（首次加载装配列表；不变时前端可只取树） */
+  items?: WatchItemRow[];
   message?: string;
 }
 
-export interface WatchGroupCreateRequest {
+export interface WatchTagCreateRequest {
   name: string;
-  description?: string;
-  /** 聚合分组的源分组 id（非空即创建聚合分组） */
-  aggSources?: string[];
+  /** 父 tag id（缺省/空 = 挂在「全部」下） */
+  parentId?: string | null;
 }
 
-export interface WatchGroupCreateResult {
+export interface WatchTagCreateResult {
   ok: true;
-  group: WatchGroup;
+  tag: WatchTag;
+  tags: WatchTagNode[];
   message?: string;
 }
 
-/** 更新请求：改名 / 改介绍 / 改聚合来源 / 增删改标的 / 重排（原子提交） */
-export interface WatchGroupUpdateRequest {
+/** 更新 tag：改名 / 移动（换父）/ 排序 */
+export interface WatchTagUpdateRequest {
   name?: string;
-  /** 分组介绍（传空字符串可清空） */
-  description?: string;
-  /** 聚合来源（传 null 或空数组 → 降级为基础分组；基础分组不得引用聚合分组） */
-  aggSources?: string[] | null;
-  /** 新增标的（同 code 已存在则覆盖更新） */
-  addItems?: WatchItem[];
-  /** 移除标的代码 */
-  removeCodes?: string[];
-  /** 更新已存在标的（同 code 覆盖：理由/预期/目标价） */
-  updateItems?: WatchItem[];
-  /** 新顺序（code 数组，items 将按此重排；顺序 = 优先级） */
-  reorderCodes?: string[];
+  /** 新父 tag id（禁止移到自己的后代下——服务端校验，防环） */
+  parentId?: string | null;
+  /** 新排序（同级内） */
+  sort?: number;
 }
 
-export interface WatchGroupDetailResult {
+export interface WatchTagUpdateResult {
   ok: true;
-  group: WatchGroup;
-  /** 聚合分组展开后的实际标的集合（基础分组与 group.items 相同）；含来源分组标注 */
-  items?: WatchItem[];
+  tag: WatchTag;
+  tags: WatchTagNode[];
   message?: string;
 }
 
-export interface WatchGroupDeleteResult {
+/**
+ * 删除 tag。
+ * mode:
+ *  - promote（默认）：子 tag 与标的提升到父级——**不删任何标的**（数据安全优先）
+ *  - cascade：连同子 tag 一起删除（标的本身保留，只是从这些 tag 上摘除）
+ */
+export interface WatchTagDeleteRequest {
+  mode?: "promote" | "cascade";
+}
+
+export interface WatchTagDeleteResult {
   ok: true;
-  deleted: number;
+  deletedTags: number;
+  /** 受影响的标的数量（被摘除 tag 或提升层级的标的） */
+  affectedItems: number;
+  tags: WatchTagNode[];
+  message?: string;
+}
+
+// ---------- 标的（核心） ----------
+
+/** 列表行：标的本体 + 列表展示所需的派生数据 */
+export interface WatchItemRow {
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  reason: string;
+  expectation?: string;
+  targetPrice?: number;
+  addedAt: string;
+  tags: string[];
+  /** 实时快照价（批量行情装配；取数失败缺省，不静默置 0） */
+  price?: number;
+  /** 实时日涨跌幅 % */
+  pct?: number;
+  /** 待复核数（从未复核 / 最近结论为 review|exit） */
+  reviewCount?: number;
+  /** 已触发提醒数（当前行情下的实时命中） */
+  alertCount?: number;
+}
+
+export interface WatchItemListResult {
+  ok: true;
+  /** 筛选后的标的（tag 缺省 = 全部） */
+  items: WatchItemRow[];
+  /** 当前筛选的 tag id（null = 全部） */
+  tagId?: string | null;
+  meta?: WatchDataMeta;
+  message?: string;
+}
+
+export interface WatchItemCreateRequest {
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  reason?: string;
+  expectation?: string;
+  targetPrice?: number;
+  /** 初始 tag（缺省 = 仅「全部」） */
+  tags?: string[];
+}
+
+export interface WatchItemCreateResult {
+  ok: true;
+  item: WatchItemRow;
+  tags: WatchTagNode[];
+  message?: string;
+}
+
+/** 更新标的：理由 / 预期 / 目标价 / tag 归属（原子提交） */
+export interface WatchItemUpdateRequest {
+  name?: string;
+  kind?: "stock" | "fund";
+  reason?: string;
+  /** 预期（传空字符串清空） */
+  expectation?: string;
+  /** 目标价（传 null 清空） */
+  targetPrice?: number | null;
+  /** 全量覆盖的 tag 列表（服务端校验 tag 存在；空数组 = 仅「全部」） */
+  tags?: string[];
+  /** 入选时间（一般不改；逻辑确认基线） */
+  addedAt?: string;
+}
+
+export interface WatchItemUpdateResult {
+  ok: true;
+  item: WatchItemRow;
+  tags: WatchTagNode[];
+  message?: string;
+}
+
+export interface WatchItemDeleteResult {
+  ok: true;
+  code: string;
+  tags: WatchTagNode[];
   message?: string;
 }
 
@@ -1347,26 +1442,32 @@ export interface WatchPeriodStat {
   caveat?: string;
 }
 
-/** 分组等权平均走势的一个点（周期内至少有一只标的涨跌幅可算才产出） */
-export interface GroupPeriodPoint {
-  from: string;
-  to: string;
-  /** 等权平均涨跌幅 % */
-  pct: number;
-  /** 参与平均的标的数量（≥1） */
-  count: number;
+/**
+ * 日 K 一根（券商式 K 线的原子数据；qfq 前复权、升序）。
+ * 行情跟踪页直接消费它：K 线本身已表达 OHLC / 涨跌 / 成交量，
+ * 不再额外提供「日/周/月周期聚合 + 明细表」这类可被 K 线表达的冗余视图。
+ */
+export interface WatchKlineBar {
+  /** 交易日 YYYY-MM-DD */
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  /** 成交量（手）；行情源缺省时为空 */
+  volume?: number;
 }
 
-/** 分组的周期行情跟踪结果 */
-export interface WatchTrackResult {
+/** 单一标的的日 K 序列（行情跟踪页的唯一数据源） */
+export interface WatchKlineResult {
   ok: true;
-  groupId: string;
-  period: WatchPeriod;
-  /** 口径说明（如「周度 = 自然周内日 K 聚合」） */
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  /** 日 K（升序） */
+  bars: WatchKlineBar[];
+  /** 数据口径（如「腾讯日 K，前复权」） */
   note: string;
-  stats: WatchPeriodStat[];
-  /** 分组等权平均走势（升序；走势图用） */
-  group: GroupPeriodPoint[];
   meta: WatchDataMeta;
   message?: string;
 }
@@ -1400,10 +1501,10 @@ export type WatchAlertKind =
   /** 振幅超过 x% */
   | "amplitude";
 
-/** 单条提醒规则（持久化：watchlist:alert:<groupId>） */
+/** 单条提醒规则（持久化：watchlist:alert:<code>——挂标的，跨 tag 复用） */
 export interface WatchAlertRule {
   id: string;
-  /** 标的代码（须属于所属分组） */
+  /** 标的代码 */
   code: string;
   name?: string;
   kind: WatchAlertKind;
@@ -1419,7 +1520,7 @@ export interface WatchAlertRule {
   createdAt: string;
 }
 
-/** 提醒命中记录（持久化：watchlist:alertHit:<groupId>，按 ruleId+date 去重） */
+/** 提醒命中记录（持久化：watchlist:alertHit:<code>，按 ruleId+date 去重） */
 export interface WatchAlertHit {
   ruleId: string;
   code: string;
@@ -1434,9 +1535,10 @@ export interface WatchAlertHit {
   at: string;
 }
 
+/** 单一标的的提醒规则 + 命中 */
 export interface WatchAlertsResult {
   ok: true;
-  groupId: string;
+  code: string;
   rules: WatchAlertRule[];
   /** 历史命中（按时间降序，默认最近 50 条） */
   hits: WatchAlertHit[];
@@ -1447,13 +1549,13 @@ export interface WatchAlertsResult {
 }
 
 export interface WatchAlertsSaveRequest {
-  /** 全量覆盖保存的规则列表（服务端权威校验：code 须在分组内、阈值须 > 0） */
+  /** 全量覆盖保存的规则列表（服务端权威校验：code 须与路径一致、阈值须 > 0） */
   rules: WatchAlertRule[];
 }
 
 export interface WatchAlertsSaveResult {
   ok: true;
-  groupId: string;
+  code: string;
   rules: WatchAlertRule[];
   message?: string;
 }
@@ -1510,11 +1612,22 @@ export interface WatchLogicItem {
   anchors: WatchLogicAnchor;
 }
 
+/** 单一标的的逻辑确认结果（当前状态 + 复核历史） */
 export interface WatchLogicResult {
   ok: true;
-  groupId: string;
-  items: WatchLogicItem[];
+  code: string;
+  item: WatchLogicItem;
+  /** 复核历史（按时间升序，体现「随时间是否成立」） */
+  reviews: WatchLogicReview[];
   meta: WatchDataMeta;
+  message?: string;
+}
+
+/** 复核历史（时间序列） */
+export interface WatchLogicHistoryResult {
+  ok: true;
+  code: string;
+  reviews: WatchLogicReview[];
   message?: string;
 }
 
@@ -1583,14 +1696,19 @@ export interface WatchErrorResult {
 }
 
 export type WatchResult =
-  | WatchGroupListResult
-  | WatchGroupCreateResult
-  | WatchGroupDetailResult
-  | WatchGroupDeleteResult
-  | WatchTrackResult
+  | WatchTagListResult
+  | WatchTagCreateResult
+  | WatchTagUpdateResult
+  | WatchTagDeleteResult
+  | WatchItemListResult
+  | WatchItemCreateResult
+  | WatchItemUpdateResult
+  | WatchItemDeleteResult
+  | WatchKlineResult
   | WatchAlertsResult
   | WatchAlertsSaveResult
   | WatchLogicResult
+  | WatchLogicHistoryResult
   | WatchNewsResult
   | WatchFundamentalResult
   | WatchErrorResult;

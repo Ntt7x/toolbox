@@ -11,9 +11,9 @@
 import { registerScheduledTask, enqueue } from "../../core/data-infra/index.js";
 import { registerVolConsumer, VOL_QUEUE } from "../../core/volatilityStore.js";
 import { listGroups } from "../tradeV2/store.js";
-import { listGroups as listWatchGroups, resolveItems } from "../watchlist/store.js";
+import { listItems } from "../watchlist/store.js";
 
-/** 聚合需要预热波动率的标的（tradeV2 分组 + 自选股分组，去重） */
+/** 聚合需要预热波动率的标的（tradeV2 分组 + 自选股标的，去重） */
 export function listVolWatchCodes(): string[] {
   const codes = new Set<string>();
   for (const g of listGroups()) {
@@ -21,11 +21,9 @@ export function listVolWatchCodes(): string[] {
       if (typeof s?.code === "string" && s.code.trim()) codes.add(s.code.trim());
     }
   }
-  for (const g of listWatchGroups()) {
-    // resolveItems：聚合分组取源分组并集，避免漏掉需要预热的标的
-    for (const s of resolveItems(g)) {
-      if (typeof s?.code === "string" && s.code.trim()) codes.add(s.code.trim());
-    }
+  // 新模型下标的是一等公民（不再藏在分组里），直接枚举全部标的
+  for (const s of listItems()) {
+    if (typeof s?.code === "string" && s.code.trim()) codes.add(s.code.trim());
   }
   return [...codes];
 }

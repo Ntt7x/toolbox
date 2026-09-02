@@ -42,20 +42,26 @@ import {
   type WatchAlertsResult,
   type WatchAlertsSaveResult,
   type WatchFundamentalResult,
-  type WatchGroup,
-  type GroupPeriodPoint,
-  type WatchGroupCreateRequest,
-  type WatchGroupCreateResult,
-  type WatchGroupDeleteResult,
-  type WatchGroupDetailResult,
-  type WatchGroupListResult,
-  type WatchGroupUpdateRequest,
   type WatchItem,
+  type WatchItemCreateRequest,
+  type WatchItemCreateResult,
+  type WatchItemDeleteResult,
+  type WatchItemListResult,
+  type WatchItemRow,
+  type WatchItemUpdateRequest,
+  type WatchItemUpdateResult,
   type WatchLogicResult,
+  type WatchTagCreateRequest,
+  type WatchTagCreateResult,
+  type WatchTagDeleteResult,
+  type WatchTagListResult,
+  type WatchTagNode,
+  type WatchTagUpdateRequest,
+  type WatchTagUpdateResult,
   type WatchLogicReview,
   type WatchNewsResult,
   type WatchPeriod,
-  type WatchTrackResult,
+  type WatchKlineResult,
   type MemoCreateResult,
   type MemoKind,
   type MemoDeleteResult,
@@ -173,67 +179,73 @@ export const api = {
   reverseRepoMonthlyRefresh: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/refresh", jsonInit("POST", {})),
   reverseRepoDaily: (force = false) =>
     request<TaskCreateResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
-  // 自选股：以标的为中心、按分组组织（基础分组 / 聚合分组）+ 四功能面
-  watchlistList: () => request<WatchGroupListResult>("/tools/watchlist"),
-  watchlistCreate: (req: WatchGroupCreateRequest) =>
-    request<WatchGroupCreateResult>("/tools/watchlist", jsonInit("POST", req)),
-  watchlistDetail: (id: string) => request<WatchGroupDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
-  watchlistUpdate: (id: string, patch: WatchGroupUpdateRequest) =>
-    request<WatchGroupDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
-  watchlistDelete: (id: string) => request<WatchGroupDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  // 自选股：以标的为核心、多级 tag 为筛选维度 + 四功能面（服务对象 = 单一标的）
+  /** tag 树 + 全量标的（首屏） */
+  watchlistTags: () => request<WatchTagListResult>("/tools/watchlist/tags"),
+  /** 标的列表（按 tag 筛选；tag 空 = 全部） */
+  watchlistItems: (tagId?: string | null) =>
+    request<WatchItemListResult>(`/tools/watchlist/items${tagId ? `?tag=${encodeURIComponent(tagId)}` : ""}`),
+  /** 新增标的 */
+  watchlistItemCreate: (req: WatchItemCreateRequest) =>
+    request<WatchItemCreateResult>("/tools/watchlist/items", jsonInit("POST", req)),
+  /** 更新标的（理由/预期/目标价/tag 归属） */
+  watchlistItemUpdate: (code: string, patch: WatchItemUpdateRequest) =>
+    request<WatchItemUpdateResult>(`/tools/watchlist/items/${encodeURIComponent(code)}`, jsonInit("PUT", patch)),
+  /** 删除标的 */
+  watchlistItemDelete: (code: string) =>
+    request<WatchItemDeleteResult>(`/tools/watchlist/items/${encodeURIComponent(code)}`, jsonInit("DELETE", {})),
+  /** 新建 tag（parentId 缺省 = 「全部」下） */
+  watchlistTagCreate: (req: WatchTagCreateRequest) =>
+    request<WatchTagCreateResult>("/tools/watchlist/tags", jsonInit("POST", req)),
+  /** 更新 tag：改名 / 移动 / 排序 */
+  watchlistTagUpdate: (id: string, patch: WatchTagUpdateRequest) =>
+    request<WatchTagUpdateResult>(`/tools/watchlist/tags/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  /** 删除 tag（mode: promote=子级提升（默认）/ cascade=连同子 tag） */
+  watchlistTagDelete: (id: string, mode: "promote" | "cascade" = "promote") =>
+    request<WatchTagDeleteResult>(`/tools/watchlist/tags/${encodeURIComponent(id)}?mode=${mode}`, jsonInit("DELETE", {})),
   watchlistResolve: (code: string, kind?: string) =>
     request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
-  /** 行情跟踪（日/周/月周期聚合；force=1 强制刷新行情与日 K） */
-  watchlistTrack: (id: string, period: WatchPeriod, force = false) =>
-    request<WatchTrackResult & { group?: GroupPeriodPoint[] }>(
-      `/tools/watchlist/${encodeURIComponent(id)}/track?period=${period}${force ? "&force=1" : ""}`,
+  /** 行情跟踪（单一标的；日 K 序列，券商式 K 线用；force=1 强制刷新日 K） */
+  watchlistKline: (code: string, force = false) =>
+    request<WatchKlineResult>(
+      `/tools/watchlist/items/${encodeURIComponent(code)}/kline${force ? "?force=1" : ""}`,
     ),
-  /** 下沉分析·新闻（标的维度，确定性关键词匹配） */
-  watchlistNews: (id: string, code: string) =>
-    request<WatchNewsResult>(`/tools/watchlist/${encodeURIComponent(id)}/news?code=${encodeURIComponent(code)}`),
+  /** 下沉分析·新闻（单一标的，确定性关键词匹配） */
+  watchlistNews: (code: string) =>
+    request<WatchNewsResult>(`/tools/watchlist/items/${encodeURIComponent(code)}/news`),
   /** 提醒设置：读取规则 + 命中（顺带用当前行情判定一次） */
-  watchlistAlerts: (id: string) => request<WatchAlertsResult>(`/tools/watchlist/${encodeURIComponent(id)}/alerts`),
+  watchlistAlerts: (code: string) => request<WatchAlertsResult>(`/tools/watchlist/items/${encodeURIComponent(code)}/alerts`),
   /** 提醒设置：全量覆盖保存规则 */
-  watchlistSaveAlerts: (id: string, rules: WatchAlertRule[]) =>
-    request<WatchAlertsSaveResult>(`/tools/watchlist/${encodeURIComponent(id)}/alerts`, jsonInit("PUT", { rules })),
+  watchlistSaveAlerts: (code: string, rules: WatchAlertRule[]) =>
+    request<WatchAlertsSaveResult>(`/tools/watchlist/items/${encodeURIComponent(code)}/alerts`, jsonInit("PUT", { rules })),
   /** 提醒设置：清空命中记录 */
-  watchlistClearAlertHits: (id: string) =>
-    request<{ ok: boolean; deleted?: number; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/alerts/hits`, jsonInit("DELETE", {})),
-  /** 逻辑确认：分组内标的原因/预期 + 最新复核 + 确定性锚 */
-  watchlistLogic: (id: string, force = false) =>
-    request<WatchLogicResult>(`/tools/watchlist/${encodeURIComponent(id)}/logic${force ? "?force=1" : ""}`),
+  watchlistClearAlertHits: (code: string) =>
+    request<{ ok: boolean; deleted?: number; message?: string }>(`/tools/watchlist/items/${encodeURIComponent(code)}/alerts/hits`, jsonInit("DELETE", {})),
+  /** 逻辑确认：单一标的理由/预期 + 最新复核 + 确定性锚 + 复核历史 */
+  watchlistLogic: (code: string, force = false) =>
+    request<WatchLogicResult>(`/tools/watchlist/items/${encodeURIComponent(code)}/logic${force ? "?force=1" : ""}`),
   /** 逻辑确认：单标的复核（LLM 异步任务） */
-  watchlistLogicReview: (id: string, code: string, force = false) =>
-    request<TaskCreateResult<{ ok: boolean; review?: WatchLogicResult["items"][number]["review"] }>>(
-      `/tools/watchlist/${encodeURIComponent(id)}/logic/review?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
+  watchlistLogicReview: (code: string, force = false) =>
+    request<TaskCreateResult<{ ok: boolean; review?: WatchLogicReview }>>(
+      `/tools/watchlist/items/${encodeURIComponent(code)}/logic/review${force ? "?force=1" : ""}`,
       jsonInit("POST", {}),
     ),
-  /** 逻辑确认：单标的复核历史（时间序列） */
-  watchlistLogicHistory: (id: string, code: string) =>
-    request<{ ok: boolean; groupId: string; code: string; reviews: WatchLogicReview[] }>(
-      `/tools/watchlist/${encodeURIComponent(id)}/logic/history?code=${encodeURIComponent(code)}`,
+  /** Chat 导入：分享链接 → 建 tag 并挂标的（后台任务）；tagId 提供时追加到该 tag */
+  watchlistImport: (url: string, tagId?: string) =>
+    request<TaskCreateResult<{ tagId: string; tagName: string; items: WatchItem[] }>>(
+      "/tools/watchlist/import",
+      jsonInit("POST", { url, ...(tagId ? { tagId } : {}) }),
     ),
-  /** Chat 导入：分享链接 → 自动创建分组（后台任务） */
-  watchlistImport: (url: string) => request<TaskCreateResult<WatchGroup>>("/tools/watchlist/import", jsonInit("POST", { url })),
-  /** Chat 补充：分享链接 → 追加标的到指定分组（后台任务） */
-  watchlistAppend: (id: string, url: string) =>
-    request<TaskCreateResult<WatchGroup>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
-  /** Chat 补充预览：解析对话 → 候选标的（不落库，用户确认后导入） */
-  watchlistAppendPreview: (id: string, url: string) =>
+  /** Chat 导入预览：解析对话 → 候选标的（不落库，用户确认后导入） */
+  watchlistImportPreview: (url: string) =>
     request<TaskCreateResult<{ name: string; description?: string; items: WatchItem[] }>>(
-      `/tools/watchlist/${encodeURIComponent(id)}/import/preview`,
+      "/tools/watchlist/import/preview",
       jsonInit("POST", { url }),
     ),
-  watchlistAppendConfirm: (id: string, taskId: string, codes: string[]) =>
-    request<{ ok: boolean; group?: WatchGroup; items?: WatchItem[]; imported?: number; message?: string }>(
-      `/tools/watchlist/${encodeURIComponent(id)}/import/confirm`,
-      jsonInit("POST", { taskId, codes }),
-    ),
-  /** 移动/复制标的到其他分组（copy=true 保留源分组标的） */
-  watchlistMoveItem: (fromGroupId: string, code: string, toGroupId: string, copy: boolean) =>
-    request<{ ok: boolean; fromGroup?: WatchGroup; toGroup?: WatchGroup; moved?: boolean; message?: string }>(
-      "/tools/watchlist/move-item",
-      jsonInit("POST", { fromGroupId, code, toGroupId, copy }),
+  watchlistImportConfirm: (taskId: string, tagId: string, codes?: string[]) =>
+    request<{ ok: boolean; items?: WatchItemRow[]; tags?: WatchTagNode[]; imported?: number; message?: string }>(
+      "/tools/watchlist/import/confirm",
+      jsonInit("POST", { taskId, tagId, ...(codes ? { codes } : {}) }),
     ),
   /** 标的代码搜索（名称/拼音 → 代码候选，添加标的输入补全用） */
   watchlistSearchStock: (name: string, limit = 8) =>
@@ -265,17 +277,18 @@ export const api = {
   chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
   /** 下沉分析·财报（LLM 异步任务；以标的为维度缓存，与分组无关） */
-  watchlistFundamental: (id: string, code: string, force = false) =>
+  /** 下沉分析·财报（单一标的；LLM 后台任务 + 缓存） */
+  watchlistFundamental: (code: string, force = false) =>
     request<TaskCreateResult<WatchFundamentalResult>>(
-      `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
+      `/tools/watchlist/items/${encodeURIComponent(code)}/fundamental${force ? "?force=1" : ""}`,
       jsonInit("POST", {}),
     ),
-  /** 根据财报分析优化入选理由（LLM；成功后更新分组内该标的理由） */
-  watchlistOptimizeReason: (id: string, code: string, reason?: string) =>
-    request<{ ok: boolean; reason?: string; group?: WatchGroup; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
-  /** 生成延续思路/扩展思考提示词（LLM；返回可粘贴 DeepSeek Chat 的提示词） */
-  watchlistExtendPrompt: (id: string) =>
-    request<{ ok: boolean; prompt?: string; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", {})),
+  /** 根据财报分析优化入选理由（LLM；成功后更新该标的理由） */
+  watchlistOptimizeReason: (code: string, reason?: string) =>
+    request<{ ok: boolean; reason?: string; item?: WatchItem; message?: string }>(`/tools/watchlist/items/${encodeURIComponent(code)}/optimize-reason`, jsonInit("POST", { reason })),
+  /** 生成延续思路/扩展思考提示词（某 tag 下的标的 → LLM；返回可粘贴 DeepSeek Chat 的提示词） */
+  watchlistExtendPrompt: (tagId: string) =>
+    request<{ ok: boolean; prompt?: string; message?: string }>("/tools/watchlist/extend-prompt", jsonInit("POST", { tagId })),
   newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
   newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
   /** 新闻流（服务端加工：tags 打标 / hits 高亮 / blocked 黑名单） */

@@ -30,13 +30,15 @@ const KLINE_TTL_MS = 6 * 60 * 60 * 1000;
 /** 单次拉取根数：覆盖约半年交易日（收益分析常见跨度） */
 const DEFAULT_COUNT = 130;
 
-/** 日 K 一根（qfq 前复权；open/high/low 在旧缓存中可能缺省，消费方须容错） */
+/** 日 K 一根（qfq 前复权；open/high/low/volume 在旧缓存中可能缺省，消费方须容错） */
 export interface KlineBar {
   date: string;
   close: number;
   open?: number;
   high?: number;
   low?: number;
+  /** 成交量（手）；券商式 K 线副图用。旧缓存无此字段 → 缺省 */
+  volume?: number;
 }
 interface KlineCache {
   name?: string;
@@ -104,12 +106,15 @@ async function fetchDailyCloses(p: { market: string; code: string }, count = DEF
       const close = Number(row[2]);
       const high = Number(row[3]);
       const low = Number(row[4]);
+      // row[5] = 成交量（手）；部分行情源缺省 → 容错省略，由消费方判断
+      const volume = row[5] === undefined ? Number.NaN : Number(row[5]);
       return {
         date,
         close,
         ...(Number.isFinite(open) ? { open } : {}),
         ...(Number.isFinite(high) ? { high } : {}),
         ...(Number.isFinite(low) ? { low } : {}),
+        ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
       };
     })
     .filter((b) => /^\d{4}-\d{2}-\d{2}$/.test(b.date) && Number.isFinite(b.close) && b.close > 0);

@@ -14,6 +14,41 @@ import {
 
 type SubTab = "report" | "news";
 
+/** 用财报分析结论重写入选理由（LLM；须先跑过财报分析，服务端只读缓存不额外计费） */
+function OptimizeReasonButton({
+  code,
+  name,
+  onDone,
+}: {
+  code: string;
+  name?: string;
+  onDone: (reason: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.watchlistOptimizeReason(code);
+      if (r.ok && r.reason) await onDone(r.reason);
+      else setErr(r.message ?? "优化失败");
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+      <button type="button" style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }} onClick={() => void run()} disabled={busy}>
+        {busy ? "优化中…" : `✨ 用分析结论优化${name ? `「${name}」` : ""}入选理由`}
+      </button>
+      {err ? <span style={{ color: "#b91c1c", fontSize: "0.78rem" }}>{err}</span> : null}
+    </div>
+  );
+}
+
 /** 财报分析结果卡片 */
 function ReportCard({ r, onClose }: { r: WatchFundamentalResult; onClose: () => void }) {
   const kv = (label: string, v?: string) =>
@@ -43,23 +78,25 @@ function ReportCard({ r, onClose }: { r: WatchFundamentalResult; onClose: () => 
   );
 }
 
-export default function DeepDivePanel({ groupId, items }: { groupId: string; items: WatchItem[] }) {
+export function DeepDivePanel({
+  code,
+  name,
+  kind,
+  onReason,
+}: {
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  /** 用财报结论回写入选理由（由父组件统一提交） */
+  onReason?: (reason: string) => Promise<void>;
+}) {
   const [sub, setSub] = useState<SubTab>("report");
-  const [code, setCode] = useState(items[0]?.code ?? "");
   const [report, setReport] = useState<WatchFundamentalResult | null>(null);
   const [news, setNews] = useState<WatchNewsResult | null>(null);
   const [busy, setBusy] = useState<"" | "report" | "news">("");
   const [err, setErr] = useState<string | null>(null);
 
-  const current = items.find((i) => i.code === code) ?? items[0];
-
-  // 切换标的 → 重置结果
-  useEffect(() => {
-    setCode(items[0]?.code ?? "");
-    setReport(null);
-    setNews(null);
-  }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // 切标的 → 重置结果（标的是本面板唯一的服务对象）
   useEffect(() => {
     setReport(null);
     setNews(null);
@@ -67,11 +104,10 @@ export default function DeepDivePanel({ groupId, items }: { groupId: string; ite
   }, [code]);
 
   const runReport = async (force = false) => {
-    if (!current) return;
     setBusy("report");
     setErr(null);
     try {
-      const t = await api.watchlistFundamental(groupId, current.code, force);
+      const t = await api.watchlistFundamental(code, force);
       if (t.ok && t.status === "done" && t.result) setReport(t.result as WatchFundamentalResult);
       else if (t.ok && t.taskId) {
         // 后台任务轮询（LLM 分析通常 20-60s）
@@ -92,11 +128,10 @@ export default function DeepDivePanel({ groupId, items }: { groupId: string; ite
   };
 
   const runNews = async () => {
-    if (!current) return;
     setBusy("news");
     setErr(null);
     try {
-      setNews(await api.watchlistNews(groupId, current.code));
+      setNews(await api.watchlistNews(code));
     } catch (e) {
       setErr(errMsg(e));
     } finally {
@@ -105,22 +140,13 @@ export default function DeepDivePanel({ groupId, items }: { groupId: string; ite
   };
 
   useEffect(() => {
-    if (!current) return;
-    if (sub === "news" && !news) void runNews();
+    if (sub === "news" && !news && !busy) void runNews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub, code]);
 
-  if (items.length === 0) return <Empty>该分组暂无标的，请先添加</Empty>;
-
   return (
     <div>
-      <ItemPicker
-        items={items.map((i) => ({ code: i.code, name: i.name ?? i.code, badge: i.kind === "fund" ? "场外" : undefined }))}
-        value={code}
-        onChange={setCode}
-      />
-
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.4rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
         <SegTabs
           value={sub}
           size="sm"
@@ -131,11 +157,9 @@ export default function DeepDivePanel({ groupId, items }: { groupId: string; ite
           onChange={(v) => setSub(v as SubTab)}
         />
         <span style={{ flex: 1 }} />
-        {current && (
-          <a href={stockDetailUrl(current.code, current.kind)} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: C.accent }}>
-            {current.name ?? current.code} 详情页 ↗
-          </a>
-        )}
+        <a href={stockDetailUrl(code, kind)} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: C.accent }}>
+          {name ?? code} 详情页 ↗
+        </a>
       </div>
 
       {err ? <div style={{ color: "#b91c1c", fontSize: "0.85rem", marginTop: "0.5rem" }}>{err}</div> : null}
@@ -159,9 +183,14 @@ export default function DeepDivePanel({ groupId, items }: { groupId: string; ite
             财报分析
           </SectionTitle>
           <div style={{ fontSize: "0.75rem", color: C.faintest }}>
-            LLM 联网检索该标的最新财报（缓存 2 年，以标的为维度，跨分组复用）；结果仅作参考，不构成投资建议。
+            LLM 联网检索该标的最新财报（缓存 2 年，以标的为维度，跨标签复用）；结果仅作参考，不构成投资建议。
           </div>
           {busy === "report" ? <Loading text="分析进行中（LLM 联网检索，约 20-60 秒）…" /> : null}
+          {report && report.ok && onReason ? (
+            <div style={{ marginTop: "0.4rem" }}>
+              <OptimizeReasonButton code={code} name={name} onDone={onReason} />
+            </div>
+          ) : null}
           {report ? (
             report.ok ? (
               <ReportCard r={report} onClose={() => setReport(null)} />

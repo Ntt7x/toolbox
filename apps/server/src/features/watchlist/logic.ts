@@ -8,13 +8,21 @@
 //   成本原则         ：LLM 调用只由用户点击触发；同日同标的复用上次结论（force 可绕过）
 //   时间序列         ：每次复核落库（watchlist:logic:<groupId>:<code>），体现「随时间」
 // ============================================================
-import type { WatchDataMeta, WatchLogicAnchor, WatchLogicItem, WatchLogicResult, WatchLogicReview } from "@toolbox/shared";
-import type { FundSnapshot, QuoteSnapshot } from "@toolbox/shared";
+import type {
+  FundSnapshot,
+  QuoteSnapshot,
+  WatchDataMeta,
+  WatchItem,
+  WatchLogicAnchor,
+  WatchLogicItem,
+  WatchLogicResult,
+  WatchLogicReview,
+} from "@toolbox/shared";
 import { chat } from "../../core/llm.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
 import { getDailyBars } from "../../core/kline.js";
-import { getGroup, getReviews, appendReview, resolveItems } from "./store.js";
+import { getReviews, appendReview } from "./store.js";
 import { loadTrack, type TrackBundle } from "./track.js";
 import { loadNews } from "./news.js";
 import type { DailyBar } from "./periodStats.js";
@@ -76,46 +84,40 @@ export async function buildAnchors(
 }
 
 /**
- * 逻辑确认视图：分组内每标的的理由/预期 + 最新复核 + 确定性锚。
+ * 逻辑确认视图：**单一标的**的理由/预期 + 最新复核 + 确定性锚 + 复核历史。
  * 行情走 loadTrack（复用其缓存与血缘），避免重复取数。
  */
-export async function loadLogic(groupId: string, opts: { force?: boolean } = {}): Promise<WatchLogicResult | null> {
-  const g = getGroup(groupId);
-  if (!g) return null;
-  const items = resolveItems(g);
-  const bundle: TrackBundle | null = await loadTrack(groupId, "day", opts);
-  const quotes = bundle?.quotes ?? new Map<string, QuoteSnapshot | FundSnapshot>();
+export async function loadLogic(item: WatchItem, opts: { force?: boolean } = {}): Promise<WatchLogicResult> {
+  const bundle: TrackBundle = await loadTrack([item], "day", opts);
+  const quotes = bundle.quotes;
 
-  const out: WatchLogicItem[] = [];
-  for (const it of items) {
-    const history = getReviews(groupId, it.code);
-    const review = history.length > 0 ? history[history.length - 1] : null;
-    const anchors = await buildAnchors(it.code, {
-      addedAt: it.addedAt,
-      ...(typeof it.targetPrice === "number" ? { targetPrice: it.targetPrice } : {}),
-      quote: quotes.get(it.code),
-      ...(it.name ? { name: it.name } : {}),
-    });
-    out.push({
-      code: it.code,
-      ...(it.name ? { name: it.name } : {}),
-      ...(it.kind ? { kind: it.kind } : {}),
-      reason: it.reason,
-      ...(it.expectation ? { expectation: it.expectation } : {}),
-      ...(typeof it.targetPrice === "number" ? { targetPrice: it.targetPrice } : {}),
-      addedAt: it.addedAt,
-      review,
-      reviewCount: history.length,
-      anchors,
-    });
-  }
+  const history = getReviews(item.code);
+  const review = history.length > 0 ? history[history.length - 1] : null;
+  const anchors = await buildAnchors(item.code, {
+    addedAt: item.addedAt,
+    ...(typeof item.targetPrice === "number" ? { targetPrice: item.targetPrice } : {}),
+    quote: quotes.get(item.code),
+    ...(item.name ? { name: item.name } : {}),
+  });
+  const logicItem: WatchLogicItem = {
+    code: item.code,
+    ...(item.name ? { name: item.name } : {}),
+    ...(item.kind ? { kind: item.kind } : {}),
+    reason: item.reason,
+    ...(item.expectation ? { expectation: item.expectation } : {}),
+    ...(typeof item.targetPrice === "number" ? { targetPrice: item.targetPrice } : {}),
+    addedAt: item.addedAt,
+    review,
+    reviewCount: history.length,
+    anchors,
+  };
 
   const meta: WatchDataMeta = {
     sources: ["tencent.quote", "tencent.kline", "eastmoney.news"],
     fetchedAt: new Date().toISOString(),
-    ...(bundle?.meta.caveats ? { caveats: bundle.meta.caveats } : {}),
+    ...(bundle.meta.caveats ? { caveats: bundle.meta.caveats } : {}),
   };
-  return { ok: true, groupId, items: out, meta };
+  return { ok: true, code: item.code, item: logicItem, reviews: history, meta };
 }
 
 function todayStr(): string {
@@ -128,17 +130,13 @@ function todayStr(): string {
  * 同日已有结论且未 force → 直接返回该结论（fromCache=true），避免重复计费。
  */
 export async function reviewItem(
-  groupId: string,
-  code: string,
+  item: WatchItem,
   opts: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; review?: WatchLogicReview; message?: string }> {
-  const g = getGroup(groupId);
-  if (!g) return { ok: false, message: "分组不存在" };
-  const item = resolveItems(g).find((i) => i.code === code);
-  if (!item) return { ok: false, message: `标的 ${code} 不在该分组中` };
+  const code = item.code;
   const name = item.name ?? "";
 
-  const history = getReviews(groupId, code);
+  const history = getReviews(code);
   const today = todayStr();
   const last = history.length > 0 ? history[history.length - 1] : null;
   if (last && !opts.force && (last.at ?? "").slice(0, 10) === today) {
@@ -146,8 +144,8 @@ export async function reviewItem(
   }
 
   // 事实采集（服务端真实数据；LLM 只做定性判断，不让它自己造数）
-  const bundle = await loadTrack(groupId, "day");
-  const quote = bundle?.quotes.get(code);
+  const bundle = await loadTrack([item], "day");
+  const quote = bundle.quotes.get(code);
   const anchors = await buildAnchors(code, {
     addedAt: item.addedAt,
     ...(typeof item.targetPrice === "number" ? { targetPrice: item.targetPrice } : {}),
@@ -197,6 +195,6 @@ export async function reviewItem(
     note: typeof p.note === "string" ? p.note : "",
     anchors,
   };
-  appendReview(groupId, code, review);
+  appendReview(code, review);
   return { ok: true, review };
 }

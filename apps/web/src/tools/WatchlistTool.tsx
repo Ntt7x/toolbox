@@ -1,901 +1,667 @@
 // ============================================================
-// 自选股：以「标的」为跟踪主体、以「分组」为组织单元
+// 自选股：以「标的」为核心，以「多级 tag」为筛选维度
 // ------------------------------------------------------------
-// 布局（与仓位管理 v2 一致）：顶部横向分组切换（基础分组 / 聚合分段）+ 下方横向功能 Tab
-// 四个功能面：行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置（点位）· 逻辑确认
-// 逻辑围绕标的展开：标的增删改 / 优先级重排 / 跨分组流转集中在「标的管理」区
+// 布局（视口级，页面不整体滚动）：
+//   左栏 = 筛选区：上「tag 树管理」（树形目录 + 创建/删除/移动），下「标的列表」（以标的为核心）
+//   右栏 = 单一标的的四个功能面：行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置 · 逻辑确认
+// 关键：四个功能面的服务对象是**单一标的**（不是分组、也不是 tag）。
 // ============================================================
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errMsg } from "../api";
-import { ErrorCard, PageHeader, card } from "../ui";
-import type { WatchGroup, WatchGroupSummary, WatchItem } from "@toolbox/shared";
-import { C, SegTabs, btn, btnGhost, btnSmall, fmtPct, input, pctColor, stockDetailUrl, table, th, thTd } from "./watchlist/shared";
-import TrackPanel from "./watchlist/TrackPanel";
-import DeepDivePanel from "./watchlist/DeepDivePanel";
-import AlertsPanel from "./watchlist/AlertsPanel";
-import LogicPanel from "./watchlist/LogicPanel";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api";
+import type {
+  WatchItemRow,
+  WatchPeriod,
+  WatchTagNode,
+} from "@toolbox/shared";
+import { WATCH_ROOT_TAG } from "@toolbox/shared";
+import { C, Empty, Loading, SegTabs, btnSmall, input, pctColor, fmtPct, fmtPrice } from "./watchlist/shared";
+import { ConfirmButton } from "./watchlist/ui";
+import { TagTree } from "./watchlist/TagTree";
+import { ItemList, tagNameMap } from "./watchlist/ItemList";
+import { TrackPanel } from "./watchlist/TrackPanel";
+import { DeepDivePanel } from "./watchlist/DeepDivePanel";
+import { AlertsPanel } from "./watchlist/AlertsPanel";
+import { LogicPanel } from "./watchlist/LogicPanel";
 
-type Tab = "track" | "deep" | "alerts" | "logic";
-type GroupKind = "base" | "agg";
+type TabKey = "track" | "deepdive" | "alerts" | "logic";
 
-const TABS: { value: Tab; label: string; title: string }[] = [
-  { value: "track", label: "📈 行情跟踪", title: "日度 / 周度 / 月度周期行情" },
-  { value: "deep", label: "🔍 下沉分析", title: "财报（LLM）/ 新闻（关键词匹配）" },
-  { value: "alerts", label: "🔔 提醒设置", title: "券商式点位与涨跌幅提醒" },
-  { value: "logic", label: "🧭 逻辑确认", title: "入选理由与预期随时间是否成立" },
+const TABS: { value: TabKey; label: string }[] = [
+  { value: "track", label: "行情跟踪" },
+  { value: "deepdive", label: "下沉分析" },
+  { value: "alerts", label: "提醒设置" },
+  { value: "logic", label: "逻辑确认" },
 ];
 
-const SHARE_RE = /^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/;
+/** 左栏宽度（localStorage 记忆，frontend-experience §4 侧边栏拉伸） */
+const LEFT_W_KEY = "watchlist:leftWidth";
+const LEFT_DEFAULT = 300;
+const LEFT_MIN = 220;
+const LEFT_MAX = 520;
 
-export default function WatchlistTool() {
-  const [groups, setGroups] = useState<WatchGroupSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [group, setGroup] = useState<WatchGroup | null>(null);
-  const [items, setItems] = useState<WatchItem[]>([]);
-  const [tab, setTab] = useState<Tab>("track");
-  const [kind, setKind] = useState<GroupKind>("base");
-  const [err, setErr] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  const autoSelected = useRef(false);
+function readLeftWidth(): number {
+  const n = Number(localStorage.getItem(LEFT_W_KEY));
+  return Number.isFinite(n) && n >= LEFT_MIN && n <= LEFT_MAX ? n : LEFT_DEFAULT;
+}
 
-  // 新建分组（手动 / Chat 导入）
-  const [showCreate, setShowCreate] = useState(false);
-  const [createTab, setCreateTab] = useState<"manual" | "chat">("manual");
-  const [newName, setNewName] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [newAgg, setNewAgg] = useState(false);
-  const [newSources, setNewSources] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [importUrl, setImportUrl] = useState("");
-  const [importing, setImporting] = useState(false);
+/** 左栏上区（标签筛选）展开时占比（%）；默认折叠，展开后向下挤压标的列表 */
+const TOP_RATIO_KEY = "watchlist:topRatio";
+const TOP_DEFAULT = 42; // 展开时 标签筛选 42% : 标的列表 58%
+const TOP_MIN = 15;
+const TOP_MAX = 85;
+/** 标签筛选区默认折叠（状态持久化；展开时弹性挤压下方标的列表） */
+const TAG_COLLAPSED_KEY = "watchlist:tagCollapsed";
+const TAG_COLLAPSED_DEFAULT = true;
 
-  // 分组属性编辑
-  const [editingMeta, setEditingMeta] = useState(false);
-  const [metaName, setMetaName] = useState("");
-  const [metaDesc, setMetaDesc] = useState("");
-  const [metaSources, setMetaSources] = useState<string[]>([]);
+function readTopRatio(): number {
+  const n = Number(localStorage.getItem(TOP_RATIO_KEY));
+  return Number.isFinite(n) && n >= TOP_MIN && n <= TOP_MAX ? n : TOP_DEFAULT;
+}
 
-  // 标的管理
-  const [showItems, setShowItems] = useState(true);
-  const [addCode, setAddCode] = useState("");
-  const [addName, setAddName] = useState("");
-  const [addReason, setAddReason] = useState("");
-  const [addExpect, setAddExpect] = useState("");
-  const [addKind, setAddKind] = useState<"stock" | "fund">("stock");
-  const [cands, setCands] = useState<{ code: string; name: string; market: string; type: string }[]>([]);
-  const [candsOpen, setCandsOpen] = useState(false);
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [adding, setAdding] = useState(false);
+function readTagCollapsed(): boolean {
+  const v = localStorage.getItem(TAG_COLLAPSED_KEY);
+  return v === null ? TAG_COLLAPSED_DEFAULT : v === "1";
+}
 
-  // 移动/复制标的
-  const [moveItem, setMoveItem] = useState<{ code: string; name?: string } | null>(null);
-  const [moveTo, setMoveTo] = useState("");
-  const [moveCopy, setMoveCopy] = useState(false);
-  const [moving, setMoving] = useState(false);
+/** 左右分栏拖拽把手（与上下分区把手共用样式） */
+function DragHandle({
+  dir,
+  onStart,
+  onDoubleClick,
+}: {
+  dir: "v" | "h";
+  onStart: (e: React.MouseEvent) => void;
+  onDoubleClick?: () => void;
+}) {
+  const vertical = dir === "v"; // v = 竖直分隔条（左右调宽）；h = 水平分隔条（上下调高）
+  return (
+    <div
+      onMouseDown={onStart}
+      onDoubleClick={onDoubleClick}
+      title={vertical ? "拖动调整筛选区宽度（双击复位）" : "拖动调整两区高度（双击复位）"}
+      style={{
+        flexShrink: 0,
+        background: "transparent",
+        cursor: vertical ? "col-resize" : "row-resize",
+        width: vertical ? 5 : undefined,
+        height: vertical ? undefined : 5,
+        borderLeft: vertical ? `1px solid ${C.border}` : undefined,
+        borderTop: vertical ? undefined : `1px solid ${C.border}`,
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = C.accentBorder)}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    />
+  );
+}
 
-  // Chat 补充（追加标的到当前分组）
-  const [appendUrl, setAppendUrl] = useState("");
-  const [appending, setAppending] = useState(false);
-  const [showAppend, setShowAppend] = useState(false);
-  const [preview, setPreview] = useState<{ taskId: string; items: WatchItem[] } | null>(null);
-  const [previewSel, setPreviewSel] = useState<Set<string>>(new Set());
-  const [confirming, setConfirming] = useState(false);
+export function WatchlistTool() {
+  const [tags, setTags] = useState<WatchTagNode[]>([]);
+  const [items, setItems] = useState<WatchItemRow[]>([]);
+  const [allItems, setAllItems] = useState<WatchItemRow[]>([]);
+  const [selectedTag, setSelectedTag] = useState<string>(WATCH_ROOT_TAG);
+  const [selectedCode, setSelectedCode] = useState<string>("");
+  const [tab, setTab] = useState<TabKey>("track");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
+  const [leftWidth, setLeftWidth] = useState(readLeftWidth);
+  const [topRatio, setTopRatio] = useState(readTopRatio);
+  const [tagCollapsed, setTagCollapsed] = useState(readTagCollapsed);
+  const dragRef = useRef<{ x: number; y: number; w: number; ratio: number; dir: "v" | "h" } | null>(null);
+  const leftRef = useRef<HTMLDivElement | null>(null);
 
-  // 延续思考（分组 → DeepSeek Chat 提示词）
-  const [extending, setExtending] = useState(false);
-  const [extendText, setExtendText] = useState<string | null>(null);
+  const errOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-  const refreshList = useCallback(async () => {
+  // ---------- 数据加载 ----------
+
+  /** 首屏：tag 树 + 全量标的 */
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setErr("");
     try {
-      const r = await api.watchlistList();
-      if (r.ok) setGroups(r.groups);
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  }, []);
-
-  const loadDetail = useCallback(async (id: string) => {
-    try {
-      const r = await api.watchlistDetail(id);
-      if (r.ok) {
-        setGroup(r.group);
-        setItems(r.items ?? r.group.items);
+      const r = await api.watchlistTags();
+      setTags(r.tags ?? []);
+      setAllItems(r.items ?? []);
+      if (r.tags && r.tags.length > 0 && !r.tags.some((t) => t.id === selectedTag)) {
+        setSelectedTag(r.tags[0].id); // 默认落在根 tag「全部」
       }
     } catch (e) {
-      setErr(errMsg(e));
+      setErr(`加载失败：${errOf(e)}`);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [selectedTag]);
 
   useEffect(() => {
-    void refreshList();
-  }, [refreshList]);
-
-  // 首次加载自动选中第一个分组
-  useEffect(() => {
-    if (autoSelected.current || groups.length === 0) return;
-    autoSelected.current = true;
-    const first = groups.find((g) => (g.aggSources?.length ? "agg" : "base") === kind) ?? groups[0];
-    setKind(first.aggSources?.length ? "agg" : "base");
-    setSelectedId(first.id);
-    void loadDetail(first.id);
+    void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups]);
+  }, []);
+
+  /** 按 tag 刷新标的列表（tag 切换时触发） */
+  const loadItems = useCallback(async (tagId: string) => {
+    try {
+      const r = await api.watchlistItems(tagId === WATCH_ROOT_TAG ? null : tagId);
+      setItems(r.items ?? []);
+    } catch (e) {
+      setErr(`加载标的失败：${errOf(e)}`);
+    }
+  }, []);
 
   useEffect(() => {
-    if (selectedId) void loadDetail(selectedId);
-  }, [selectedId, loadDetail]);
+    if (tags.length === 0) return;
+    void loadItems(selectedTag);
+  }, [selectedTag, tags.length, loadItems]);
 
-  // 切换分组 → 重置面板态
+  /** 选中项跟随列表：切 tag 后若当前标的已不在列表，默认选第一只 */
+  const current = useMemo(() => items.find((x) => x.code === selectedCode) ?? null, [items, selectedCode]);
   useEffect(() => {
-    setErr(null);
-    setInfo(null);
-    setEditingMeta(false);
-    setExtendText(null);
-    setPreview(null);
-  }, [selectedId]);
-
-  const isAgg = !!group?.aggSources?.length;
-  const baseGroups = groups.filter((g) => !g.aggSources?.length);
-  const aggGroups = groups.filter((g) => !!g.aggSources?.length);
-  const visible = kind === "agg" ? aggGroups : baseGroups;
-
-  // ---------- 分组操作 ----------
-
-  const create = async () => {
-    const name = newName.trim();
-    if (!name) return;
-    setCreating(true);
-    setErr(null);
-    try {
-      const r = await api.watchlistCreate({ name, ...(newDesc.trim() ? { description: newDesc.trim() } : {}), ...(newAgg && newSources.length > 0 ? { aggSources: newSources } : {}) });
-      if (r.ok) {
-        setNewName("");
-        setNewDesc("");
-        setNewAgg(false);
-        setNewSources([]);
-        setShowCreate(false);
-        setKind(r.group.aggSources?.length ? "agg" : "base");
-        setSelectedId(r.group.id);
-        setItems([]);
-        await refreshList();
-      } else setErr(r.message ?? "创建失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const openMetaEdit = () => {
-    if (!group) return;
-    setMetaName(group.name);
-    setMetaDesc(group.description ?? "");
-    setMetaSources(group.aggSources ?? []);
-    setEditingMeta(true);
-  };
-
-  const saveMeta = async () => {
-    if (!group) return;
-    setErr(null);
-    try {
-      const r = await api.watchlistUpdate(group.id, {
-        name: metaName.trim() || group.name,
-        description: metaDesc.trim() || undefined,
-        ...(isAgg || metaSources.length > 0 ? { aggSources: metaSources.length > 0 ? metaSources : null } : {}),
-      });
-      if (r.ok) {
-        setGroup(r.group);
-        setItems(r.items ?? r.group.items);
-        setEditingMeta(false);
-        await refreshList();
-      } else setErr(r.message ?? "保存失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  };
-
-  const removeGroup = async () => {
-    if (!group) return;
-    const n = items.length;
-    if (!window.confirm(`确定删除分组「${group.name}」？${isAgg ? "（仅删除分组本身，源分组及其标的保留）" : `其下 ${n} 个标的将一并删除。`}`)) return;
-    setErr(null);
-    try {
-      const r = await api.watchlistDelete(group.id);
-      if (r.ok) {
-        setSelectedId(null);
-        setGroup(null);
-        setItems([]);
-        await refreshList();
-      } else setErr(r.message ?? "删除失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  };
-
-  // ---------- 标的管理 ----------
-
-  const searchCandsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchCands = (v: string) => {
-    if (searchCandsTimer.current) clearTimeout(searchCandsTimer.current);
-    const t = v.trim();
-    if (!t || /^[\dhk/]+$/i.test(t) || addKind === "fund") {
-      setCandsOpen(false);
+    if (items.length === 0) {
+      if (selectedCode) setSelectedCode("");
       return;
     }
-    searchCandsTimer.current = setTimeout(async () => {
-      try {
-        const r = await api.watchlistSearchStock(t, 8);
-        if (r.ok) {
-          setCands(r.items ?? []);
-          setCandsOpen((r.items?.length ?? 0) > 0);
-        }
-      } catch {
-        setCandsOpen(false);
-      }
-    }, 320);
-  };
+    if (!items.some((x) => x.code === selectedCode)) setSelectedCode(items[0].code);
+  }, [items, selectedCode]);
 
-  const addItem = async () => {
-    if (!group || isAgg) return;
-    let code = addCode.trim();
-    if (!/^(sh|sz|hk|bj)?\d{5,6}$/i.test(code) && addKind === "stock" && code) {
+  // ---------- 操作回调（成功后局部刷新，不整页重载） ----------
+
+  const refreshTags = useCallback(async () => {
+    const r = await api.watchlistTags();
+    setTags(r.tags ?? []);
+    setAllItems(r.items ?? []);
+  }, []);
+
+  /** 通用操作包装：错误统一提示，成功提示可选 */
+  const run = useCallback(
+    async (fn: () => Promise<unknown>, okMsg?: string) => {
+      setErr("");
       try {
-        const r = await api.watchlistSearchStock(code);
-        if (r.ok && r.items.length > 0) {
-          code = r.items[0].code;
-          setAddCode(code);
-          if (!addName) setAddName(r.items[0].name);
-        } else {
-          setErr(`未找到「${code}」对应的标的，请直接输入代码`);
-          return;
-        }
+        await fn();
+        if (okMsg) setInfo(okMsg);
+        await refreshTags();
+        await loadItems(selectedTag);
       } catch (e) {
-        setErr(errMsg(e));
-        return;
+        setErr(errOf(e));
+        // 目标被删（404）等情况：回退到根 tag，避免停在空列表
+        const status = (e as { status?: number } | null)?.status;
+        if (status === 404) setSelectedTag(WATCH_ROOT_TAG);
       }
-    }
-    if (!code) {
-      setErr(addKind === "fund" ? "请输入基金代码（6 位数字，如 161725）" : "请输入标的代码（如 600519 / sh600519 / hk00700）");
-      return;
-    }
-    if (!addReason.trim()) {
-      setErr("请输入入选理由（逻辑确认的「前提」，可在逻辑确认中复核其是否成立）");
-      return;
-    }
-    setAdding(true);
-    setErr(null);
+    },
+    [refreshTags, loadItems, selectedTag],
+  );
+
+  const onCreateTag = (name: string, parentId: string) =>
+    run(async () => {
+      await api.watchlistTagCreate({ name, parentId });
+    }, `已创建标签「${name}」`);
+
+  const onRenameTag = (id: string, name: string) =>
+    run(async () => {
+      await api.watchlistTagUpdate(id, { name });
+    }, "已重命名");
+
+  const onMoveTag = (id: string, parentId: string) =>
+    run(async () => {
+      await api.watchlistTagUpdate(id, { parentId });
+    }, "已移动标签");
+
+  const onDeleteTag = (id: string, mode: "promote" | "cascade") =>
+    run(async () => {
+      const r = await api.watchlistTagDelete(id, mode);
+      setInfo(`已删除 ${r.deletedTags ?? 1} 个标签（影响 ${r.affectedItems ?? 0} 个标的）`);
+    });
+
+  const onAddItem = async (payload: {
+    code: string;
+    name?: string;
+    kind?: "stock" | "fund";
+    reason?: string;
+    expectation?: string;
+    targetPrice?: number;
+    tags?: string[];
+  }) => {
+    setErr("");
     try {
-      let name = addName.trim();
-      if (!name) {
-        try {
-          const r = await api.watchlistResolve(code, addKind);
-          if (r.ok && r.name) name = r.name;
-        } catch { /* 解析失败静默 */ }
+      await api.watchlistItemCreate(payload);
+      setInfo(`已添加标的 ${payload.code}`);
+      await refreshTags();
+      await loadItems(selectedTag);
+      setSelectedCode(payload.code);
+    } catch (e) {
+      setErr(errOf(e));
+    }
+  };
+
+  /** 删除标的：连带清理其提醒规则/命中/复核历史（由 store.deleteItem 保证） */
+  const onDeleteItem = (code: string) =>
+    run(async () => {
+      await api.watchlistItemDelete(code);
+      setSelectedCode("");
+    }, `已删除标的 ${code}`);
+
+  const onUpdateItem = (code: string, patch: Parameters<typeof api.watchlistItemUpdate>[1]) =>
+    run(async () => {
+      await api.watchlistItemUpdate(code, patch);
+    }, "已保存");
+
+  // ---------- 左栏宽度 / 上下分区高度 拖拽 ----------
+  const startDrag = (dir: "v" | "h") => (e: React.MouseEvent) => {
+    dragRef.current = { x: e.clientX, y: e.clientY, w: leftWidth, ratio: topRatio, dir };
+    document.body.style.cursor = dir === "v" ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (d.dir === "v") {
+        setLeftWidth(Math.min(LEFT_MAX, Math.max(LEFT_MIN, d.w + (e.clientX - d.x))));
+      } else {
+        const box = leftRef.current?.getBoundingClientRect();
+        if (!box || box.height === 0) return;
+        const next = d.ratio + ((e.clientY - d.y) / box.height) * 100;
+        setTopRatio(Math.min(TOP_MAX, Math.max(TOP_MIN, next)));
       }
-      const item: WatchItem = {
-        code,
-        ...(name ? { name } : {}),
-        ...(addKind === "fund" ? { kind: "fund" as const } : {}),
-        reason: addReason.trim(),
-        ...(addExpect.trim() ? { expectation: addExpect.trim() } : {}),
-        addedAt: new Date().toISOString(),
-      };
-      const r = await api.watchlistUpdate(group.id, { addItems: [item] });
-      if (r.ok) {
-        setGroup(r.group);
-        setItems(r.items ?? r.group.items);
-        setAddCode("");
-        setAddName("");
-        setAddReason("");
-        setAddExpect("");
-        await refreshList();
-      } else setErr(r.message ?? "添加失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setAdding(false);
-    }
-  };
+    };
+    const onUp = () => {
+      if (!dragRef.current) return;
+      const dir = dragRef.current.dir;
+      dragRef.current = null;
+      if (dir === "v") localStorage.setItem(LEFT_W_KEY, String(leftWidth));
+      else localStorage.setItem(TOP_RATIO_KEY, String(topRatio));
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [leftWidth, topRatio]);
 
-  const removeItem = async (code: string) => {
-    if (!group || isAgg) return;
-    setErr(null);
-    try {
-      const r = await api.watchlistUpdate(group.id, { removeCodes: [code] });
-      if (r.ok) {
-        setGroup(r.group);
-        setItems(r.items ?? r.group.items);
-        await refreshList();
-      } else setErr(r.message ?? "移除失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  };
+  // ---------- 渲染 ----------
 
-  /** 拖拽重排（顺序 = 优先级；乐观更新 + 失败回滚） */
-  const reorder = async (from: number, to: number) => {
-    if (!group || isAgg || from === to) return;
-    const prev = items;
-    const next = items.slice();
-    const [moved] = next.splice(from, 1);
-    next.splice(from < to ? to - 1 : to, 0, moved);
-    setItems(next);
-    try {
-      const r = await api.watchlistUpdate(group.id, { reorderCodes: next.map((s) => s.code) });
-      if (r.ok) {
-        setGroup(r.group);
-        setItems(r.items ?? r.group.items);
-      } else setErr(r.message ?? "重排失败");
-    } catch (e) {
-      setItems(prev);
-      setErr(errMsg(e));
-    }
-  };
-
-  const doMove = async () => {
-    if (!group || !moveItem || !moveTo) return;
-    setMoving(true);
-    setErr(null);
-    try {
-      const r = await api.watchlistMoveItem(group.id, moveItem.code, moveTo, moveCopy);
-      if (!r.ok || !r.toGroup) throw new Error(r.message || "移动/复制失败");
-      setMoveItem(null);
-      setMoveTo("");
-      setMoveCopy(false);
-      await refreshList();
-      if (!moveCopy) {
-        setGroup(r.fromGroup ?? null);
-        setItems(r.fromGroup?.items ?? []);
+  const tagName = useMemo(() => {
+    const find = (nodes: WatchTagNode[]): WatchTagNode | null => {
+      for (const n of nodes) {
+        if (n.id === selectedTag) return n;
+        const hit = find(n.children);
+        if (hit) return hit;
       }
-      setInfo(moveCopy ? `已复制 ${moveItem.name || moveItem.code}` : `已移动 ${moveItem.name || moveItem.code}`);
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setMoving(false);
-    }
-  };
+      return null;
+    };
+    return find(tags)?.name ?? "全部";
+  }, [tags, selectedTag]);
 
-  // ---------- Chat 导入 / 补充 ----------
+  return (
+    <div style={{ height: "calc(100dvh - 56px)", display: "flex", flexDirection: "column", boxSizing: "border-box", overflow: "hidden" }}>
+      <div style={{ padding: "0.5rem 1rem 0.6rem", flexShrink: 0 }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: C.text }}>📌 自选股</div>
+        <div style={{ fontSize: "0.78rem", color: C.faintest, marginTop: "0.1rem" }}>
+          以标的为核心：左侧按多级 tag 筛选，右侧是单一标的的四个功能面
+        </div>
+      </div>
 
-  const importChat = async () => {
-    const url = importUrl.trim();
-    if (!url) return;
-    if (!SHARE_RE.test(url)) { setErr("链接格式无效，应为 https://chat.deepseek.com/share/<id>"); return; }
-    setImporting(true);
-    setErr(null);
-    try {
-      const t = await api.watchlistImport(url);
-      if (!t.ok) { setErr(t.message || "导入失败"); return; }
-      if (t.taskId) {
-        for (let i = 0; i < 120; i++) {
-          await new Promise((r) => setTimeout(r, 3000));
-          const st = await api.dataInfraTask(t.taskId).catch(() => null);
-          const dt = st?.ok ? st.task : undefined;
-          if (dt?.status === "done" && dt.result) {
-            setImportUrl("");
-            setShowCreate(false);
-            setSelectedId((dt.result as { id: string }).id);
-            await refreshList();
-            return;
-          }
-          if (dt && (dt.status === "failed" || dt.status === "cancelled")) { setErr(dt.lastResult || "导入失败"); return; }
-        }
-        setErr("导入超时，请稍后重试");
-      }
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setImporting(false);
-    }
-  };
+      {err ? (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 8, padding: "0.5rem 0.8rem", fontSize: "0.83rem", marginBottom: "0.5rem" }}>
+          {err}
+        </div>
+      ) : null}
+      {info ? (
+        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", borderRadius: 8, padding: "0.5rem 0.8rem", fontSize: "0.83rem", marginBottom: "0.5rem" }}>
+          ✅ {info}
+        </div>
+      ) : null}
 
-  const appendPreview = async () => {
-    if (!group) return;
-    const url = appendUrl.trim();
-    if (!url) return;
-    if (!SHARE_RE.test(url)) { setErr("链接格式无效，应为 https://chat.deepseek.com/share/<id>"); return; }
-    setAppending(true);
-    setErr(null);
-    try {
-      const t = await api.watchlistAppendPreview(group.id, url);
-      if (!t.ok) { setErr(t.message || "解析失败"); return; }
-      if (t.taskId) {
-        for (let i = 0; i < 120; i++) {
-          await new Promise((r) => setTimeout(r, 3000));
-          const st = await api.dataInfraTask(t.taskId).catch(() => null);
-          const dt = st?.ok ? st.task : undefined;
-          if (dt?.status === "done" && dt.result) {
-            const cand = (dt.result as { items?: WatchItem[] }).items ?? [];
-            if (cand.length === 0) { setErr("Chat 对话中未识别到可补充的标的"); return; }
-            setPreview({ taskId: t.taskId, items: cand });
-            setPreviewSel(new Set(cand.map((s) => s.code)));
-            return;
-          }
-          if (dt && (dt.status === "failed" || dt.status === "cancelled")) { setErr(dt.lastResult || "解析失败"); return; }
-        }
-        setErr("解析超时，请稍后重试");
-      }
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setAppending(false);
-    }
-  };
+      {/* 主区：左筛选区 + 右单标的详情（各自独立滚动） */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "stretch", gap: 0 }}>
+        {/* 左栏：筛选区（上 tag 树 / 下标的列表） */}
+        <aside
+          ref={leftRef}
+          style={{
+            width: leftWidth,
+            flexShrink: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderRight: `1px solid ${C.border}`,
+            background: "#fff",
+          }}
+        >
+          {/* 上：tag 树管理区（默认折叠；展开后按 topRatio 弹性挤压下方标的列表） */}
+          <div
+            style={{
+              flex: tagCollapsed ? "0 0 auto" : `0 0 ${topRatio}%`,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <TagTree
+              tags={tags}
+              selected={selectedTag}
+              collapsed={tagCollapsed}
+              onToggleCollapsed={() => {
+                const next = !tagCollapsed;
+                setTagCollapsed(next);
+                localStorage.setItem(TAG_COLLAPSED_KEY, next ? "1" : "0");
+              }}
+              onSelect={setSelectedTag}
+              onCreate={onCreateTag}
+              onRename={onRenameTag}
+              onMove={onMoveTag}
+              onDelete={onDeleteTag}
+            />
+          </div>
 
-  const confirmAppend = async () => {
-    if (!group || !preview) return;
-    const codes = [...previewSel];
-    if (codes.length === 0) { setErr("请至少勾选一个标的"); return; }
-    setConfirming(true);
-    setErr(null);
-    try {
-      const r = await api.watchlistAppendConfirm(group.id, preview.taskId, codes);
-      if (!r.ok || !r.group) throw new Error(r.message || "导入失败");
-      setAppendUrl("");
-      setShowAppend(false);
-      setPreview(null);
-      setPreviewSel(new Set());
-      setGroup(r.group);
-      setItems(r.items ?? r.group.items);
-      setInfo(`已导入 ${r.imported ?? codes.length} 个标的`);
-      await refreshList();
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setConfirming(false);
-    }
-  };
+          {/* 上下分区拖拽把手：展开时可调两区高度（折叠时隐藏） */}
+          {tagCollapsed ? null : (
+            <DragHandle dir="h" onStart={startDrag("h")} onDoubleClick={() => setTopRatio(TOP_DEFAULT)} />
+          )}
 
-  // ---------- 延续思考 ----------
+          {/* 下：标的列表（以标的为核心） */}
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <ItemList
+              items={items}
+              allTags={tags}
+              selectedCode={selectedCode}
+              tagName={tagName}
+              onSelect={setSelectedCode}
+              onAdd={onAddItem}
+              onUpdateTags={(code, nextTags) => onUpdateItem(code, { tags: nextTags })}
+            />
+          </div>
+        </aside>
 
-  const extend = async () => {
-    if (!group || extending) return;
-    setExtending(true);
-    setErr(null);
-    try {
-      const r = await api.watchlistExtendPrompt(group.id);
-      if (r.ok && r.prompt) setExtendText(r.prompt);
-      else setErr(r.message ?? "生成失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setExtending(false);
-    }
-  };
+        {/* 左右分栏拖拽把手：调左栏宽度 */}
+        <DragHandle dir="v" onStart={startDrag("v")} onDoubleClick={() => setLeftWidth(LEFT_DEFAULT)} />
 
-  const goChat = async () => {
-    if (!extendText) return;
-    setErr(null);
-    try {
-      const r = await api.chatBrowserOpen(extendText, { send: true, deepThink: true, search: true });
-      if (r.ok) setInfo(r.message ?? "已打开浏览器");
-      else setErr(r.message ?? "打开失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    }
-  };
+        {/* 右栏：单一标的的四个功能面 */}
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {loading ? (
+            <div style={{ padding: "1rem" }}>
+              <Loading text="加载自选股…" />
+            </div>
+          ) : !current ? (
+            <div style={{ padding: "1rem" }}>
+              <Empty>{items.length === 0 ? `「${tagName}」下暂无标的——先在左下角添加，或换个标签` : "请在左侧选择一个标的"}</Empty>
+            </div>
+          ) : (
+            <ItemDetail
+              item={current}
+              tab={tab}
+              onTabChange={setTab}
+              onUpdate={onUpdateItem}
+              onDelete={onDeleteItem}
+              allTags={tags}
+            />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
 
-  const copyPrompt = async () => {
-    if (!extendText) return;
-    try {
-      await navigator.clipboard.writeText(extendText);
-      setInfo("✅ 提示词已复制");
-    } catch { /* 忽略 */ }
+// ============================================================
+// 右栏：单一标的的头部 + 四个功能面
+// ============================================================
+
+function ItemDetail({
+  item,
+  tab,
+  onTabChange,
+  onUpdate,
+  onDelete,
+  allTags,
+}: {
+  item: WatchItemRow;
+  tab: TabKey;
+  onTabChange: (t: TabKey) => void;
+  onUpdate: (code: string, patch: Parameters<typeof api.watchlistItemUpdate>[1]) => Promise<void>;
+  onDelete: (code: string) => Promise<void>;
+  allTags: WatchTagNode[];
+}) {
+  /** 标签 id → 名称（一律显示名称，不显示 id 编码） */
+  const nameById = useMemo(() => tagNameMap(allTags), [allTags]);
+  const [editing, setEditing] = useState(false);
+  const [reason, setReason] = useState(item.reason ?? "");
+  const [expectation, setExpectation] = useState(item.expectation ?? "");
+  const [targetPrice, setTargetPrice] = useState(typeof item.targetPrice === "number" ? String(item.targetPrice) : "");
+  const [saving, setSaving] = useState(false);
+
+  // 切标的时同步表单（受控输入需跟随 props）
+  useEffect(() => {
+    setEditing(false);
+    setReason(item.reason ?? "");
+    setExpectation(item.expectation ?? "");
+    setTargetPrice(typeof item.targetPrice === "number" ? String(item.targetPrice) : "");
+  }, [item.code, item.reason, item.expectation, item.targetPrice]);
+
+  const save = async () => {
+    setSaving(true);
+    const tp = targetPrice.trim() === "" ? null : Number(targetPrice);
+    await onUpdate(item.code, {
+      reason,
+      expectation,
+      targetPrice: tp === null || !Number.isFinite(tp) ? null : tp,
+    });
+    setSaving(false);
+    setEditing(false);
   };
 
   return (
-    <div>
-      <PageHeader
-        title="📌 自选股"
-        desc="以标的为中心的跟踪与管理：分组（基础 / 聚合）组织标的，四个功能面覆盖「行情跟踪 · 下沉分析 · 提醒设置 · 逻辑确认」。"
-      />
-      {err && <ErrorCard>{err}</ErrorCard>}
-      {info && (
-        <div style={{ padding: "0.6rem 0.9rem", borderRadius: 8, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#047857", fontSize: "0.85rem", marginBottom: "0.6rem", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-          <span>ℹ️ {info}</span>
-          <button type="button" onClick={() => setInfo(null)} style={{ border: "none", background: "none", color: "#047857", cursor: "pointer", fontSize: "0.8rem" }}>✕</button>
-        </div>
-      )}
-
-      {/* 分组切换：基础 / 聚合 分段 + 横向分组条 */}
-      <div style={{ ...card, paddingBottom: "0.9rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.4rem" }}>
-          <SegTabs
-            value={kind}
-            options={[
-              { value: "base", label: `基础分组（${baseGroups.length}）`, title: "自有标的的分组" },
-              { value: "agg", label: `聚合分组（${aggGroups.length}）`, title: "由多个基础分组的标的并集组成" },
-            ]}
-            onChange={(v) => setKind(v as GroupKind)}
-          />
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            style={{ ...btnSmall, background: showCreate ? "#1d4ed8" : "#3b82f6" }}
-            onClick={() => setShowCreate((v) => !v)}
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
+      {/* 标的头部：核心信息 + 编辑（强调标的的核心位置） */}
+      <div style={{ padding: "0.5rem 0.9rem 0.45rem", borderBottom: `1px solid ${C.border}`, background: "#fff", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
+          <a
+            href={`https://xueqiu.com/S/${item.code.toUpperCase()}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: "1.15rem", fontWeight: 800, color: C.text, textDecoration: "none" }}
+            title="在雪球查看该标的"
           >
-            {showCreate ? "▾ 收起" : "➕ 新建分组"}
-          </button>
+            {item.name || item.code}
+          </a>
+          <span style={{ fontSize: "0.78rem", color: C.faintest, fontFamily: "ui-monospace, monospace" }}>{item.code}</span>
+          {item.kind === "fund" ? (
+            <span style={{ fontSize: "0.7rem", background: C.accentBg, color: C.accent, borderRadius: 4, padding: "0 0.35rem" }}>场外基金</span>
+          ) : null}
+          <span style={{ fontSize: "1.05rem", fontWeight: 700, color: pctColor(item.pct) }}>{fmtPrice(item.price)}</span>
+          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: pctColor(item.pct) }}>{fmtPct(item.pct)}</span>
+          <span style={{ flex: 1 }} />
+          {editing ? (
+            <>
+              <button type="button" style={btnSmall} disabled={saving} onClick={() => void save()}>
+                {saving ? "保存中…" : "💾 保存"}
+              </button>
+              <button type="button" style={{ ...btnSmall, background: "#f1f5f9", color: C.text }} onClick={() => setEditing(false)}>
+                取消
+              </button>
+            </>
+          ) : (
+            <button type="button" style={{ ...btnSmall, background: "#f1f5f9", color: C.text }} onClick={() => setEditing(true)}>
+              ✏️ 编辑理由/预期
+            </button>
+          )}
+          <ConfirmButton
+            variant="outline"
+            title={`删除标的「${item.name || item.code}」`}
+            confirmText="删除标的"
+            description={
+              <>
+                将删除标的 <b>{item.name || item.code}</b>（{item.code}）及其<b>全部相关数据</b>：
+                提醒规则、提醒命中记录、逻辑复核历史都会一并清除，且<b>不可恢复</b>。
+                <br />
+                如果只是不想在当前标签看到它，请用标签行上的「✕ 移出标签」。
+              </>
+            }
+            onConfirm={() => onDelete(item.code)}
+          >
+            🗑 删除标的
+          </ConfirmButton>
         </div>
 
-        {showCreate && (
-          <div style={{ padding: "0.6rem 0.7rem", background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: 8, marginBottom: "0.5rem" }}>
-            <div style={{ display: "flex", gap: "0.3rem", marginBottom: "0.45rem" }}>
-              <button type="button" style={{ ...btnSmall, flex: 1, background: createTab === "manual" ? "#2563eb" : "#93c5fd" }} onClick={() => setCreateTab("manual")}>✍️ 手动创建</button>
-              <button type="button" style={{ ...btnSmall, flex: 1, background: createTab === "chat" ? "#7c3aed" : "#c4b5fd" }} onClick={() => setCreateTab("chat")}>🤖 Chat 导入</button>
-            </div>
-            {createTab === "manual" ? (
-              <>
-                <input style={{ ...input, width: "100%", boxSizing: "border-box", marginBottom: "0.35rem", fontSize: "0.82rem" }} placeholder="分组名称（如 商业航天 / AI 硬件）" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void create(); }} />
-                <textarea style={{ ...input, width: "100%", resize: "vertical", minHeight: 44, fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }} placeholder="分组介绍（可选：主题逻辑 / 选股思路）" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-                <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", marginBottom: "0.35rem", cursor: "pointer" }}>
-                  <input type="checkbox" checked={newAgg} onChange={(e) => { setNewAgg(e.target.checked); if (!e.target.checked) setNewSources([]); }} />
-                  设为聚合分组（标的 = 所选基础分组的并集）
-                </label>
-                {newAgg && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.35rem" }}>
-                    {baseGroups.length === 0 ? (
-                      <span style={{ color: C.faintest, fontSize: "0.78rem" }}>暂无基础分组可选</span>
-                    ) : baseGroups.map((g) => (
-                      <label key={g.id} style={{ display: "flex", alignItems: "center", gap: "0.25rem", padding: "0.2rem 0.55rem", background: "#fff", border: `1px solid ${C.accentBorder}`, borderRadius: 6, fontSize: "0.78rem", cursor: "pointer" }}>
-                        <input type="checkbox" checked={newSources.includes(g.id)} onChange={(e) => setNewSources((p) => (e.target.checked ? [...p, g.id] : p.filter((x) => x !== g.id)))} />
-                        {g.name}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <button type="button" style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem" }} onClick={() => void create()} disabled={creating}>
-                  {creating ? "创建中…" : "✓ 创建分组"}
+        {/* 所属 tag 标签（可增删 → 直接改标的归属） */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginTop: "0.3rem", alignItems: "center" }}>
+          <span style={{ fontSize: "0.72rem", color: C.faintest }}>标签：</span>
+          {item.tags.length === 0 ? (
+            <span style={{ fontSize: "0.72rem", color: C.faintest }}>（无，仅在「全部」可见）</span>
+          ) : (
+            item.tags.map((t) => (
+              <span
+                key={t}
+                style={{
+                  fontSize: "0.72rem",
+                  background: C.accentBg,
+                  color: C.accent,
+                  border: `1px solid ${C.accentBorder}`,
+                  borderRadius: 999,
+                  padding: "0.02rem 0.45rem",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.2rem",
+                }}
+              >
+                {nameById.get(t) ?? t}
+                <button
+                  type="button"
+                  title={`从标签「${nameById.get(t) ?? t}」移除`}
+                  onClick={() => void onUpdate(item.code, { tags: item.tags.filter((x) => x !== t) })}
+                  style={{ border: "none", background: "transparent", color: C.accent, cursor: "pointer", padding: 0, fontSize: "0.8rem", lineHeight: 1 }}
+                >
+                  ✕
                 </button>
-              </>
-            ) : (
-              <>
-                <input style={{ ...input, width: "100%", fontSize: "0.8rem", boxSizing: "border-box", marginBottom: "0.35rem" }} placeholder="https://chat.deepseek.com/share/<id>" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void importChat(); }} />
-                <button type="button" style={{ ...btn, width: "100%", padding: "0.4rem", fontSize: "0.82rem", background: "#7c3aed" }} onClick={() => void importChat()} disabled={importing}>
-                  {importing ? "🔄 提取整理中…" : "📥 从 Chat 导入"}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+              </span>
+            ))
+          )}
+          <TagAdder allTags={allTags} owned={item.tags} onAdd={(t) => void onUpdate(item.code, { tags: [...item.tags, t] })} />
+        </div>
 
-        {visible.length === 0 ? (
-          <div style={{ color: C.faintest, fontSize: "0.85rem", padding: "0.5rem 0" }}>
-            {kind === "agg" ? "还没有聚合分组（聚合分组的标的 = 多个基础分组的并集）" : "还没有基础分组，先新建一个或由 Chat 导入"}
+        {/* 编辑区：入选理由 / 预期 / 目标价 */}
+        {editing ? (
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "0.5rem", marginTop: "0.6rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span style={{ fontSize: "0.75rem", color: C.faint, fontWeight: 600 }}>入选理由</span>
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="为什么选它（逻辑确认的「前提」）"
+                style={{ ...input, minHeight: 56, lineHeight: 1.6, resize: "vertical" }}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span style={{ fontSize: "0.75rem", color: C.faint, fontWeight: 600 }}>预期</span>
+              <textarea
+                value={expectation}
+                onChange={(e) => setExpectation(e.target.value)}
+                placeholder="可验证的目标（如 Q3 业绩兑现 / 半年内估值修复到 25x）"
+                style={{ ...input, minHeight: 56, lineHeight: 1.6, resize: "vertical" }}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span style={{ fontSize: "0.75rem", color: C.faint, fontWeight: 600 }}>目标价（可选）</span>
+              <input
+                value={targetPrice}
+                onChange={(e) => setTargetPrice(e.target.value)}
+                inputMode="decimal"
+                step="0.01"
+                placeholder="如 1800"
+                style={input}
+              />
+            </label>
           </div>
         ) : (
-          <div style={{ display: "flex", gap: "0.4rem", overflowX: "auto", paddingBottom: "0.25rem" }}>
-            {visible.map((g) => {
-              const active = g.id === selectedId;
-              return (
-                <button
-                  key={g.id}
-                  type="button"
-                  title={g.description ?? g.name}
-                  onClick={() => setSelectedId(g.id)}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.1rem",
-                    alignItems: "flex-start",
-                    padding: "0.42rem 0.75rem",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    border: active ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
-                    background: active ? C.accentBg : "#fff",
-                  }}
-                >
-                  <span style={{ fontWeight: active ? 700 : 600, fontSize: "0.88rem", color: active ? C.accent : C.text }}>
-                    {g.name}
-                    {g.description ? <span style={{ color: C.faintest, marginLeft: "0.25rem", fontSize: "0.75rem" }}>ℹ️</span> : null}
-                  </span>
-                  <span style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.72rem", color: C.faint }}>
-                    <span>{g.itemCount} 只</span>
-                    {typeof g.avgPct === "number" ? (
-                      <span style={{ color: pctColor(g.avgPct), fontWeight: 700 }} title={`当日平均涨跌幅（等权，${g.avgCount ?? 0} 只有行情）`}>{fmtPct(g.avgPct)}</span>
-                    ) : null}
-                    {g.reviewCount ? <span style={{ color: C.warn }} title="待复核 / 逻辑动摇的标的数">🧭{g.reviewCount}</span> : null}
-                    {g.alertCount ? <span style={{ color: C.gain }} title="当前已触发的提醒条数">🔔{g.alertCount}</span> : null}
-                  </span>
-                </button>
-              );
-            })}
+          <div
+            style={{
+              marginTop: "0.25rem",
+              fontSize: "0.75rem",
+              color: C.faint,
+              display: "flex",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span title={`入选理由：${item.reason || "未填写"}`}>📝 {item.reason || "（未填写）"}</span>
+            {item.expectation ? <span title={`预期：${item.expectation}`}>🎯 {item.expectation}</span> : null}
+            {typeof item.targetPrice === "number" ? <span title="目标价">🏷 {item.targetPrice}</span> : null}
+            <span title="入选时间">🕒 {String(item.addedAt).slice(0, 10)}</span>
           </div>
         )}
       </div>
 
-      {!group ? (
-        <div style={card}>
-          <div style={{ color: C.faintest, padding: "1.5rem 0", textAlign: "center" }}>← 选择或新建一个分组</div>
-        </div>
-      ) : (
-        <>
-          {/* 分组头部：名称 / 聚合来源 / 操作 */}
-          <div style={{ ...card, paddingBottom: "1rem" }}>
-            {editingMeta ? (
-              <div>
-                <input style={{ ...input, fontWeight: 700, fontSize: "1rem", width: "100%", boxSizing: "border-box", marginBottom: "0.35rem" }} value={metaName} onChange={(e) => setMetaName(e.target.value)} placeholder="分组名称" />
-                <textarea style={{ ...input, width: "100%", resize: "vertical", minHeight: 60, fontSize: "0.85rem", boxSizing: "border-box", marginBottom: "0.35rem" }} value={metaDesc} onChange={(e) => setMetaDesc(e.target.value)} placeholder="分组介绍（可选）" />
-                {isAgg && (
-                  <div style={{ marginBottom: "0.35rem" }}>
-                    <div style={{ fontSize: "0.78rem", color: C.faint, marginBottom: "0.25rem" }}>聚合来源（标的 = 所选基础分组的并集；清空即降级为基础分组）：</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                      {baseGroups.map((g) => (
-                        <label key={g.id} style={{ display: "flex", alignItems: "center", gap: "0.25rem", padding: "0.2rem 0.55rem", background: "#fff", border: `1px solid ${C.accentBorder}`, borderRadius: 6, fontSize: "0.78rem", cursor: "pointer" }}>
-                          <input type="checkbox" checked={metaSources.includes(g.id)} onChange={(e) => setMetaSources((p) => (e.target.checked ? [...p, g.id] : p.filter((x) => x !== g.id)))} />
-                          {g.name}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: "0.4rem" }}>
-                  <button type="button" style={btnSmall} onClick={() => void saveMeta()}>✓ 保存</button>
-                  <button type="button" style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }} onClick={() => setEditingMeta(false)}>取消</button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 700, fontSize: "1.05rem" }}>{group.name}</span>
-                {isAgg ? (
-                  <span style={{ fontSize: "0.75rem", color: C.faint, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 999, padding: "0.1rem 0.5rem" }}>
-                    聚合：{(group.aggSources ?? []).map((id) => baseGroups.find((g) => g.id === id)?.name ?? id).join(" + ")}
-                  </span>
-                ) : null}
-                <span style={{ color: C.faintest, fontSize: "0.78rem" }}>更新于 {group.updatedAt.slice(0, 10)} · {items.length} 只</span>
-                <span style={{ flex: 1 }} />
-                <button type="button" style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }} onClick={openMetaEdit}>✏️ 编辑</button>
-                {!isAgg ? (
-                  <button type="button" style={{ ...btnSmall, background: "#7c3aed" }} onClick={() => setShowAppend((v) => !v)}>🤖 Chat 补充</button>
-                ) : null}
-                <button type="button" style={{ ...btnSmall, background: "#fff", color: C.accent, border: `1px solid ${C.accentBorder}` }} onClick={() => void extend()} disabled={extending}>
-                  {extending ? "生成中…" : "🧠 延续思考"}
-                </button>
-                <button type="button" style={btnGhost} onClick={() => void removeGroup()}>删除分组</button>
-              </div>
-            )}
+      {/* 四个功能面 Tab */}
+      <div style={{ padding: "0.25rem 0.9rem 0", borderBottom: `1px solid ${C.border}`, flexShrink: 0, background: "#fff" }}>
+        <SegTabs value={tab} options={TABS} onChange={onTabChange} />
+      </div>
 
-            {group.description && !editingMeta ? (
-              <div style={{ marginTop: "0.4rem", padding: "0.45rem 0.65rem", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: "0.82rem", color: "#334155", whiteSpace: "pre-wrap" }}>
-                📖 {group.description}
-              </div>
-            ) : null}
-
-            {/* Chat 补充 */}
-            {showAppend && !isAgg ? (
-              <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.6rem", padding: "0.5rem 0.6rem", background: "#f5f3ff", borderRadius: 8, border: "1px solid #ddd6fe" }}>
-                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#6d28d9", whiteSpace: "nowrap" }}>📥 阅读 Chat 对话追加标的：</span>
-                <input style={{ ...input, flex: 1, minWidth: 200, fontSize: "0.82rem" }} placeholder="https://chat.deepseek.com/share/<id>" value={appendUrl} onChange={(e) => setAppendUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void appendPreview(); }} />
-                <button type="button" style={{ ...btn, background: "#7c3aed", padding: "0.4rem 0.9rem", fontSize: "0.82rem" }} onClick={() => void appendPreview()} disabled={appending}>
-                  {appending ? "🔄 解析中…" : "解析候选"}
-                </button>
-              </div>
-            ) : null}
-
-            {/* Chat 补充候选预览（确认后才导入） */}
-            {preview ? (
-              <div style={{ marginTop: "0.6rem", padding: "0.6rem 0.8rem", background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
-                <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#166534", marginBottom: "0.4rem" }}>📋 解析到 {preview.items.length} 个候选标的，勾选后确认导入：</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.6rem" }}>
-                  {preview.items.map((s) => (
-                    <label key={s.code} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.25rem 0.6rem", background: "#fff", border: "1px solid #bbf7d0", borderRadius: 6, fontSize: "0.82rem", cursor: "pointer" }}>
-                      <input type="checkbox" checked={previewSel.has(s.code)} onChange={() => setPreviewSel((p) => { const n = new Set(p); if (n.has(s.code)) n.delete(s.code); else n.add(s.code); return n; })} />
-                      <span>{s.name || s.code}</span>
-                      <span style={{ color: C.faintest, fontSize: "0.75rem" }}>{s.code}</span>
-                    </label>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <button type="button" style={{ ...btn, background: "#16a34a", padding: "0.35rem 1rem", fontSize: "0.82rem" }} onClick={() => void confirmAppend()} disabled={confirming || previewSel.size === 0}>
-                    {confirming ? "导入中…" : `确认导入（${previewSel.size}）`}
-                  </button>
-                  <button type="button" style={{ ...btn, background: "#e2e8f0", color: "#475569", padding: "0.35rem 0.9rem", fontSize: "0.82rem" }} onClick={() => { setPreview(null); setPreviewSel(new Set()); }}>取消</button>
-                </div>
-              </div>
-            ) : null}
-
-            {/* 延续思考结果 */}
-            {extendText ? (
-              <div style={{ marginTop: "0.6rem", padding: "0.8rem 1rem", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
-                  <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>🧠 延续思考提示词</span>
-                  <span style={{ flex: 1 }} />
-                  <button type="button" style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void copyPrompt()}>📋 复制</button>
-                  <button type="button" style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: "none", background: "#0891b2", color: "#fff", fontSize: "0.78rem", cursor: "pointer" }} onClick={() => void goChat()}>💬 去 Chat</button>
-                  <button type="button" style={{ padding: "0.3rem 0.9rem", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.faint, fontSize: "0.78rem", cursor: "pointer" }} onClick={() => setExtendText(null)}>🙈 收起</button>
-                </div>
-                <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "0.82rem", lineHeight: 1.6, color: "#4c1d95", margin: 0, maxHeight: "40vh", overflowY: "auto" }}>{extendText}</pre>
-              </div>
-            ) : null}
-          </div>
-
-          {/* 标的管理（逻辑围绕标的展开：增 / 删 / 优先级重排 / 跨分组流转） */}
-          <div style={card}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700, fontSize: "0.92rem" }}>🎯 标的管理（{items.length}）</span>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }} onClick={() => setShowItems((v) => !v)}>
-                {showItems ? "收起 ▴" : "展开 ▾"}
-              </button>
-            </div>
-
-            {showItems ? (
-              isAgg ? (
-                <div style={{ color: C.faint, fontSize: "0.82rem", padding: "0.6rem 0" }}>
-                  聚合分组的标的来自源分组（并集，按代码去重）；请到源分组中增删改标的。
-                </div>
-              ) : (
-                <>
-                  {/* 添加标的 */}
-                  <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center", marginTop: "0.5rem" }}>
-                    <select style={{ ...input, width: 104 }} value={addKind} onChange={(e) => setAddKind(e.target.value as "stock" | "fund")} title="股票/ETF 走腾讯行情；场外基金走天天基金净值">
-                      <option value="stock">股票 / ETF</option>
-                      <option value="fund">场外基金</option>
-                    </select>
-                    <div style={{ position: "relative", flex: 1, minWidth: 170 }}>
-                      <input
-                        style={{ ...input, width: "100%", boxSizing: "border-box" }}
-                        placeholder={addKind === "fund" ? "代码 161725" : "代码或名称（如 600519 / 茅台）"}
-                        value={addCode}
-                        onChange={(e) => { setAddCode(e.target.value); setAddName(""); setCandsOpen(false); searchCands(e.target.value); }}
-                        onBlur={() => setTimeout(() => setCandsOpen(false), 200)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && candsOpen && cands.length > 0) { setAddCode(cands[0].code); setAddName(cands[0].name); setCandsOpen(false); e.preventDefault(); } }}
-                      />
-                      {candsOpen && cands.length > 0 ? (
-                        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,.14)", zIndex: 20, maxHeight: 240, overflowY: "auto" }}>
-                          {cands.map((c) => (
-                            <div key={`${c.market}-${c.code}`} onMouseDown={(e) => { e.preventDefault(); setAddCode(c.code); setAddName(c.name); setCandsOpen(false); }} style={{ padding: "0.4rem 0.7rem", cursor: "pointer", display: "flex", gap: "0.5rem", alignItems: "baseline", fontSize: "0.82rem" }}>
-                              <span style={{ fontWeight: 600 }}>{c.name}</span>
-                              <span style={{ color: C.faint, fontFamily: "monospace", fontSize: "0.76rem" }}>{c.market}{c.code}</span>
-                              <span style={{ color: C.faintest, fontSize: "0.7rem" }}>{c.type}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                    <input style={{ ...input, flex: 1, minWidth: 170 }} placeholder="入选理由（必填，逻辑确认的「前提」）" value={addReason} onChange={(e) => setAddReason(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addItem(); }} />
-                    <input style={{ ...input, flex: 1, minWidth: 150 }} placeholder="预期（可选：可验证的目标）" value={addExpect} onChange={(e) => setAddExpect(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addItem(); }} />
-                    <button type="button" style={btn} onClick={() => void addItem()} disabled={adding}>{adding ? "加入中…" : "加入分组"}</button>
-                  </div>
-
-                  {/* 标的列表（拖动 ⠿ 调整优先级；顺序 = 优先级） */}
-                  {items.length === 0 ? (
-                    <div style={{ color: C.faintest, fontSize: "0.85rem", padding: "0.9rem 0", textAlign: "center" }}>暂无标的，请在上面添加。</div>
-                  ) : (
-                    <table style={{ ...table, marginTop: "0.6rem" }}>
-                      <thead>
-                        <tr>
-                          <th style={{ ...th, width: 34 }}>⠿</th>
-                          <th style={{ ...th, textAlign: "left" }}>名称 / 代码</th>
-                          <th style={{ ...th, textAlign: "left" }}>入选理由</th>
-                          <th style={{ ...th, textAlign: "left" }}>预期</th>
-                          <th style={{ ...th, width: 90 }}>入选时间</th>
-                          <th style={{ ...th, width: 120 }}>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((s, i) => (
-                          <tr
-                            key={s.code}
-                            draggable
-                            onDragStart={() => setDragIdx(i)}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={() => { if (dragIdx !== null) void reorder(dragIdx, i); setDragIdx(null); }}
-                            onDragEnd={() => setDragIdx(null)}
-                            style={{ cursor: "grab", ...(dragIdx === i ? { opacity: 0.35, background: C.bg } : {}), ...(dragIdx !== null && dragIdx !== i ? { borderTop: `2px dashed ${C.accentBorder}` } : {}) }}
-                          >
-                            <td style={{ ...thTd, color: C.faintest, fontSize: "1rem" }} title="拖动调整优先级">⠿</td>
-                            <td style={{ ...thTd, textAlign: "left", whiteSpace: "nowrap" }}>
-                              <a href={stockDetailUrl(s.code, s.kind)} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
-                                <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{s.name ?? "—"}</div>
-                                <div style={{ color: C.accent, fontSize: "0.72rem", textDecoration: "underline" }}>{s.code} ↗</div>
-                              </a>
-                              {s.kind === "fund" ? <span style={{ fontSize: "0.68rem", color: C.faintest }}>场外</span> : null}
-                            </td>
-                            <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>{s.reason || <span style={{ color: C.faintest }}>—</span>}</td>
-                            <td style={{ ...thTd, textAlign: "left", fontSize: "0.8rem" }}>
-                              {s.expectation || <span style={{ color: C.faintest }}>—</span>}
-                              {typeof s.targetPrice === "number" ? <span style={{ color: C.accent, marginLeft: "0.25rem" }}>｜{s.targetPrice}</span> : null}
-                            </td>
-                            <td style={{ ...thTd, fontSize: "0.75rem", color: C.faint }}>{(s.addedAt ?? "").slice(0, 10)}</td>
-                            <td style={thTd}>
-                              <button type="button" style={btnGhost} onClick={() => void removeItem(s.code)}>移除</button>
-                              <button
-                                type="button"
-                                style={{ ...btnGhost, color: C.accent, borderColor: C.accentBorder, marginLeft: 4 }}
-                                title="移动/复制到其他分组"
-                                onClick={() => { setMoveItem({ code: s.code, name: s.name }); setMoveTo(""); setMoveCopy(false); }}
-                              >
-                                ⇄
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </>
-              )
-            ) : null}
-          </div>
-
-          {/* 功能 Tab（横向） */}
-          <div style={{ ...card, paddingBottom: "1rem" }}>
-            <div style={{ display: "flex", gap: "0.2rem", borderBottom: `1px solid ${C.border}`, marginBottom: "0.7rem", flexWrap: "wrap" }}>
-              {TABS.map((t) => {
-                const active = t.value === tab;
-                return (
-                  <button
-                    key={t.value}
-                    type="button"
-                    title={t.title}
-                    onClick={() => setTab(t.value)}
-                    style={{
-                      padding: "0.5rem 1rem",
-                      border: "none",
-                      background: "transparent",
-                      borderBottom: active ? `2px solid ${C.accent}` : "2px solid transparent",
-                      color: active ? C.accent : C.faint,
-                      fontWeight: active ? 700 : 500,
-                      fontSize: "0.9rem",
-                      cursor: "pointer",
-                      marginBottom: -1,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {items.length === 0 && tab !== "track" ? (
-              <div style={{ color: C.faintest, fontSize: "0.85rem", padding: "1rem 0", textAlign: "center" }}>该分组暂无标的，请先添加标的</div>
-            ) : tab === "track" ? (
-              <TrackPanel groupId={group.id} />
-            ) : tab === "deep" ? (
-              <DeepDivePanel groupId={group.id} items={items} />
-            ) : tab === "alerts" ? (
-              <AlertsPanel groupId={group.id} items={items} />
-            ) : (
-              <LogicPanel groupId={group.id} items={items} />
-            )}
-          </div>
-        </>
-      )}
-
-      {/* 移动/复制标的弹窗（仅基础分组可作为目标） */}
-      {moveItem ? (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setMoveItem(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: "1.2rem 1.4rem", width: 360, boxShadow: "0 10px 40px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontWeight: 700, marginBottom: "0.6rem", fontSize: "0.95rem" }}>
-              {moveCopy ? "复制" : "移动"} <span style={{ color: C.accent }}>{moveItem.name || moveItem.code}</span>
-            </div>
-            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.7rem", fontSize: "0.82rem" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
-                <input type="radio" checked={!moveCopy} onChange={() => setMoveCopy(false)} /> 移动到
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
-                <input type="radio" checked={moveCopy} onChange={() => setMoveCopy(true)} /> 复制到
-              </label>
-            </div>
-            <select value={moveTo} onChange={(e) => setMoveTo(e.target.value)} style={{ width: "100%", padding: "0.5rem 0.6rem", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: "0.88rem", marginBottom: "0.9rem" }}>
-              <option value="">选择目标分组…</option>
-              {baseGroups.filter((g) => g.id !== group?.id).map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-              <button type="button" style={{ ...btn, background: "#e2e8f0", color: "#475569" }} onClick={() => setMoveItem(null)}>取消</button>
-              <button type="button" style={{ ...btn, opacity: !moveTo || moving ? 0.6 : 1 }} disabled={!moveTo || moving} onClick={() => void doMove()}>
-                {moving ? "处理中…" : "确认"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* 面板内容（独立滚动） */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0.55rem 0.9rem 1.2rem" }}>
+        {tab === "track" ? <TrackPanel code={item.code} name={item.name} kind={item.kind} /> : null}
+        {tab === "deepdive" ? (
+          <DeepDivePanel code={item.code} name={item.name} kind={item.kind} onReason={(r) => onUpdate(item.code, { reason: r })} />
+        ) : null}
+        {tab === "alerts" ? <AlertsPanel code={item.code} name={item.name} /> : null}
+        {tab === "logic" ? <LogicPanel code={item.code} name={item.name} /> : null}
+      </div>
     </div>
   );
 }
+
+
+
+/** 给标的追加 tag 的小下拉 */
+function TagAdder({
+  allTags,
+  owned,
+  onAdd,
+}: {
+  allTags: WatchTagNode[];
+  owned: string[];
+  onAdd: (tagId: string) => void;
+}) {
+  const flat = useMemo(() => {
+    const out: { id: string; name: string; depth: number }[] = [];
+    const walk = (nodes: WatchTagNode[], depth: number) => {
+      for (const n of nodes) {
+        if (n.id !== WATCH_ROOT_TAG) out.push({ id: n.id, name: n.name, depth });
+        walk(n.children, depth + 1);
+      }
+    };
+    walk(allTags, 0);
+    return out;
+  }, [allTags]);
+
+  const candidates = flat.filter((t) => !owned.includes(t.id));
+  if (candidates.length === 0) return null;
+
+  return (
+    <select
+      value=""
+      onChange={(e) => {
+        if (e.target.value) onAdd(e.target.value);
+        e.currentTarget.value = "";
+      }}
+      title="添加到标签"
+      style={{ ...input, padding: "0.1rem 0.3rem", fontSize: "0.75rem", borderRadius: 999, width: "auto", maxWidth: 120 }}
+    >
+      <option value="">＋ 标签</option>
+      {candidates.map((t) => (
+        <option key={t.id} value={t.id}>
+          {"　".repeat(t.depth)}
+          {t.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export type { WatchPeriod };
+
+/** 默认导出（App.tsx 路由表以 default 方式引入） */
+export default WatchlistTool;

@@ -14,14 +14,12 @@ import type {
   WatchDataMeta,
   WatchPeriod,
   WatchPeriodStat,
-  WatchTrackResult,
 } from "@toolbox/shared";
 import { getQuoteSnapshots } from "../../core/quote.js";
 import { getFundSnapshots } from "../../core/fund.js";
 import { getDailyBars } from "../../core/kline.js";
 import { bucketize, equalWeightSeries, periodSeries, type DailyBar } from "./periodStats.js";
-import type { GroupPeriodPoint } from "@toolbox/shared";
-import { getGroup, resolveItems } from "./store.js";
+import type { WatchItem } from "@toolbox/shared";
 import type { AlertContext } from "./alerts.js";
 
 /** 各周期默认展示的周期数（走势图 + 表格） */
@@ -75,27 +73,25 @@ export interface TrackItem {
 }
 
 export interface TrackBundle {
-  /** 每标的的跟踪数据（保持分组内顺序） */
+  /** 每标的的跟踪数据（保持传入顺序；单标的场景只有 1 项） */
   items: TrackItem[];
-  /** 分组等权平均序列（升序，走势图用） */
-  group: GroupPeriodPoint[];
+  /** 等权平均序列（升序；单标的场景与该项序列一致，保留供列表页复用） */
+  group: ReturnType<typeof equalWeightSeries>;
   /** 快照索引（code → 快照） */
   quotes: Map<string, QuoteSnapshot | FundSnapshot>;
   meta: WatchDataMeta;
 }
 
 /**
- * 采集 + 加工：分组内全部标的的周期行情。
+ * 采集 + 加工：给定标的集合的周期行情。
+ * 传入单项即服务「单一标的」的四个功能面；传入多项可用于列表统计（等权平均）。
  * 场外基金为净值型、无日 K → 周期统计缺省并标注 caveat（缺失即标注，不静默留空）。
  */
 export async function loadTrack(
-  groupId: string,
+  items: WatchItem[],
   period: WatchPeriod,
   opts: { force?: boolean } = {},
-): Promise<TrackBundle | null> {
-  const g = getGroup(groupId);
-  if (!g) return null;
-  const items = resolveItems(g);
+): Promise<TrackBundle> {
   const sources: string[] = [];
   const caveats: string[] = [];
   let degraded = false;
@@ -191,29 +187,6 @@ export async function loadTrack(
       ...(caveats.length ? { caveats } : {}),
     },
   };
-}
-
-/** 周期跟踪结果（表格用：每标的最近一个周期） */
-export function toTrackResult(groupId: string, period: WatchPeriod, bundle: TrackBundle): WatchTrackResult {
-  const stats: WatchPeriodStat[] = bundle.items.map((it) => {
-    const last = it.stats[it.stats.length - 1];
-    if (last) return last;
-    // 无日 K（场外基金 / 数据源不可用）→ 仅快照维度，明确标注缺失原因
-    const q = bundle.quotes.get(it.code);
-    const price = q?.ok ? ((q as QuoteSnapshot).price ?? (q as FundSnapshot).nav) : undefined;
-    return {
-      code: it.code,
-      ...(it.name ? { name: it.name } : {}),
-      ...(it.kind ? { kind: it.kind } : {}),
-      from: "",
-      to: "",
-      sessions: 0,
-      ...(typeof price === "number" ? { last: price } : {}),
-      ...(q?.ok && typeof q.pct === "number" ? { lastPct: q.pct } : {}),
-      caveat: isFund(it.kind) ? "场外基金为净值型，无日 K 周期统计" : "无日 K 数据，周期统计不可计算",
-    };
-  });
-  return { ok: true, groupId, period, note: PERIOD_NOTE[period], stats, group: bundle.group, meta: bundle.meta };
 }
 
 /**

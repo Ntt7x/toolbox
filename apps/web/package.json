@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "echarts": "^6.1.0",
     "katex": "0.16.47",
+    "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.30.0",
     "pinyin-pro": "^3.29.3",
     "react": "^19",

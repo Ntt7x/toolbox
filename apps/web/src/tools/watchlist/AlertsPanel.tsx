@@ -33,7 +33,7 @@ function newRule(code: string, name?: string): WatchAlertRule {
   };
 }
 
-export default function AlertsPanel({ groupId, items }: { groupId: string; items: WatchItem[] }) {
+export function AlertsPanel({ code, name }: { code: string; name?: string }) {
   const [rules, setRules] = useState<WatchAlertRule[]>([]);
   const [hits, setHits] = useState<WatchAlertHit[]>([]);
   const [triggered, setTriggered] = useState<WatchAlertHit[]>([]);
@@ -49,7 +49,7 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
     setLoading(true);
     setErr(null);
     try {
-      const r = await api.watchlistAlerts(groupId);
+      const r = await api.watchlistAlerts(code);
       if (r.ok) {
         setRules(r.rules);
         setHits(r.hits);
@@ -62,7 +62,7 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
     } finally {
       setLoading(false);
     }
-  }, [groupId]);
+  }, [code]);
 
   useEffect(() => {
     setRules([]);
@@ -71,18 +71,13 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
     void load();
   }, [load]);
 
-  useEffect(() => {
-    setRules([]);
-  }, [groupId]);
-
   const patch = (id: string, p: Partial<WatchAlertRule>) => {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...p } : r)));
     setDirty(true);
   };
 
   const addRule = () => {
-    if (items.length === 0) return;
-    setRules((prev) => [...prev, newRule(items[0].code, items[0].name)]);
+    setRules((prev) => [...prev, newRule(code, name)]);
     setDirty(true);
   };
 
@@ -96,7 +91,7 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
     setErr(null);
     setInfo(null);
     try {
-      const r = await api.watchlistSaveAlerts(groupId, rules);
+      const r = await api.watchlistSaveAlerts(code, rules);
       if (r.ok) {
         setRules(r.rules);
         setDirty(false);
@@ -113,7 +108,7 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
   const clearHits = async () => {
     setErr(null);
     try {
-      const r = await api.watchlistClearAlertHits(groupId);
+      const r = await api.watchlistClearAlertHits(code);
       if (r.ok) {
         setHits([]);
         setInfo("✅ 命中记录已清空");
@@ -140,7 +135,7 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
         <span style={{ flex: 1 }} />
         {sub === "rules" ? (
           <>
-            <button type="button" style={btnSmall} onClick={addRule} disabled={items.length === 0}>＋ 新增规则</button>
+            <button type="button" style={btnSmall} onClick={addRule}>＋ 新增规则</button>
             <button type="button" style={btn} onClick={() => void save()} disabled={saving || !dirty}>
               {saving ? "保存中…" : dirty ? "💾 保存" : "已保存"}
             </button>
@@ -167,10 +162,8 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
       )}
 
       {sub === "rules" ? (
-        items.length === 0 ? (
-          <Empty>该分组暂无标的，请先添加标的再设置提醒</Empty>
-        ) : rules.length === 0 ? (
-          <Empty>暂无提醒规则，点击「新增规则」添加（如：茅台 上破 1800 元）</Empty>
+        rules.length === 0 ? (
+          <Empty>暂无提醒规则，点击「新增规则」添加（如：{name ?? code} 上破 1800 元）</Empty>
         ) : (
           <table style={table}>
             <thead>
@@ -190,19 +183,10 @@ export default function AlertsPanel({ groupId, items }: { groupId: string; items
                 const kindOpt = KIND_OPTS.find((k) => k.value === r.kind)!;
                 return (
                   <tr key={r.id}>
-                    <td style={{ ...thTd, textAlign: "left" }}>
-                      <select
-                        style={{ ...input, fontSize: "0.8rem", padding: "0.3rem 0.4rem", maxWidth: 140 }}
-                        value={r.code}
-                        onChange={(e) => {
-                          const it = items.find((x) => x.code === e.target.value);
-                          patch(r.id, { code: e.target.value, ...(it?.name ? { name: it.name } : {}) });
-                        }}
-                      >
-                        {items.map((i) => (
-                          <option key={i.code} value={i.code}>{i.name ?? i.code}</option>
-                        ))}
-                      </select>
+                    {/* 规则固定服务于当前标的（本面板的服务对象就是它） */}
+                    <td style={{ ...thTd, textAlign: "left", whiteSpace: "nowrap" }}>
+                      <div style={{ fontWeight: 600 }}>{name ?? code}</div>
+                      <div style={{ fontSize: "0.72rem", color: C.faintest, fontFamily: "ui-monospace, monospace" }}>{r.code}</div>
                     </td>
                     <td style={thTd}>
                       <select
