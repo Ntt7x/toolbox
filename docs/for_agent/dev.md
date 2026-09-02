@@ -42,7 +42,8 @@
 |---|---|
 | 类型检查（L0） | `toolbox typecheck`（全仓）/ `toolbox typecheck --app server|web` |
 | 模块/全量单测 | `toolbox test <模块>` / 空=全量 |
-| 重启 dev 环境 | `toolbox dev restart` |
+| 环境状态/列表 | `toolbox env status` / `toolbox env list`（prod=main / dev=分支，端口+数据隔离，见 §3.0） |
+| 启停当前分支环境 | `toolbox env start` / `stop` / `restart`（等价 `toolbox dev ...`） |
 | 提交+推送 | `toolbox commit "feat(x): ..."` |
 | 备忘录 | `toolbox memo list / stats / done <id>` |
 | 页面定向/全量冒烟 | `toolbox smoke --page /tools/x` / 无参全量 |
@@ -136,14 +137,33 @@ toolbox/  (pnpm workspace, TypeScript 全栈)
 - 提交用 `commit.mjs`（消息引号安全，自动 add+commit+push，§6.8）
 - typecheck 对相对导入要求显式 `.js` 扩展名（node16 moduleResolution）
 
-### 3.1 开发进程管理（scripts/dev-utils/dev.mjs，2026-08-07 起强制）
+### 3.0 环境模型：prod / dev（scripts/dev-utils/env.mjs，2026-09-02 起强制）
+
+> **prod = `main` 分支**（稳定实例：端口 8787/5173，数据 `.file/`——真实数据）；
+> **dev = 其它开发分支**（验证实例：端口 8800+slot / 5180+slot，数据 `.file/envs/<分支id>/data/`）。
+> 两者**可同时运行**；dev 分支随便改表/写测试数据，**绝不污染 prod 真实数据**。
+
+- **切分支即切环境**：`dev` / `proc` / `api` / `smoke` / `browser` 全部按**当前 git 分支**自动解析环境，无需手工改端口。
+- **常用**：`toolbox env status|list|start|stop|restart|sync-data|url|release [branch]`
+  （`env start|stop|restart` 转发 `dev.mjs`，等价于 `toolbox dev ...`）
+- **槽位分配**：首次在某分支跑脚本自动取最小空闲槽位并写入 `.file/envs/registry.json`，
+  **分支 ↔ 槽位稳定映射**（重启不变）；不用了 `toolbox env release <branch>`（须先 stop）。
+- **数据隔离实现**：`dev.mjs` 把 `TOOLBOX_DATA_DIR` 等注入子进程 → 服务端 `core/db.ts` 的 `DATA_DIR`
+  被覆盖（绝对路径须用 `resolve` 而非 `join`，join 会拼成 `D:\proj\D:\env\data`）；
+  `docs` PDF 二进制目录随 `DATA_DIR` 走（`features/docs/services.ts`）。
+- **数据快照**：`toolbox env sync-data` 做 **prod → dev 单向**快照（dev→prod 一律拒绝），
+  须先 `stop`（运行中复制 SQLite 会拿到不一致快照）；复制 db + `-wal` + `-shm` 三件套 + docs 目录。
+- **自报家门**：`GET /api/health` 返回 `env` / `branch` / `dataDir`——多环境并存、端口易混淆时先打它确认。
+- ⛔ **红线**：dev 环境是沙盒，但**禁止把 dev 的实验数据回写 prod**；prod 数据清理只能手工做。
+
+### 3.1 开发进程管理（scripts/dev-utils/dev.mjs，2026-08-07 起强制；2026-09-02 起环境感知）
 
 - **禁止手动在后台任务里直接起 `tsx watch` / `vite`**（历史多次 EADDRINUSE/残留进程/服务静默挂掉，排查耗时）。
-- 一律用 `node scripts/dev-utils/dev.mjs start|stop|restart|status|kill-port <port|all>`：
-  - `start`：先清 8787/5173 端口残留（netstat 找 PID → tasklist 确认 node → taskkill /T /F），再拉起 server+web；
+- 一律用 `node scripts/dev-utils/dev.mjs start|stop|restart|status|kill-port <port|all>`（或 `toolbox env ...`）：
+  - `start`：先清**本环境**端口残留（prod 8787/5173；dev 8800+slot/5180+slot；netstat 找 PID → tasklist 确认 node → taskkill /T /F），再拉起 server+web；
     常驻 supervisor 每 5s 健康检查——进程退出或「进程存活但端口空闲」（tsx 子服务挂掉）都自动重启（≤8 次）；
-  - `stop`：写 `.file/dev.stop` 标记（supervisor 不再拉起并自行退出）+ 杀进程树 + 清端口；
-  - 子进程日志在 `.file/dev-logs/{server,web}.log`（排查服务崩溃看这里）；
+  - `stop`：写本环境 `.file[/envs/<id>]/dev.stop` 标记（supervisor 不再拉起并自行退出）+ 杀进程树 + 清端口；
+  - 子进程日志在 `.file[/envs/<id>]/logs/{server,web}.log`（排查服务崩溃看这里）；
 - 排查步骤：`node scripts/dev-utils/dev.mjs status`（看端口占用）→ 必要时 `kill-port all` → `start`；
 - 后台运行 start（bash 工具内按 cmd 语法，终端手动可换 PowerShell）：`set "PATH=D:\Softwares\nodejs;%PATH%" && cd /d D:\Agent\toolbox && node scripts/dev-utils/dev.mjs start`
 - **detached 常驻（2026-08-14 起）**：`dev start` 立即返回，supervisor 以独立进程组后台常驻（脱离调用者生命周期——调用方退出/被超时杀死不再连带杀掉 tsx/vite）；状态用 `dev status`，停止用 `dev stop`（杀 supervisor 树 + 清端口）

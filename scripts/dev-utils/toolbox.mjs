@@ -15,9 +15,11 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** 工具注册表（唯一真相；scripts/README.md 与之同步） */
 const TOOLS = [
+  // ---- 环境 ----
+  { cmd: "env", script: "env.mjs", group: "环境", desc: "环境管理（prod=main 稳定实例 / dev=分支验证实例，端口与数据隔离）", example: "toolbox env status|list|start|stop|restart|sync-data|url|release [branch]" },
   // ---- 开发进程 ----
-  { cmd: "dev", script: "dev.mjs", group: "进程", desc: "开发进程管理（server tsx watch + web vite supervisor）", example: "toolbox dev start|stop|restart|status|kill-port <port>" },
-  { cmd: "proc", script: "proc.mjs", group: "进程", desc: "进程诊断/清理（端口占用、残留 supervisor/tsx/vite）", example: "toolbox proc status|list|kill <pid>|kill-port <port>" },
+  { cmd: "dev", script: "dev.mjs", group: "进程", desc: "开发进程管理（server tsx watch + web vite supervisor；环境感知）", example: "toolbox dev start|stop|restart|status|kill-port <port>" },
+  { cmd: "proc", script: "proc.mjs", group: "进程", desc: "进程诊断/清理（端口占用、残留 supervisor/tsx/vite；环境感知）", example: "toolbox proc status|envs|list|kill <pid>|kill-port <port>" },
   // ---- 验证 ----
   { cmd: "test", script: "test.mjs", group: "验证", desc: "模块单测（自动定位测试文件 / 空=全量）", example: "toolbox test tradePlan" },
   { cmd: "typecheck", script: "typecheck.mjs", group: "验证", desc: "TypeScript 类型检查（server + web + shared；L0 必跑）", example: "toolbox typecheck [--app server|web]" },
@@ -43,6 +45,7 @@ const LIBS = [
   { cmd: "api", script: "api.mjs", desc: "通用 API 客户端（fetch+json 包装，非 2xx 抛带 message 的 Error）" },
   { cmd: "e2e", script: "e2e.mjs", desc: "API E2E 断言脚手架（用例列表 + 统计 + 失败 exit 1）" },
   { cmd: "_lib", script: "_lib.mjs", desc: "共享库（ROOT/tsxCli/viteCli 动态路径）" },
+  { cmd: "env", script: "env.mjs", desc: "环境解析库（prod/dev 判定、端口槽位分配、数据目录隔离；也被 dev/proc/api/smoke/browser import）" },
   { cmd: "ts-hook", script: "ts-resolve-hook.mjs", desc: "TS resolve hook（免 spawn 跑 TS 单测，--no-spawn 模式用）" },
 ];
 

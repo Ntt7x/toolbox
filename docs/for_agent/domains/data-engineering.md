@@ -6,7 +6,7 @@
 
 ## 0. 为什么需要统一数据层
 
-分析类页面（央行利率/国债汇率/逆回购/实验/专题财报/新闻）的数据流现状（2026-08 盘点）：
+分析类页面（央行利率/国债汇率/逆回购/实验/自选股/新闻）的数据流现状（2026-08 盘点，2026-09 更新）：
 
 | 共性问题 | 说明 |
 |---|---|
@@ -118,7 +118,7 @@ cachedFetch(key, ttlMs, fetcher, {force, staleIfError}) → {data, fromCache, ca
 | experiment（ec/bmpi） | ✅ tencent.quote/fx + user | ✅ cachedFetch | ✅ indicators.ts | ✅ datahub 三件套 | **样板（已完成）** |
 | cbRate / treasuryFx | ✅ 注册（无 deps） | ⏳ 手写（可迁 cachedFetch） | ❌ 内联 | ❌ | 待迁移 |
 | reverseRepo | ✅ 注册 | ⏳ 手写 | ❌ 内联 | ⏳ 月度即历史 | 待迁移 |
-| watchlist.fundamental | ✅ 注册 | ⏳ 手写 | ❌ 内联 | ❌ | 待迁移 |
+| watchlist（自选股，2026-09-01 重构） | ✅ 6 个（`watchlist:` / `:alert:` / `:alertHit:` / `:logic:` / `:fundamental:` / `:extend:`） | ✅ cachedFetch（财报/提示词，stale-if-error 降级；失败不落缓存） | ✅ periodStats.ts + alerts.ts（纯函数，单测 29 例） | ✅ `watchlist:logic:<组>:<代码>` 复核时间序列 | **样板（已完成）** |
 | newsCenter | ✅ 注册 | ⏳ 手写（10 分钟） | — | ❌ | 待迁移 |
 
 迁移原则：新页面必须按模板；旧页面在改动时顺手迁移（不强推全量重构）。

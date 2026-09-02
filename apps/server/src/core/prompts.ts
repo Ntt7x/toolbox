@@ -342,7 +342,7 @@ const REVERSE_REPO_MONTHLY_UPDATE_PROMPT = `你是央行公开市场操作助手
 - 某月无操作：operationTotal=0，netChange 按到期推算；拿不准的字段用 note 标注「不确定」，严禁编造
 - 只输出列出的缺失月份；已有月份不要重复输出`;
 
-/** 专题自选股：个股财报分析提示词（LLM 驱动，默认联网搜索） */
+/** 自选股：标的下沉分析（财报）提示词（LLM 驱动，默认联网搜索） */
 const WATCHLIST_FUNDAMENTAL_PROMPT = `你是资深基本面分析师。任务：分析股票 {code}（{name}）的最新财报与基本面情况（今天是 {date}）。
 
 【数据要求】联网搜索该股票最新财报（季度/年报）与市场信息：
@@ -366,14 +366,14 @@ const WATCHLIST_FUNDAMENTAL_PROMPT = `你是资深基本面分析师。任务：
   "conclusion": "一句话投资结论"
 }`;
 
-/** 专题自选股：Chat 分享链接导入（对话内容 → 专题名称/介绍/个股+理由） */
-const WATCHLIST_IMPORT_PROMPT = `你是投资专题整理助手。任务：阅读下面的 DeepSeek 对话内容，理解用户的选股/投资主题，整理成一个「专题自选股」结构化数据。
+/** 自选股：Chat 分享链接导入（对话内容 → 分组名称/介绍/标的+理由） */
+const WATCHLIST_IMPORT_PROMPT = `你是投资整理助手。任务：阅读下面的 DeepSeek 对话内容，理解用户的选股/投资主题，整理成一个「自选股分组」结构化数据。
 
 【要求】
-- 从对话中提取：专题名称（主题关键词，如「商业航天」「通胀消费」）、专题介绍
-  （主题逻辑/选股思路/风险提示，200 字以内）、入选个股列表
+- 从对话中提取：分组名称（主题关键词，如「商业航天」「通胀消费」）、分组介绍
+  （主题逻辑/选股思路/风险提示，200 字以内）、入选标的列表
 - 提取对话中出现的**所有股票/ETF 候选**（用户点名或助手重点分析，含代码与名称；**即使只有 1 只也收录**）；被明确排除/否定（如"不符合条件""应排除""脱钩风险"等）的标的**不要收录**。这是候选列表，后续由用户确认是否加入专题
-- **【关键】用户消息中出现的股票名称/代码（如"中国同辐""01763.HK"）必须收录；助手重点分析的标的一并收录。stocks 至少包含对话中出现过的股票（可只有 1 只）；严禁因"不是选股主题"或"只有 1 只"而输出空 stocks**
+- **【关键】用户消息中出现的标的名称/代码（如"中国同辐""01763.HK"）必须收录；助手重点分析的标的一并收录。stocks 至少包含对话中出现过的标的（可只有 1 只）；严禁因"不是选股主题"或"只有 1 只"而输出空 stocks**
 - **【理由】每只股票的 reason 从助手分析中提炼核心逻辑（行业地位/市占率/业务亮点等 1-2 句，30-60 字）**；即使用户只点了一只股票名，也要给出该股票的入选理由
 - 股票代码：A 股/ETF 用 6 位数字（如 600519 / 159227）；**港股用 5 位数字**（含前导 0，如 01763 中国同辐 / 00700 腾讯控股；HK 后缀如 01763.HK 亦可）
 - 每只股票给 30-60 字入选理由（核心逻辑 + 关键风险可简短带过）
@@ -383,17 +383,17 @@ const WATCHLIST_IMPORT_PROMPT = `你是投资专题整理助手。任务：阅�
 
 【输出要求】输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
 {
-  "name": "专题名称",
-  "description": "专题介绍（行业背景 / 组合逻辑 / 风险提示）",
+  "name": "分组名称",
+  "description": "分组介绍（行业背景 / 组合逻辑 / 风险提示）",
   "stocks": [
     { "code": "688102", "name": "斯瑞新材", "reason": "入选理由" }
   ]
 }
-注意：code 必须为 6 位数字；若对话中没有明确入选个股，stocks 输出空数组；
-严禁编造对话中不存在的股票。`;
+注意：code 必须为 6 位数字；若对话中没有明确入选标的，stocks 输出空数组；
+严禁编造对话中不存在的标的。`;
 
-/** 专题自选股：根据财报分析优化入选理由（system 固定；标的/理由/财报内容在 user） */
-const WATCHLIST_REASON_OPTIMIZE_PROMPT = `你是投资专题助理。根据给定股票的【财报分析】内容，优化其【入选理由】。
+/** 自选股：根据财报分析优化入选理由（system 固定；标的/理由/财报内容在 user） */
+const WATCHLIST_REASON_OPTIMIZE_PROMPT = `你是投资助理。根据给定标的的【财报分析】内容，优化其【入选理由】。
 
 要求：
 - 理由 30~60 字：结合财报分析中的核心亮点（营收/利润/增长/行业地位等）给出入选逻辑，关键风险简短带过
@@ -403,19 +403,42 @@ const WATCHLIST_REASON_OPTIMIZE_PROMPT = `你是投资专题助理。根据给�
 
 股票代码/名称/原入选理由/财报分析内容见用户消息。`;
 
-/** 专题自选股：根据专题与已有个股生成延续思考提示词（system 固定；专题信息在 user） */
-const WATCHLIST_EXTEND_PROMPT = `你是投资研究助理。根据用户提供的【专题信息】（名称/介绍/已有个股与入选理由），生成一段可直接粘贴到 DeepSeek Chat 的「延续思路 / 扩展思考」提示词。
+/** 自选股：根据分组与已有标的生成延续思考提示词（system 固定；分组信息在 user） */
+const WATCHLIST_EXTEND_PROMPT = `你是投资研究助理。根据用户提供的【分组信息】（名称/介绍/已有标的与入选理由），生成一段可直接粘贴到 DeepSeek Chat 的「延续思路 / 扩展思考」提示词。
 
 要求（生成的中文提示词需包含）：
-1. 专题核心逻辑回顾（1-2 句，让新会话快速进入状态）
-2. 已有个股概览（列主要标的名，不展开理由）
+1. 分组核心逻辑回顾（1-2 句，让新会话快速进入状态）
+2. 已有标的概览（列主要标的名，不展开理由）
 3. 扩展思考方向（3-5 个具体问题：新标的线索、逻辑深化验证、组合风险再评估、数据/事件催化等）
 4. 明确要求输出格式（如"分点列出 + 可执行建议"）
-- 生成的提示词用第二人称「你」口吻，自包含（对方无需看过本专题信息）
+- 生成的提示词用第二人称「你」口吻，自包含（对方无需看过本分组信息）
 - 输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
 { "prompt": "生成的完整提示词" }
 
-专题信息见用户消息。`;
+分组信息见用户消息。`;
+
+/** 自选股：逻辑确认（入选理由/预期随时间是否成立；system 固定，标的信息在 user） */
+const WATCHLIST_LOGIC_REVIEW_PROMPT = `你是投资逻辑验证助手。用户会提供一个标的的【入选理由】与【预期】，以及当前的【市场事实】（行情锚点 + 近期相关新闻）。
+请判断：当初的入选理由（前提）到今天是否仍然成立、预期是否已经达成，并给出建议动作。
+
+要求：
+1. 只依据用户提供的市场事实推断；事实不足以支撑判断时，如实标注「证据不足」，并给出部分成立（partial）而非强行下结论。
+2. premise（理由是否成立）：holds=仍然成立；partial=部分成立/需要观察；broken=已被证伪（如核心逻辑被打破、行业/公司基本面发生根本变化）。
+3. expectation（预期是否达成）：met=已达成；pending=尚未达成但仍在轨道上；failed=已确定无法达成。
+4. evidence：必须引用用户提供的具体事实（价格、涨跌幅、目标价达成度、新闻要点），不要泛泛而谈；无可用证据时说明「无可用证据」。
+5. suggestion：hold=继续跟踪；review=逻辑动摇，需人工复核；exit=逻辑破坏，建议移出自选。
+6. 严禁编造数据：未提供的数据一律不提，不得虚构财报数字、公告或新闻。
+
+输出必须是合法 JSON 对象（不要输出任何其它文字），结构严格如下：
+{
+  "premise": "holds|partial|broken",
+  "expectation": "met|pending|failed",
+  "evidence": "证据说明（引用具体事实，1-3 句）",
+  "suggestion": "hold|review|exit",
+  "note": "补充说明/观察要点（1-2 句）"
+}
+
+标的信息见用户消息。`;
 
 /** 知识库 × Reasonix Agent：会话引导词（占位符 {instance} {action}） */
 /** 医学知识库 × 直调：问答 system（知识库检索结果 + 问题 → 答案） */
@@ -464,10 +487,11 @@ const PROMPT_META: Record<string, [string, string]> = {
   "reverse-repo.ledger": ["交易", "买断式逆回购余额"],
   "reverse-repo.daily": ["交易", "买断式逆回购余额"],
   "reverse-repo.monthly-update": ["交易", "买断式逆回购余额"],
-  "watchlist.fundamental": ["交易", "专题自选股"],
-  "watchlist.import": ["交易", "专题自选股"],
-  "watchlist.reason-optimize": ["交易", "专题自选股"],
-  "watchlist.extend": ["交易", "专题自选股"],
+  "watchlist.fundamental": ["交易", "自选股"],
+  "watchlist.import": ["交易", "自选股"],
+  "watchlist.reason-optimize": ["交易", "自选股"],
+  "watchlist.extend": ["交易", "自选股"],
+  "watchlist.logic-review": ["交易", "自选股"],
   "knowledge.extract": ["知识库", "知识库"],
   "knowledge.ask": ["知识库", "知识库"],
   "medical-kb.ask": ["医学知识库", "医学知识库"],
@@ -588,14 +612,14 @@ const PROMPTS: PromptDef[] = [
   {
     id: "watchlist.fundamental",
     key: "prompt.watchlist.fundamental",
-    description: "专题自选股：个股财报分析提示词（LLM 驱动，默认联网搜索；{code} {name} {date}）",
+    description: "自选股：标的财报分析提示词（LLM 驱动，默认联网搜索；{code} {name} {date}）",
     defaultTemplate: WATCHLIST_FUNDAMENTAL_PROMPT,
     render: (t) => t,
   },
   {
     id: "watchlist.import",
     key: "prompt.watchlist.import",
-    description: "专题自选股：Chat 分享链接导入（对话内容 → 专题名称/介绍/个股+理由；{conversation}）",
+    description: "自选股：Chat 分享链接导入（对话内容 → 分组名称/介绍/标的+理由；{conversation}）",
     defaultTemplate: WATCHLIST_IMPORT_PROMPT,
     render: (t) => t,
   },
@@ -609,8 +633,15 @@ const PROMPTS: PromptDef[] = [
   {
     id: "watchlist.extend",
     key: "prompt.watchlist.extend",
-    description: "专题自选股：生成延续思路/扩展思考提示词（system 固定）",
+    description: "自选股：生成延续思路/扩展思考提示词（system 固定）",
     defaultTemplate: WATCHLIST_EXTEND_PROMPT,
+    render: (t) => t,
+  },
+  {
+    id: "watchlist.logic-review",
+    key: "prompt.watchlist.logicReview",
+    description: "自选股：逻辑确认复核（入选理由/预期随时间是否成立 → premise/expectation/suggestion；system 固定）",
+    defaultTemplate: WATCHLIST_LOGIC_REVIEW_PROMPT,
     render: (t) => t,
   },
   {

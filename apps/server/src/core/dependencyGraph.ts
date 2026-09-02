@@ -42,7 +42,7 @@ const NODE_NAMES: Record<string, string> = {
   cbRate: "央行利率分析",
   treasuryFx: "国债汇率分析",
   reverseRepo: "买断式逆回购",
-  watchlist: "专题自选股",
+  watchlist: "自选股",
   rehab: "医学知识库",
   memo: "改进备忘录",
   books: "书籍下载",

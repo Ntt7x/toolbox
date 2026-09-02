@@ -1,25 +1,25 @@
 // ============================================================
-// 专题自选股：个股财报分析（LLM 驱动）
-// 提示词存于本地设置数据（watchlist.fundamental），LLM 用 core/llm（默认联网搜索），
-// 结果 robustJsonParse 容错 + KV 缓存（TTL 2 年，「强制分析」可绕过）。
+// 自选股：标的下沉分析（财报，LLM 驱动）+ Chat 分享链接导入
+// 提示词存于本地设置数据（watchlist.*），LLM 用 core/llm（默认联网搜索），
+// 结果 robustJsonParse 容错 + 统一缓存（core/cache.cachedFetch，stale-if-error 降级）。
 // ============================================================
 
 import { chatSessionAsk, createChatSession } from "../../core/chatSession.js";
 import { chat } from "../../core/llm.js";
 import { getPromptTemplate } from "../../core/prompts.js";
 import { robustJsonParse } from "../../core/jsonParse.js";
-import { kvGet, kvSet } from "../../core/kvStore.js";
+import { cachedFetch, peekCache } from "../../core/cache.js";
 import { getQuoteSnapshot } from "../../core/quote.js";
 import { getFundSnapshot } from "../../core/fund.js";
 import { extractShare } from "../../core/deepseekShare.js";
-import { createTopic, getTopic, updateTopic } from "./store.js";
-import type { WatchlistFundamentalResult, WatchlistStock, WatchlistTopic } from "@toolbox/shared";
+import { createGroup, getGroup, updateGroup } from "./store.js";
+import type { WatchFundamentalResult, WatchGroup, WatchItem } from "@toolbox/shared";
 
 /** 财报分析缓存 TTL：2 年（历史分析长期有效；「强制分析」按钮可绕过） */
 export const FUNDAMENTAL_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 // 结果缓存 key 模板版本：提示词/输出结构升级时 +1（防旧缓存命中返回旧格式，dev.md §7.4 教训）
-const FUNDAMENTAL_CACHE_V = "v1";
+const FUNDAMENTAL_CACHE_V = "v2";
 const FUNDAMENTAL_PREFIX = `watchlist:fundamental:${FUNDAMENTAL_CACHE_V}:`;
 
 function todayStr(): string {
@@ -43,26 +43,19 @@ export async function resolveStockName(code: string, kind?: string): Promise<str
   return "";
 }
 
-/** 个股财报分析（LLM 驱动；命中缓存直接返回）
- * 模式 2（chatSession）：同一股票共享会话（wl-fund-<code>），system 固定、标的/日期放 user，
- * force 重跑时命中前缀缓存（第 1 次搜索+输出后，后续分析前缀稳定） */
-export async function fundamentalAnalysis(
-  code: string,
-  opts: { force?: boolean; name?: string; signal?: AbortSignal } = {},
-): Promise<WatchlistFundamentalResult> {
-  const stockCode = code.trim();
-  if (!stockCode) return { ok: false, code, summary: "", message: "缺少股票代码" };
-
-  // 缓存命中（TTL 内）
-  const cacheKey = `${FUNDAMENTAL_PREFIX}${stockCode}`;
-  if (!opts.force) {
-    const cached = kvGet<WatchlistFundamentalResult & { _at?: string }>(cacheKey);
-    const at = cached?._at ? Date.parse(cached._at) : NaN;
-    if (cached && cached.ok && Number.isFinite(at) && Date.now() - at < FUNDAMENTAL_TTL_MS) {
-      return { ...cached, fromCache: true };
-    }
+/** 财报分析失败错误（带 LLM 原始输出，便于前端兜底展示与定位） */
+class FundamentalError extends Error {
+  constructor(message: string, readonly raw?: string) {
+    super(message);
   }
+}
 
+/** 财报分析的实际执行（失败一律 throw：不把失败结果写进缓存） */
+async function runFundamental(
+  code: string,
+  opts: { name?: string; signal?: AbortSignal } = {},
+): Promise<WatchFundamentalResult> {
+  const stockCode = code.trim();
   // 名称解析（行情工具；用户未提供时）
   const name = opts.name?.trim() || (await resolveStockName(stockCode));
 
@@ -81,23 +74,20 @@ export async function fundamentalAnalysis(
     `请分析标的 ${name || stockCode}（代码 ${stockCode}），今天是 ${today}。请联网搜索该股票最新财报并输出 JSON。`,
     { signal: opts.signal },
   );
-  if (!result.ok) return { ok: false, code: stockCode, summary: "", message: result.message };
+  if (!result.ok) throw new FundamentalError(result.message);
 
   const content = result.content.trim();
   const parsed = robustJsonParse(content);
   if (!parsed) {
-    return {
-      ok: false,
-      code: stockCode,
-      summary: "",
-      message: `LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${content.slice(0, 200)}`,
-      raw: content,
-    };
+    throw new FundamentalError(
+      `LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${content.slice(0, 200)}`,
+      content,
+    );
   }
 
   const p = parsed as Record<string, unknown>;
   const summary = typeof p.summary === "string" ? p.summary : "";
-  const out: WatchlistFundamentalResult = {
+  const out: WatchFundamentalResult = {
     ok: true,
     code: stockCode,
     name: typeof p.name === "string" && p.name ? p.name : name || stockCode,
@@ -110,12 +100,39 @@ export async function fundamentalAnalysis(
     model: result.model,
     raw: content,
   };
-  kvSet(cacheKey, { ...out, _at: new Date().toISOString() });
   return out;
 }
 
+/**
+ * 标的下沉分析（财报，LLM 驱动；命中缓存直接返回）
+ * 模式 2（chatSession）：同一标的共享会话（wl-fund-<code>），system 固定、标的/日期放 user，
+ * force 重跑时命中前缀缓存（第 1 次搜索+输出后，后续分析前缀稳定）
+ * 缓存：core/cache.cachedFetch（失败不落缓存；stale-if-error 降级返回旧结果）
+ */
+export async function fundamentalAnalysis(
+  code: string,
+  opts: { force?: boolean; name?: string; signal?: AbortSignal } = {},
+): Promise<WatchFundamentalResult> {
+  const stockCode = code.trim();
+  if (!stockCode) return { ok: false, code, summary: "", message: "缺少标的代码" };
+  try {
+    const r = await cachedFetch(
+      `${FUNDAMENTAL_PREFIX}${stockCode}`,
+      FUNDAMENTAL_TTL_MS,
+      () => runFundamental(stockCode, { ...(opts.name ? { name: opts.name } : {}), ...(opts.signal ? { signal: opts.signal } : {}) }),
+      { force: opts.force, staleIfError: true },
+    );
+    return { ...r.data, fromCache: r.fromCache };
+  } catch (e) {
+    if (e instanceof FundamentalError) {
+      return { ok: false, code: stockCode, summary: "", message: e.message, ...(e.raw ? { raw: e.raw } : {}) };
+    }
+    return { ok: false, code: stockCode, summary: "", message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ============================================================
-// Chat 分享链接导入：提取对话 → LLM 整理 → 自动创建专题
+// Chat 分享链接导入：提取对话 → LLM 整理 → 自动创建/补充分组
 // ============================================================
 
 /** 对话文本上限（超长截断，防止超 token） */
@@ -153,14 +170,14 @@ function extractReasonFromText(text: string, code: string): string {
     .slice(0, 60);
 }
 
-/** 校验股票条目（6 位数字代码 + 名称），非法剔除 */
-function normalizeImportedStock(s: unknown): WatchlistStock | null {
+/** 校验标的条目（6 位数字代码 + 名称），非法剔除 */
+function normalizeImportedItem(s: unknown): WatchItem | null {
   if (!s || typeof s !== "object") return null;
   const r = s as Record<string, unknown>;
   const raw0 = typeof r.code === "string" ? r.code.trim() : "";
   // 容错：去交易所后缀（01763.HK / 600519.SH 等）再规范化
   const raw = raw0.toUpperCase().replace(/\.(HK|SH|SZ|BJ)$/, "").trim();
-  // 代码规范化：A股/ETF 6 位；港股 5 位（裸数字含前导 0，或 HK 前缀 3-5 位）→ 统一裸 5 位（与现有专题一致，如 01763/00700）
+  // 代码规范化：A股/ETF 6 位；港股 5 位（裸数字含前导 0，或 HK 前缀 3-5 位）→ 统一裸 5 位（如 01763/00700）
   let code = "";
   if (/^\d{6}$/.test(raw)) code = raw;
   else if (/^HK\d{3,5}$/.test(raw)) code = raw.slice(2).replace(/^0+/, "").padStart(5, "0");
@@ -169,16 +186,18 @@ function normalizeImportedStock(s: unknown): WatchlistStock | null {
   const name = typeof r.name === "string" ? r.name.trim().slice(0, 20) : "";
   const reason = typeof r.reason === "string" ? r.reason.trim().slice(0, 120) : "";
   if (!name && !reason) return null;
-  return { code, ...(name ? { name } : {}), reason: reason || "（由 Chat 对话导入）" };
+  const kind = r.kind === "fund" ? "fund" as const : undefined;
+  return {
+    code,
+    ...(name ? { name } : {}),
+    ...(kind ? { kind } : {}),
+    reason: reason || "（由 Chat 对话导入）",
+    addedAt: new Date().toISOString(),
+  };
 }
 
-/**
- * Chat 导入：解析分享链接 → 提取对话 → LLM 整理专题 → 自动创建。
- * topicId 提供时：**追加**到现有专题（Chat 补充个股，已有代码去重更新），否则新建。
- * 返回专题；失败抛错。
- */
-/** 解析 Chat 分享链接 → 候选专题信息（不落库；供预览-确认流程，memo msozzpcl） */
-export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal): Promise<{ name: string; description?: string; stocks: WatchlistStock[] }> {
+/** 解析 Chat 分享链接 → 候选分组信息（不落库；供预览-确认流程，memo msozzpcl） */
+export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal): Promise<{ name: string; description?: string; items: WatchItem[] }> {
   const extracted = await extractShare(shareUrl);
   if (!extracted.ok || !Array.isArray(extracted.messages) || extracted.messages.length === 0) {
     throw new Error(!extracted.ok && "message" in extracted ? extracted.message : "对话提取为空，请检查链接");
@@ -198,13 +217,13 @@ export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal
   if (!parsed) throw new Error(`LLM 输出无法解析为结构化数据。原始输出（前 200 字）：${result.content.trim().slice(0, 200)}`);
 
   const p = parsed as Record<string, unknown>;
-  const name = typeof p.name === "string" && p.name.trim() ? p.name.trim().slice(0, 30) : "Chat 导入专题";
+  const name = typeof p.name === "string" && p.name.trim() ? p.name.trim().slice(0, 30) : "Chat 导入分组";
   const description = typeof p.description === "string" && p.description.trim() ? p.description.trim().slice(0, 1000) : undefined;
-  const stocks = (Array.isArray(p.stocks) ? p.stocks : [])
-    .map(normalizeImportedStock)
-    .filter((s): s is WatchlistStock => !!s);
-  // 兜底：LLM 未识别时从对话文本正则提取带明确市场后缀的股票代码（01763.HK / 600519.SH 等）
-  if (stocks.length === 0) {
+  const items = (Array.isArray(p.stocks) ? p.stocks : [])
+    .map(normalizeImportedItem)
+    .filter((s): s is WatchItem => !!s);
+  // 兜底：LLM 未识别时从对话文本正则提取带明确市场后缀的标的代码（01763.HK / 600519.SH 等）
+  if (items.length === 0) {
     const rawText = typeof text === "string" ? text : "";
     const codes = [...new Set(
       [...(rawText.match(/(?:HK|SH|SZ|BJ)?\d{3,6}\.(?:HK|SH|SZ|BJ)/gi) ?? [])]
@@ -219,39 +238,44 @@ export async function parseImportFromChat(shareUrl: string, signal?: AbortSignal
     )];
     if (codes.length > 0) {
       // 兜底候选：名称由 confirm 时行情工具补全（可靠）；理由尽力从代码后文提取关键句
-      stocks.push(...codes.map((code) => {
-        const reason = extractReasonFromText(rawText, code) || "（由 Chat 对话代码提取）";
-        return { code, reason };
-      }));
+      items.push(...codes.map((code) => ({
+        code,
+        reason: extractReasonFromText(rawText, code) || "（由 Chat 对话代码提取）",
+        addedAt: new Date().toISOString(),
+      })));
     }
   }
-  if (stocks.length === 0) {
+  if (items.length === 0) {
     // 诊断信息：LLM 原始 stocks 内容（定位是 LLM 空输出还是代码格式过滤）
     const rawStocks = Array.isArray(p.stocks) ? JSON.stringify(p.stocks).slice(0, 200) : "（非数组）";
-    throw new Error(`Chat 对话中未识别到可补充的个股（LLM 原始 stocks：${rawStocks}）`);
+    throw new Error(`Chat 对话中未识别到可补充的标的（LLM 原始 stocks：${rawStocks}）`);
   }
-  return { name, description, stocks };
+  return { name, description, items };
 }
 
-export async function importFromChat(shareUrl: string, signal?: AbortSignal, topicId?: string): Promise<WatchlistTopic> {
-  const { name, description, stocks } = await parseImportFromChat(shareUrl, signal);
+/**
+ * Chat 导入：解析分享链接 → 提取对话 → LLM 整理分组 → 自动创建。
+ * groupId 提供时：**追加**到现有分组（已有代码去重更新），否则新建。
+ * 失败抛错（由路由层转 4xx）。
+ */
+export async function importFromChat(shareUrl: string, signal?: AbortSignal, groupId?: string): Promise<WatchGroup> {
+  const { name, description, items } = await parseImportFromChat(shareUrl, signal);
 
-  // 追加模式：合并进现有专题（addStocks 按 code 去重更新），专题名/介绍不变
-  if (topicId) {
-    const existing = await getTopic(topicId);
-    if (!existing) throw new Error("专题不存在");
-    if (stocks.length === 0) throw new Error("Chat 对话中未识别到可补充的个股");
-    const updated = updateTopic(topicId, { addStocks: stocks });
+  // 追加模式：合并进现有分组（addItems 按 code 去重更新），分组名/介绍不变
+  if (groupId) {
+    const existing = getGroup(groupId);
+    if (!existing) throw new Error("分组不存在");
+    const updated = updateGroup(groupId, { addItems: items });
     if (!updated) throw new Error("补充失败");
     return updated;
   }
 
-  const topic = createTopic(name, description);
-  if (stocks.length > 0) {
-    const updated = updateTopic(topic.id, { addStocks: stocks });
+  const group = createGroup(name, description);
+  if (items.length > 0) {
+    const updated = updateGroup(group.id, { addItems: items });
     if (updated) return updated;
   }
-  return topic;
+  return group;
 }
 
 // ============================================================
@@ -263,14 +287,15 @@ export async function optimizeReason(
   opts: { reason?: string; name?: string; signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; reason?: string; message?: string }> {
   const stockCode = code.trim();
-  // 财报分析缓存（须先运行过财报分析）
-  const cached = kvGet<WatchlistFundamentalResult & { _at?: string }>(`${FUNDAMENTAL_PREFIX}${stockCode}`);
-  const fundamentalText = cached && cached.ok && cached.summary ? cached.summary : "";
-  if (!fundamentalText) return { ok: false, message: "暂无财报分析结果，请先对个股运行财报分析" };
+  // 财报分析缓存（须先运行过财报分析）：只读窥探，绝不触发取数/计费
+  const cached = peekCache<WatchFundamentalResult>(`${FUNDAMENTAL_PREFIX}${stockCode}`);
+  const fundamentalText = cached?.data?.ok && cached.data.summary ? cached.data.summary : "";
+  if (!fundamentalText) return { ok: false, message: "暂无财报分析结果，请先对该标的运行财报分析" };
 
   // 成本原则：system 固定模板；标的/理由/财报内容放 user
   const system = getPromptTemplate("watchlist.reason-optimize");
-  const user = `股票代码：${stockCode}${cached?.name || opts.name ? `（${cached?.name || opts.name}）` : ""}\n原入选理由：${opts.reason?.trim() || "（无）"}\n财报分析内容：\n${fundamentalText.slice(0, 4000)}`;
+  const cachedName = cached?.data?.name;
+  const user = `标的代码：${stockCode}${cachedName || opts.name ? `（${cachedName || opts.name}）` : ""}\n原入选理由：${opts.reason?.trim() || "（无）"}\n财报分析内容：\n${fundamentalText.slice(0, 4000)}`;
   const result = await chat(
     [
       { role: "system" as const, content: system },
@@ -286,29 +311,46 @@ export async function optimizeReason(
 }
 
 // ============================================================
-// 生成延续思路 / 扩展思考提示词（专题信息 → LLM → 可直接粘贴 DeepSeek Chat 的提示词）
+// 生成延续思路 / 扩展思考提示词（分组信息 → LLM → 可直接粘贴 DeepSeek Chat 的提示词）
+// 缓存：内容哈希版本化（分组内容变了才失效；core/cache.cachedFetch + TTL.ANALYSIS）
 // ============================================================
 
+const EXTEND_PREFIX = "watchlist:extend:v2:";
+
 export async function extendPrompt(
-  topic: { name: string; description?: string; stocks: { code: string; name?: string; reason?: string }[] },
+  group: { name: string; description?: string; items: { code: string; name?: string; reason?: string }[] },
   opts: { signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; prompt?: string; message?: string }> {
-  const stocksText =
-    topic.stocks.length > 0
-      ? topic.stocks.map((s) => `- ${s.code} ${s.name ?? ""}${s.reason ? `：${s.reason}` : ""}`).join("\n")
-      : "（暂无个股）";
-  const user = `专题名称：${topic.name}\n专题介绍：${topic.description?.trim() || "（无）"}\n已有个股与理由：\n${stocksText}`;
+  const itemsText =
+    group.items.length > 0
+      ? group.items.map((s) => `- ${s.code} ${s.name ?? ""}${s.reason ? `：${s.reason}` : ""}`).join("\n")
+      : "（暂无标的）";
+  const user = `分组名称：${group.name}\n分组介绍：${group.description?.trim() || "（无）"}\n已有标的与理由：\n${itemsText}`;
   const system = getPromptTemplate("watchlist.extend");
-  const result = await chat(
-    [
-      { role: "system" as const, content: system },
-      { role: "user" as const, content: user },
-    ],
-    { temperature: 0.5, module: "watchlist.extend", ...(opts.signal ? { signal: opts.signal } : {}) },
-  );
-  if (!result.ok) return { ok: false, message: result.message };
-  const parsed = robustJsonParse(result.content.trim());
-  const prompt = typeof parsed?.prompt === "string" && parsed.prompt.trim() ? parsed.prompt.trim() : null;
-  if (!prompt) return { ok: false, message: "LLM 输出无法解析为提示词，请重试" };
-  return { ok: true, prompt };
+  // 缓存 key = 内容哈希（分组名称/介绍/标的内容变了才失效），避免用 updatedAt 伪版本化
+  const key = `${EXTEND_PREFIX}${hashText(user).slice(0, 16)}`;
+  try {
+    const r = await cachedFetch(
+      key,
+      FUNDAMENTAL_TTL_MS,
+      async () => {
+        const result = await chat(
+          [
+            { role: "system" as const, content: system },
+            { role: "user" as const, content: user },
+          ],
+          { temperature: 0.5, module: "watchlist.extend", ...(opts.signal ? { signal: opts.signal } : {}) },
+        );
+        if (!result.ok) throw new Error(result.message);
+        const parsed = robustJsonParse(result.content.trim());
+        const prompt = typeof parsed?.prompt === "string" && parsed.prompt.trim() ? parsed.prompt.trim() : null;
+        if (!prompt) throw new Error("LLM 输出无法解析为提示词，请重试");
+        return prompt;
+      },
+      { staleIfError: true },
+    );
+    return { ok: true, prompt: r.data };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
 }

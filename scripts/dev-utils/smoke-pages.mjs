@@ -7,7 +7,8 @@
 // 用法：
 //   node scripts/dev-utils/smoke-pages.mjs                全量
 //   node scripts/dev-utils/smoke-pages.mjs --page /tools/x  定向单页（§5.1 L2）
-// 需前端 dev 5173 + 服务端 8787 在运行（dev.mjs start）。
+// 需前端 dev + 服务端在运行（dev.mjs start）。环境感知（2026-09-02）：默认打到当前分支环境
+//   （prod 5173 / dev 5180+slot），可用 SMOKE_WEB 显式覆盖。
 // 历史教训：
 //   - TradePlanTool 挂载 useEffect 被误删 → 列表卡"加载中"（API 请求根本不发出）→ 浏览器级冒烟才能发现
 //   - 旧版只查 API 状态不查内容 → /admin/deps（不存在路由）404 占位页也 PASS，静默放行 → 必须断言页面内容
@@ -20,8 +21,9 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const pwPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../apps/server/node_modules/playwright-core");
 const { chromium } = require(pwPath);
+import { resolveEnv } from "./env.mjs";
 
-const WEB = process.env.SMOKE_WEB ?? "http://localhost:5173";
+const WEB = process.env.SMOKE_WEB ?? resolveEnv().urls.web;
 
 // --page <path>：定向冒烟（只测一个页面，配合 §5.1 L2；不传则全量）
 const onlyPage = process.argv.includes("--page") ? process.argv[process.argv.indexOf("--page") + 1] : null;
@@ -34,7 +36,7 @@ const PAGES = [
   { path: "/tools/cb-rate", expect: "央行利率分析" },
   { path: "/tools/treasury-fx", expect: "国债汇率分析" },
   { path: "/tools/reverse-repo", expect: "逆回购" },
-  { path: "/tools/watchlist", expect: "专题自选股" },
+  { path: "/tools/watchlist", expect: "自选股" },
   { path: "/tools/trade-v2", expect: "仓位管理 v2" },
   { path: "/tools/deepseek-share", expect: "提取历史" },
   { path: "/tools/zhihu-crawler", expect: "知乎爬虫" },

@@ -3,18 +3,22 @@
 // 固化「dev 进程诊断/清理」反复需求：多个 supervisor 并存打架、
 // tsx watch 假 200（需重启 server）、端口被残留 node 占用等。
 // 用法（node scripts/dev-utils/proc.mjs ...）：
-//   status         端口 8787/5173 + dev supervisor + node 进程数
+//   status         当前环境（prod/dev）端口 + supervisor + node 进程数
+//   envs           全部环境端口总览（跨分支并存时看谁占着谁）
 //   list           全部 node 进程（PID + 命令行摘要，找残留 supervisor/tsx/vite）
 //   kill <pid>     杀进程树（taskkill /T /F）
 //   kill-port <p>  杀端口占用（仅 node 进程，防误杀）
+// 环境感知（2026-09-02）：端口/状态文件由 env.mjs 解析，prod 与多个 dev 分支并存时各管各的。
 // ============================================================
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT as root } from "./_lib.mjs";
+import { resolveEnv, listEnvs, pidOnPort, isNodePid } from "./env.mjs";
 
-const STATE_FILE = path.join(root, ".file", "dev.pids.json");
-const PORTS = [8787, 5173];
+const ENV = resolveEnv();
+const STATE_FILE = ENV.paths.stateFile;
+const PORTS = [ENV.serverPort, ENV.webPort];
 
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { encoding: "utf8" });
@@ -61,16 +65,31 @@ function supervisorInfo() {
   }
 }
 
-const [cmd, arg] = process.argv.slice(2);
+const [cmdRaw, argRaw] = process.argv.slice(2);
+const cmd = (cmdRaw ?? "").replace(/;$/, "");
+const arg = (argRaw ?? "").replace(/;$/, "");
 
 if (cmd === "status") {
-  console.log(`dev supervisor: ${supervisorInfo()}`);
+  console.log(`环境 ${ENV.name}（分支 ${ENV.branch}）· 数据 ${ENV.dataDir}`);
+  console.log(`${ENV.name} supervisor: ${supervisorInfo()}`);
   for (const p of PORTS) {
     const pid = pidOnPort(p);
     console.log(`端口 ${p}: ${pid ? `被 PID ${pid} 占用${isNodePid(pid) ? "（node）" : "（非 node！）"}` : "空闲"}`);
   }
   const nodes = listNodeProcesses();
   console.log(`node 进程数: ${nodes.length}`);
+} else if (cmd === "envs") {
+  // 跨环境总览：多分支并存时一眼看清哪个环境活着、端口是谁
+  console.log(`全部环境（当前分支：${ENV.branch}）：\n`);
+  for (const e of listEnvs()) {
+    const sp = pidOnPort(e.serverPort);
+    const wp = pidOnPort(e.webPort);
+    const state = sp || wp ? `🟢 运行中 (server PID ${sp ?? "-"} / web PID ${wp ?? "-"})` : "⚪ 空闲";
+    console.log(`  ${e.name.padEnd(4)} ${e.branch}${e.current ? " ←当前" : ""}`);
+    console.log(`       server ${e.serverPort} · web ${e.webPort} · ${state}`);
+    console.log(`       data   ${e.dataDir}${existsSync(path.join(e.dataDir, "toolbox.db")) ? " [有数据]" : " [空]"}`);
+  }
+  console.log("\n切换分支后 `toolbox proc status` 显示的就是该分支的环境；`toolbox env list` 等价。");
 } else if (cmd === "list") {
   const nodes = listNodeProcesses();
   console.log(`node 进程 ${nodes.length} 个：`);
@@ -90,6 +109,6 @@ if (cmd === "status") {
   const r = run("taskkill", ["/PID", pid, "/T", "/F"]);
   console.log(r.status === 0 ? `已杀端口 ${arg} 占用 (PID ${pid})` : `杀失败: ${r.err.trim()}`);
 } else {
-  console.log("用法: node scripts/dev-utils/proc.mjs {status | list | kill <pid> | kill-port <port>}");
+  console.log("用法: node scripts/dev-utils/proc.mjs {status | envs | list | kill <pid> | kill-port <port>}");
   process.exit(1);
 }
