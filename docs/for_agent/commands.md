@@ -10,14 +10,33 @@
 - **`toolbox` 入口已自动剥离参数尾部 `;`**（`toolbox test cache;` 等价 `test cache`）——但**裸 `git`/`curl`/`node` 无此兜底**，务必逐条写
 - api 验证用 `toolbox api`（宽松 JSON body 如 `{force:true}` 自动补引号；大响应默认截断加 `--full`）
 
+## 环境（prod / dev，2026-09-02 引入）
+
+> **prod = `main` 分支**（日常稳定实例，端口 8787/5173，数据 `.file/`）；
+> **dev = 其它分支**（验证实例，端口 8800+slot / 5180+slot，数据 `.file/envs/<id>/data/`）。
+> **两者可同时运行**；所有脚本按**当前 git 分支**自动解析环境，无需手工改端口。
+
+| 命令 | 用途 |
+|---|---|
+| `toolbox env status` | 当前分支环境详情（端口 / 存活 / 数据目录） |
+| `toolbox env list` | 全部环境总览（跨分支，看谁占着谁） |
+| `toolbox env start` / `stop` / `restart` | 管理**当前分支**环境（转发 dev.mjs） |
+| `toolbox env sync-data` | prod → dev 数据快照（须先 stop；**单向**，禁止回写 prod） |
+| `toolbox env url` | 打印当前环境 URL |
+| `toolbox env release [branch]` | 释放分支端口槽位（须先 stop） |
+| `toolbox api GET /health` | 环境自报：`env` / `branch` / `dataDir`（端口混淆时先确认在跟谁说话） |
+
+⚠️ 在 dev 分支跑 `toolbox api` / `smoke` 默认打到**该分支**的 8800；若没起服务会提示先 `toolbox env start`。
+
 ## 开发进程
 
 | 命令 | 用途 |
 |---|---|
-| `toolbox dev start` | 启动开发环境（server 8787 + web 5173，supervisor 自动拉起；先清端口残留） |
-| `toolbox dev stop` / `restart` / `status` | 停止 / 重启 / 查看状态 |
-| `toolbox dev kill-port 8787` | 按端口强杀（仅 node 进程） |
+| `toolbox dev start` | 启动**当前分支环境**（prod 8787+5173 / dev 8800+slot+5180+slot；supervisor 自动拉起；先清端口残留） |
+| `toolbox dev stop` / `restart` / `status` | 停止 / 重启 / 查看状态（等价 `toolbox env stop|restart|status`） |
+| `toolbox dev kill-port <port>` | 按端口强杀（仅 node 进程） |
 | `toolbox proc status` / `list` / `kill <pid>` | 进程诊断：端口占用、残留 supervisor/tsx/vite |
+| `toolbox proc envs` | 全环境端口总览（等价 `toolbox env list`） |
 
 ## 验证（改动后按 dev.md §5.1 分级执行）
 

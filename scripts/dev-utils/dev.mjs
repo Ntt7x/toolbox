@@ -1,14 +1,16 @@
 // ============================================================
-// 开发进程管理器 v2（scripts/dev-utils/dev.mjs）——统一管理 server(tsx watch) + web(vite)
+// 开发进程管理器 v3（scripts/dev-utils/dev.mjs）——统一管理 server(tsx watch) + web(vite)
 // 用法：
 //   node scripts/dev-utils/dev.mjs start   启动（后台常驻 supervisor；先清端口残留再拉起）
 //   node scripts/dev-utils/dev.mjs stop    停止（写 stop 标记 + 杀进程树 + 清端口）
 //   node scripts/dev-utils/dev.mjs restart 重启（先杀旧 supervisor 防多实例打架）
 //   node scripts/dev-utils/dev.mjs status  端口占用、supervisor 与进程状态
-//   node scripts/dev-utils/dev.mjs kill-port <8787|5173|all>  按端口强杀（确认 node）
+//   node scripts/dev-utils/dev.mjs kill-port <port|all>  按端口强杀（确认 node）
+// 环境感知（v3，2026-09-02）：prod（main 分支）与 dev（其它分支）端口/状态文件/日志/数据目录全隔离，
+//   由 env.mjs 解析；`toolbox dev start` 在哪个分支跑就管哪个环境，prod 与多个 dev 分支可并存。
 // 可靠性设计（v2）：
 //   - 常驻 supervisor 用 setInterval 每 5s 健康检查：server/web 进程死了且端口空闲 → 自动拉起
-//   - start/restart 前单实例防重：读 .file/dev.pids.json，发现旧 supervisor 存活 → 终止
+//   - start/restart 前单实例防重：读本环境 dev.pids.json，发现旧 supervisor 存活 → 终止
 //   - 进程诊断/清理（查残留）用 scripts/dev-utils/proc.mjs
 // ============================================================
 import { spawn, spawnSync } from "node:child_process";
@@ -17,21 +19,32 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { ROOT as root, tsxCli, viteCli as viteCliPnpm } from "./_lib.mjs";
+import { resolveEnv } from "./env.mjs";
 // tsx/vite CLI 动态路径由 _lib.mjs 统一提供（pnpm 升级版本不失效）
 const NODE = process.execPath;
-const STATE_FILE = path.join(root, ".file", "dev.pids.json");
-const STOP_FLAG = path.join(root, ".file", "dev.stop");
-const PORTS = [8787, 5173];
+// supervisor 经 Start-Process 独立启动、不继承父进程 env 变更 → 环境片段以 `KEY=VALUE`
+// 命令行参数透传，须在 resolveEnv() 之前回填（否则 TOOLBOX_DATA_DIR/端口覆盖不生效，2026-09-02）
+for (const a of process.argv.slice(3)) {
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a);
+  if (m) process.env[m[1]] = m[2];
+}
+const ENV = resolveEnv();
+const STATE_FILE = ENV.paths.stateFile;
+const STOP_FLAG = ENV.paths.stopFlag;
+const PORTS = [ENV.serverPort, ENV.webPort];
+const LOG_DIR = ENV.paths.logDir;
 const serverCwd = path.join(root, "apps", "server");
 const webCwd = path.join(root, "apps", "web");
 const viteCli = viteCliPnpm;
-const LOG_DIR = path.join(root, ".file", "dev-logs");
-fs.mkdirSync(LOG_DIR, { recursive: true });
+for (const d of [path.dirname(STATE_FILE), path.dirname(STOP_FLAG), LOG_DIR, ENV.dataDir]) {
+  fs.mkdirSync(d, { recursive: true });
+}
 
 function log(...a) {
-  const msg = `[dev] ${a.join(" ")}`;
+  const msg = `[dev:${ENV.name}] ${a.join(" ")}`;
   console.log(msg);
   // supervisor 后台运行时 stdout 被丢弃，同步追加到 supervisor.log 便于排查重启原因
+  try { fs.appendFileSync(path.join(LOG_DIR, "supervisor.log"), `${new Date().toISOString()} ${msg}\n`); } catch { /* 日志失败不影响主流程 */ }
 }
 
 function pidOnPort(port) {
@@ -59,6 +72,8 @@ function killPort(port) {
   const pid = pidOnPort(port);
   if (!pid) { log(`端口 ${port} 无占用`); return false; }
   if (!isNodePid(pid)) { log(`端口 ${port} 被非 node 进程占用 (PID ${pid})，跳过`); return false; }
+  // 防误杀同端口的其它环境：仅杀本环境自己记录过的 supervisor/子进程，或端口确属本环境。
+  // 端口段已隔离（prod 8787 / dev 8800+），此处再校验一次 PID 白名单，避免 release 后槽位复用误杀。
   log(`端口 ${port} 被 PID ${pid} 占用 → 终止`);
   return killPidTree(pid);
 }
@@ -83,45 +98,60 @@ function spawnSupervisor() {
   const supScript = fileURLToPath(import.meta.url);
   // 注意：不能加 -RedirectStandardOutput/Error——Start-Process 重定向会让 powershell
   // 挂起等待子进程句柄关闭（工具超时杀父链，supervisor 陪葬）。无重定向则 powershell 立即退出。
+  // 环境片段随命令行透传：supervisor 独立进程不继承本进程 env 变更，
+  // 必须把 PORT/TOOLBOX_ENV/TOOLBOX_DATA_DIR/TOOLBOX_WEB_PORT 显式传下去（2026-09-02）
+  const envArgs = [
+    `PORT=${ENV.serverPort}`,
+    `TOOLBOX_ENV=${ENV.name}`,
+    `TOOLBOX_BRANCH=${ENV.branch}`,
+    `TOOLBOX_DATA_DIR=${ENV.dataDir}`,
+    `TOOLBOX_SERVER_PORT=${ENV.serverPort}`,
+    `TOOLBOX_WEB_PORT=${ENV.webPort}`,
+  ].map((a) => `'${a}'`).join(",");
   const ps = [
     "-NoProfile", "-Command",
     // -ArgumentList 必须用逗号分隔的独立参数（PowerShell 拆成数组）；传 JSON 字符串会被
     // node 当单个参数导致 supervise 分支不匹配、supervisor 立即退出（2026-08-14 修复）
-    `Start-Process -FilePath ${JSON.stringify(NODE)} -ArgumentList '${supScript}','supervise' -WindowStyle Hidden`,
+    `Start-Process -FilePath ${JSON.stringify(NODE)} -ArgumentList '${supScript}','supervise',${envArgs} -WindowStyle Hidden`,
   ];
   spawnSync("powershell", ps, { stdio: "ignore", encoding: "utf8" });
-  log("supervisor 独立进程启动（Start-Process，脱离父进程树），服务日志 .file/dev-logs/{server,web}.log");
+  log(`supervisor 独立进程启动（Start-Process，脱离父进程树），服务日志 ${LOG_DIR}/{server,web}.log`);
   // 就绪等待：start/restart 前台命令等两个端口起来（最多 20s），避免用户 start 后
   // 服务还在编译就以为脚本坏了；未就绪时 supervisor 仍会持续拉起
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    if (pidOnPort(8787) && pidOnPort(5173)) {
-      log("✅ server(8787) + web(5173) 已就绪");
+    if (pidOnPort(ENV.serverPort) && pidOnPort(ENV.webPort)) {
+      log(`✅ ${ENV.name} 环境就绪：server(${ENV.serverPort}) + web(${ENV.webPort}) — ${ENV.urls.web}`);
       return;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
   }
-  log("⚠️ 20s 内未完全就绪——supervisor 会持续拉起，用 `node scripts/dev-utils/proc.mjs status` 查看");
+  log(`⚠️ 20s 内未完全就绪——supervisor 会持续拉起，用 \`node scripts/dev-utils/proc.mjs status\` 查看`);
+}
+
+/** 子进程环境：本进程 env + 环境片段（保证 tsx/vite 拿到正确的端口与数据目录） */
+function childEnv() {
+  return { ...process.env, ...ENV.childEnv };
 }
 
 function startServer() {
   const s = svc.server;
   s.spawnAt = Date.now();
   s.logFd = fs.openSync(path.join(LOG_DIR, "server.log"), "a");
-  const child = spawn(NODE, [tsxCli, "watch", "src/index.ts"], { cwd: serverCwd, stdio: ["ignore", s.logFd, s.logFd] });
+  const child = spawn(NODE, [tsxCli, "watch", "src/index.ts"], { cwd: serverCwd, stdio: ["ignore", s.logFd, s.logFd], env: childEnv() });
   s.child = child;
   child.on("exit", (code) => { s.child = null; log(`server 进程退出 (code=${code})`); });
-  log(`server 启动 (PID ${child.pid})`);
+  log(`server 启动 (PID ${child.pid}) 端口 ${ENV.serverPort}`);
 }
 
 function startWeb() {
   const s = svc.web;
   s.spawnAt = Date.now();
   s.logFd = fs.openSync(path.join(LOG_DIR, "web.log"), "a");
-  const child = spawn(NODE, [viteCli], { cwd: webCwd, stdio: ["ignore", s.logFd, s.logFd] });
+  const child = spawn(NODE, [viteCli], { cwd: webCwd, stdio: ["ignore", s.logFd, s.logFd], env: childEnv() });
   s.child = child;
   child.on("exit", (code) => { s.child = null; log(`web 进程退出 (code=${code})`); });
-  log(`web 启动 (PID ${child.pid})`);
+  log(`web 启动 (PID ${child.pid}) 端口 ${ENV.webPort}`);
 }
 
 function stopped() { return fs.existsSync(STOP_FLAG); }
@@ -178,12 +208,14 @@ function stopAll() {
 }
 
 function status() {
+  log(`环境 ${ENV.name}（分支 ${ENV.branch}）· 数据 ${ENV.dataDir}`);
   const sp = readSupervisorPid();
   log(`supervisor: ${sp ? `PID ${sp}${isAlivePid(sp) ? "（存活）" : "（已退出，残留记录）"}` : "无"}`);
   for (const p of PORTS) {
     const pid = pidOnPort(p);
     log(`端口 ${p}: ${pid ? `被 PID ${pid} 占用${isNodePid(pid) ? "（node）" : "（非 node！）"}` : "空闲"}`);
   }
+  log(`web ${ENV.urls.web} · server ${ENV.urls.server}`);
 }
 
 // ---------- 单实例防重（历史教训：多个 supervisor 并存互相打架） ----------
@@ -219,8 +251,8 @@ function cleanupSupervisorRecord() {
   }
 }
 
-const cmd = process.argv[2] ?? "start";
-const argPort = process.argv[3];
+const cmd = (process.argv[2] ?? "start").replace(/;$/, "");
+const argPort = (process.argv[3] ?? "").replace(/;$/, "");
 
 switch (cmd) {
   case "start":

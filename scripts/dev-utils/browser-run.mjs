@@ -23,6 +23,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const pwPath = path.resolve(root, "apps", "server", "node_modules", "playwright-core");
 if (!existsSync(pwPath)) { console.error("缺少 playwright-core（apps/server/node_modules）"); process.exit(1); }
 const { chromium } = require(pwPath);
+import { resolveEnv } from "./env.mjs";
 
 // 本机 Chrome 查找（依次尝试常见路径）
 function findChrome() {
@@ -38,7 +39,8 @@ function findChrome() {
 
 const [scriptPath, urlArg] = process.argv.slice(2);
 if (!scriptPath) { console.error("用法: node scripts/dev-utils/browser-run.mjs <script.mjs> [url]"); process.exit(1); }
-const url = urlArg ?? "http://localhost:5173";
+// 环境感知（2026-09-02）：默认打开当前分支所属环境的 web（prod 5173 / dev 5180+slot）
+const url = urlArg ?? resolveEnv().urls.web;
 const LOG = path.join(root, ".file", "browser-run.log");
 
 // playwright 需要可写临时目录（worker 无默认 TMP/TEMP）

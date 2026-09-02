@@ -1,11 +1,12 @@
 // ============================================================
 // K 线数据流管理（core/kline.ts）—— 收益曲线接入历史行情的服务端底座
 // 能力：
-//   1) getDailyKline(code, fromDate)     单标的日 K（日期→收盘价），KV 缓存 + 增量拉取
-//   2) fetchKlinesForCodes(codes, from)  批量并发拉取（收益分析接口用，按组内标的）
-//   3) getKlineHistoryMap(codes, dates)  批量 → 日期→收盘价映射（compute 直接消费）
-// 数据源：腾讯 fqkline day 周期（与月 K 同源），qfq 前复权收盘价
-// 缓存：kline:d:<normCode> → { name, bars:[{date,close}], fetchedAt }；TTL 6 小时
+//   1) getDailyKline(code)               单标的日 K（日期→收盘价），KV 缓存 + 增量拉取
+//   2) fetchKlinesForCodes(codes)        批量并发拉取（收益分析接口用，按组内标的）
+//   3) getDailyBars(code, {count})       单标的日 K OHLC 序列（自选股行情跟踪：日/周/月周期聚合用）
+//   4) priceOnOrBefore(klines, code, date) 按日期取收盘价（无当日回退最近可得）
+// 数据源：腾讯 fqkline day 周期（与月 K 同源），qfq 前复权
+// 缓存：kline:d:<normCode> → { name, bars:[{date,open,close,high,low}], fetchedAt }；TTL 6 小时
 //   （历史日 K 基本稳定，6h 足够；下次拉取增量合并新根）
 // 设计取舍：
 //   - 服务端拉取 + 缓存 → 前端无需管行情，compute 拿到映射即可重算真实市值
@@ -29,9 +30,13 @@ const KLINE_TTL_MS = 6 * 60 * 60 * 1000;
 /** 单次拉取根数：覆盖约半年交易日（收益分析常见跨度） */
 const DEFAULT_COUNT = 130;
 
-interface KlineBar {
+/** 日 K 一根（qfq 前复权；open/high/low 在旧缓存中可能缺省，消费方须容错） */
+export interface KlineBar {
   date: string;
   close: number;
+  open?: number;
+  high?: number;
+  low?: number;
 }
 interface KlineCache {
   name?: string;
@@ -91,47 +96,80 @@ async function fetchDailyCloses(p: { market: string; code: string }, count = DEF
   const data = json.data?.[paramKey];
   const klines = data?.qfqday ?? data?.day;
   if (!Array.isArray(klines) || klines.length === 0) throw new Error("无日 K 数据");
+  // 行结构：[date, open, close, high, low, volume]
   const bars = klines
-    .map((row) => ({ date: String(row[0]), close: Number(row[2]) }))
+    .map((row) => {
+      const date = String(row[0]);
+      const open = Number(row[1]);
+      const close = Number(row[2]);
+      const high = Number(row[3]);
+      const low = Number(row[4]);
+      return {
+        date,
+        close,
+        ...(Number.isFinite(open) ? { open } : {}),
+        ...(Number.isFinite(high) ? { high } : {}),
+        ...(Number.isFinite(low) ? { low } : {}),
+      };
+    })
     .filter((b) => /^\d{4}-\d{2}-\d{2}$/.test(b.date) && Number.isFinite(b.close) && b.close > 0);
   const name = data?.qt?.[paramKey]?.[1] ?? "";
   return { name, bars };
 }
 
-/** 合并新拉取的 bars 到缓存（按日期去重，升序） */
+/** 合并新拉取的 bars 到缓存（按日期去重，新值覆盖旧值，升序） */
 export function mergeBars(cached: KlineBar[] | undefined, fresh: KlineBar[]): KlineBar[] {
-  const map = new Map<string, number>();
-  for (const b of cached ?? []) map.set(b.date, b.close);
-  for (const b of fresh) map.set(b.date, b.close);
-  return [...map.entries()].map(([date, close]) => ({ date, close })).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const map = new Map<string, KlineBar>();
+  for (const b of cached ?? []) map.set(b.date, b);
+  for (const b of fresh) map.set(b.date, b);
+  return [...map.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * 加载日 K 序列（缓存优先 + 增量合并）。
+ * - 缓存新鲜（6h 内）→ 直接返回
+ * - 否则拉取 `count` 根并合并进缓存（历史只增不减）
+ * - 拉取失败 → 有旧缓存则降级返回（过期也可用），否则空数组
+ */
+async function loadBars(
+  parsed: { market: string; code: string; normCode: string },
+  opts: { count?: number; force?: boolean } = {},
+): Promise<KlineBar[]> {
+  const key = KLINE_PREFIX + parsed.normCode;
+  const cached = kvGet<KlineCache>(key);
+  const hasCache = !!cached && Array.isArray(cached.bars) && cached.bars.length > 0;
+  const fresh = !!cached && Date.now() - cached.fetchedAt < KLINE_TTL_MS;
+  if (hasCache && fresh && !opts.force) return cached!.bars;
+  try {
+    const { name, bars } = await fetchDailyCloses(parsed, opts.count ?? DEFAULT_COUNT);
+    const merged = mergeBars(cached?.bars, bars);
+    kvSet(key, { ...(name ? { name } : { ...(cached?.name ? { name: cached.name } : {}) }), bars: merged, fetchedAt: Date.now() });
+    return merged;
+  } catch {
+    // 拉取失败/无数据：有缓存则用缓存（过期也可用），否则空
+    return hasCache ? cached!.bars : [];
+  }
 }
 
 /**
  * 获取单标的历史日 K（日期→收盘价映射）。
- * 缓存命中（6h 内）直接返回；过期/缺失则拉取并合并缓存。
  * 拉取失败静默 → 返回空映射（调用方回退成本口径）。
  */
 export async function getDailyKline(codeInput: string): Promise<Map<string, number>> {
   const parsed = parseSecCode(codeInput);
   if (!parsed) return new Map();
-  const key = KLINE_PREFIX + parsed.normCode;
-  let cached: KlineCache | null = null;
-  try {
-    cached = kvGet<KlineCache>(key);
-    if (cached && Array.isArray(cached.bars) && Date.now() - cached.fetchedAt < KLINE_TTL_MS) {
-      return new Map(cached.bars.map((b) => [b.date, b.close]));
-    }
-    const { name, bars } = await fetchDailyCloses(parsed);
-    const merged = mergeBars(cached?.bars, bars);
-    kvSet(key, { ...(name ? { name } : {}), bars: merged, fetchedAt: Date.now() });
-    return new Map(merged.map((b) => [b.date, b.close]));
-  } catch {
-    // 拉取失败/无数据：有缓存则用缓存（过期也可用），否则空
-    if (cached && Array.isArray(cached.bars)) {
-      return new Map(cached.bars.map((b) => [b.date, b.close]));
-    }
-    return new Map();
-  }
+  const bars = await loadBars(parsed);
+  return new Map(bars.map((b) => [b.date, b.close]));
+}
+
+/**
+ * 获取单标的历史日 K OHLC 序列（升序；自选股行情跟踪的日/周/月周期聚合用）。
+ * @param count 拉取根数（默认 130 ≈ 半年；周/月走势建议 500 ≈ 两年）
+ */
+export async function getDailyBars(codeInput: string, opts: { count?: number; force?: boolean } = {}): Promise<KlineBar[]> {
+  const parsed = parseSecCode(codeInput);
+  if (!parsed) return [];
+  return loadBars(parsed, opts);
 }
 
 /**

@@ -132,7 +132,7 @@ export default function LlmSettings() {
     <div>
       <PageHeader
         title="🤖 LLM 用量（DeepSeek）"
-        desc="网站公共 LLM 能力模块：私钥配置 + 用量管理。配置 DeepSeek API key 后，各工具（央行利率分析 / 国债汇率分析 / 专题自选股等）自动复用。"
+        desc="网站公共 LLM 能力模块：私钥配置 + 用量管理。配置 DeepSeek API key 后，各工具（央行利率分析 / 国债汇率分析 / 自选股等）自动复用。"
       />
 
       {/* ============ 模块一：私钥配置 ============ */}

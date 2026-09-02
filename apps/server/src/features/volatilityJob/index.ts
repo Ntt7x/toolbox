@@ -4,16 +4,16 @@
 // 调度：每日 16:30 触发 vol-daily-update（枚举器）→ 每条入队 vol:update:<code>
 // 消费：core/volatilityStore.registerVolConsumer（FaaS，并发 3，幂等增量）
 // 派生：HV / EWMA / Parkinson 三口径 + z-score 分级（core/volatility）
-// 枚举源：仓位管理 v2 分组标的（tradeV2:groups）+ 专题自选股个股（watchlist:）
+// 枚举源：仓位管理 v2 分组标的（tradeV2:groups）+ 自选股分组标的（watchlist:）
 //   ——波动率是市场客观属性，凡业务中出现的标的都值得预热
 // 幂等：消费端按 lastDate 跳过旧 K + 同日去重；调度任务可重复触发（入队幂等）
 // ============================================================
 import { registerScheduledTask, enqueue } from "../../core/data-infra/index.js";
 import { registerVolConsumer, VOL_QUEUE } from "../../core/volatilityStore.js";
 import { listGroups } from "../tradeV2/store.js";
-import { listTopics, getTopic } from "../watchlist/store.js";
+import { listGroups as listWatchGroups, resolveItems } from "../watchlist/store.js";
 
-/** 聚合需要预热波动率的标的（tradeV2 分组 + watchlist 专题，去重） */
+/** 聚合需要预热波动率的标的（tradeV2 分组 + 自选股分组，去重） */
 export function listVolWatchCodes(): string[] {
   const codes = new Set<string>();
   for (const g of listGroups()) {
@@ -21,9 +21,9 @@ export function listVolWatchCodes(): string[] {
       if (typeof s?.code === "string" && s.code.trim()) codes.add(s.code.trim());
     }
   }
-  for (const t of listTopics()) {
-    const topic = getTopic(t.id);
-    for (const s of topic?.stocks ?? []) {
+  for (const g of listWatchGroups()) {
+    // resolveItems：聚合分组取源分组并集，避免漏掉需要预热的标的
+    for (const s of resolveItems(g)) {
       if (typeof s?.code === "string" && s.code.trim()) codes.add(s.code.trim());
     }
   }

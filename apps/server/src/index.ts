@@ -17,6 +17,7 @@ import {
   type ToolMeta,
 } from "@toolbox/shared";
 import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes, registerDataInfraRoutes } from "./core/routes.js";
+import { DATA_DIR } from "./core/db.js";
 import { initDataInfra, startDataInfraRuntime } from "./core/data-infra/index.js";
 import { registerVolJob } from "./features/volatilityJob/index.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
@@ -42,13 +43,24 @@ import * as experimentFeature from "./features/experiment/index.js";
 const app = new Hono();
 app.use(`${API_PREFIX}/*`, cors());
 
-// 健康检查：验证前后端联通
+// 健康检查：验证前后端联通；多环境并存时自报环境（prod=main / dev=开发分支），避免端口混淆看错实例
 app.get(`${API_PREFIX}/health`, (c) => {
+  // 环境推断：显式 TOOLBOX_ENV > TOOLBOX_BRANCH（main=prod / 其它=dev）> 默认 prod
+  // （默认 prod 是历史语义：不带任何 env 变量启动的就是 .file 真实数据实例）
+  const branch = process.env.TOOLBOX_BRANCH?.trim();
+  const envName: "prod" | "dev" =
+    process.env.TOOLBOX_ENV === "dev" ? "dev"
+    : process.env.TOOLBOX_ENV === "prod" ? "prod"
+    : branch ? (branch === "main" ? "prod" : "dev")
+    : "prod";
   const body: HealthResponse = {
     ok: true,
     service: "toolbox-server",
     version: "0.1.0",
     time: new Date().toISOString(),
+    env: envName,
+    branch: branch || (envName === "prod" ? "main" : undefined),
+    dataDir: DATA_DIR,
   };
   return c.json(body);
 });
@@ -122,6 +134,8 @@ registerVolJob();
 const port = Number(process.env.PORT ?? 8787);
 // 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
 if (process.env.TOOLBOX_TEST !== "1") {
+  // 环境自报：多环境（prod=main / dev=分支）并存时，日志里能直接看出这是哪个实例、写哪个库
+  console.log(`[env] ${process.env.TOOLBOX_ENV ?? "prod"} · branch=${process.env.TOOLBOX_BRANCH ?? "main"} · port=${port} · data=${DATA_DIR}`);
   // 端口监听韧性（2026-08-14）：tsx watch 在源码变更重启时，旧子进程端口未释放会导致新进程 EADDRINUSE 崩溃——
   // 监听失败自动等待重试自愈（dev.mjs supervisor 无法感知 tsx 内部子进程竞态，由 server 自身兜底）
   const MAX_LISTEN_RETRY = 10;

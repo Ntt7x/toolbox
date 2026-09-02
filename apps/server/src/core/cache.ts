@@ -66,6 +66,17 @@ export async function cachedFetch<T>(
   }
 }
 
+/**
+ * 只读窥探缓存（不触发 fetcher）：取当前缓存值与写入时间。
+ * 用于「读已缓存的分析结果做二次加工」等场景（如自选股根据财报分析优化理由），
+ * 避免为读缓存而走一遍可能触发取数与计费的路径。
+ */
+export function peekCache<T>(key: string): { data: T; cachedAt?: string } | null {
+  const cached = kvGet<CachedValue<T>>(key);
+  if (!cached || typeof cached !== "object" || !("value" in cached)) return null;
+  return { data: cached.value, ...(typeof cached.cachedAt === "string" ? { cachedAt: cached.cachedAt } : {}) };
+}
+
 /** 计算缓存新鲜度（供诊断/展示：剩余毫秒，负数=已过期） */
 export function cacheFreshnessMs(key: string): number {
   const cached = kvGet<CachedValue<unknown>>(key);

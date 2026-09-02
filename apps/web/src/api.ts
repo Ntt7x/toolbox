@@ -38,14 +38,24 @@ import {
   type ReverseRepoDailyResponse,
   type ReverseRepoMonthlyResult,
   type ReverseRepoMonthlyUpdateStatus,
-  type WatchlistCreateResult,
-  type WatchlistDeleteResult,
-  type WatchlistDetailResult,
-  type WatchlistFundamentalResult,
-  type WatchlistListResult,
-  type WatchlistStock,
-  type WatchlistTopic,
-  type WatchlistUpdateRequest,
+  type WatchAlertRule,
+  type WatchAlertsResult,
+  type WatchAlertsSaveResult,
+  type WatchFundamentalResult,
+  type WatchGroup,
+  type GroupPeriodPoint,
+  type WatchGroupCreateRequest,
+  type WatchGroupCreateResult,
+  type WatchGroupDeleteResult,
+  type WatchGroupDetailResult,
+  type WatchGroupListResult,
+  type WatchGroupUpdateRequest,
+  type WatchItem,
+  type WatchLogicResult,
+  type WatchLogicReview,
+  type WatchNewsResult,
+  type WatchPeriod,
+  type WatchTrackResult,
   type MemoCreateResult,
   type MemoKind,
   type MemoDeleteResult,
@@ -163,39 +173,69 @@ export const api = {
   reverseRepoMonthlyRefresh: () => request<ReverseRepoMonthlyUpdateStatus>("/tools/reverse-repo/monthly/refresh", jsonInit("POST", {})),
   reverseRepoDaily: (force = false) =>
     request<TaskCreateResult<ReverseRepoDailyResponse>>("/tools/reverse-repo/daily", jsonInit("POST", { force })),
-  // 专题自选股（专题 CRUD + 个股财报分析）
-  watchlistList: () => request<WatchlistListResult>("/tools/watchlist"),
-  watchlistCreate: (name: string, description?: string, group?: string) =>
-    request<WatchlistCreateResult>("/tools/watchlist", jsonInit("POST", { name, ...(description ? { description } : {}), ...(group ? { group } : {}) })),
-  watchlistDetail: (id: string) => request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
-  watchlistUpdate: (id: string, patch: WatchlistUpdateRequest) =>
-    request<WatchlistDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
-  watchlistDelete: (id: string) => request<WatchlistDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
+  // 自选股：以标的为中心、按分组组织（基础分组 / 聚合分组）+ 四功能面
+  watchlistList: () => request<WatchGroupListResult>("/tools/watchlist"),
+  watchlistCreate: (req: WatchGroupCreateRequest) =>
+    request<WatchGroupCreateResult>("/tools/watchlist", jsonInit("POST", req)),
+  watchlistDetail: (id: string) => request<WatchGroupDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`),
+  watchlistUpdate: (id: string, patch: WatchGroupUpdateRequest) =>
+    request<WatchGroupDetailResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("PUT", patch)),
+  watchlistDelete: (id: string) => request<WatchGroupDeleteResult>(`/tools/watchlist/${encodeURIComponent(id)}`, jsonInit("DELETE", {})),
   watchlistResolve: (code: string, kind?: string) =>
     request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
-  /** Chat 导入：分享链接 → 自动创建专题（后台任务） */
-  watchlistImport: (url: string) => request<TaskCreateResult<WatchlistTopic>>("/tools/watchlist/import", jsonInit("POST", { url })),
-  /** Chat 补充：分享链接 → 追加个股到指定专题（后台任务） */
+  /** 行情跟踪（日/周/月周期聚合；force=1 强制刷新行情与日 K） */
+  watchlistTrack: (id: string, period: WatchPeriod, force = false) =>
+    request<WatchTrackResult & { group?: GroupPeriodPoint[] }>(
+      `/tools/watchlist/${encodeURIComponent(id)}/track?period=${period}${force ? "&force=1" : ""}`,
+    ),
+  /** 下沉分析·新闻（标的维度，确定性关键词匹配） */
+  watchlistNews: (id: string, code: string) =>
+    request<WatchNewsResult>(`/tools/watchlist/${encodeURIComponent(id)}/news?code=${encodeURIComponent(code)}`),
+  /** 提醒设置：读取规则 + 命中（顺带用当前行情判定一次） */
+  watchlistAlerts: (id: string) => request<WatchAlertsResult>(`/tools/watchlist/${encodeURIComponent(id)}/alerts`),
+  /** 提醒设置：全量覆盖保存规则 */
+  watchlistSaveAlerts: (id: string, rules: WatchAlertRule[]) =>
+    request<WatchAlertsSaveResult>(`/tools/watchlist/${encodeURIComponent(id)}/alerts`, jsonInit("PUT", { rules })),
+  /** 提醒设置：清空命中记录 */
+  watchlistClearAlertHits: (id: string) =>
+    request<{ ok: boolean; deleted?: number; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/alerts/hits`, jsonInit("DELETE", {})),
+  /** 逻辑确认：分组内标的原因/预期 + 最新复核 + 确定性锚 */
+  watchlistLogic: (id: string, force = false) =>
+    request<WatchLogicResult>(`/tools/watchlist/${encodeURIComponent(id)}/logic${force ? "?force=1" : ""}`),
+  /** 逻辑确认：单标的复核（LLM 异步任务） */
+  watchlistLogicReview: (id: string, code: string, force = false) =>
+    request<TaskCreateResult<{ ok: boolean; review?: WatchLogicResult["items"][number]["review"] }>>(
+      `/tools/watchlist/${encodeURIComponent(id)}/logic/review?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
+      jsonInit("POST", {}),
+    ),
+  /** 逻辑确认：单标的复核历史（时间序列） */
+  watchlistLogicHistory: (id: string, code: string) =>
+    request<{ ok: boolean; groupId: string; code: string; reviews: WatchLogicReview[] }>(
+      `/tools/watchlist/${encodeURIComponent(id)}/logic/history?code=${encodeURIComponent(code)}`,
+    ),
+  /** Chat 导入：分享链接 → 自动创建分组（后台任务） */
+  watchlistImport: (url: string) => request<TaskCreateResult<WatchGroup>>("/tools/watchlist/import", jsonInit("POST", { url })),
+  /** Chat 补充：分享链接 → 追加标的到指定分组（后台任务） */
   watchlistAppend: (id: string, url: string) =>
-    request<TaskCreateResult<WatchlistTopic>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
-  /** Chat 补充预览：解析对话 → 候选个股（不落库，用户确认后导入） */
+    request<TaskCreateResult<WatchGroup>>(`/tools/watchlist/${encodeURIComponent(id)}/import`, jsonInit("POST", { url })),
+  /** Chat 补充预览：解析对话 → 候选标的（不落库，用户确认后导入） */
   watchlistAppendPreview: (id: string, url: string) =>
-    request<TaskCreateResult<{ name: string; description?: string; stocks: WatchlistStock[] }>>(
+    request<TaskCreateResult<{ name: string; description?: string; items: WatchItem[] }>>(
       `/tools/watchlist/${encodeURIComponent(id)}/import/preview`,
       jsonInit("POST", { url }),
     ),
   watchlistAppendConfirm: (id: string, taskId: string, codes: string[]) =>
-    request<{ ok: boolean; topic?: WatchlistTopic; imported?: number; message?: string }>(
+    request<{ ok: boolean; group?: WatchGroup; items?: WatchItem[]; imported?: number; message?: string }>(
       `/tools/watchlist/${encodeURIComponent(id)}/import/confirm`,
       jsonInit("POST", { taskId, codes }),
     ),
-  /** 移动/复制个股到其他专题（copy=true 保留源专题个股） */
-  watchlistMoveStock: (fromTopicId: string, code: string, toTopicId: string, copy: boolean) =>
-    request<{ ok: boolean; fromTopic?: WatchlistTopic; toTopic?: WatchlistTopic; moved?: boolean; message?: string }>(
-      "/tools/watchlist/move-stock",
-      jsonInit("POST", { fromTopicId, code, toTopicId, copy }),
+  /** 移动/复制标的到其他分组（copy=true 保留源分组标的） */
+  watchlistMoveItem: (fromGroupId: string, code: string, toGroupId: string, copy: boolean) =>
+    request<{ ok: boolean; fromGroup?: WatchGroup; toGroup?: WatchGroup; moved?: boolean; message?: string }>(
+      "/tools/watchlist/move-item",
+      jsonInit("POST", { fromGroupId, code, toGroupId, copy }),
     ),
-  /** 股票名称搜索（名称 → 代码候选，添加股票输入补全用） */
+  /** 标的代码搜索（名称/拼音 → 代码候选，添加标的输入补全用） */
   watchlistSearchStock: (name: string, limit = 8) =>
     request<{ ok: boolean; items: { code: string; name: string; market: string; type: string }[]; message?: string }>(
       `/tools/watchlist/search-stock?name=${encodeURIComponent(name)}&limit=${limit}`,
@@ -224,17 +264,18 @@ export const api = {
 
   chatBrowserOpen: (prompt: string, opts?: { send?: boolean; deepThink?: boolean; search?: boolean }) =>
     request<{ ok: boolean; loggedIn?: boolean; message?: string }>("/tools/chat-browser/open", jsonInit("POST", { prompt, ...(opts?.send ? { send: true } : {}), ...(opts?.deepThink ? { deepThink: true } : {}), ...(opts?.search ? { search: true } : {}) })),
+  /** 下沉分析·财报（LLM 异步任务；以标的为维度缓存，与分组无关） */
   watchlistFundamental: (id: string, code: string, force = false) =>
-    request<TaskCreateResult<WatchlistFundamentalResult>>(
+    request<TaskCreateResult<WatchFundamentalResult>>(
       `/tools/watchlist/${encodeURIComponent(id)}/fundamental?code=${encodeURIComponent(code)}${force ? "&force=1" : ""}`,
       jsonInit("POST", {}),
     ),
-  /** 根据财报分析优化入选理由（LLM；成功后更新专题内该股理由） */
+  /** 根据财报分析优化入选理由（LLM；成功后更新分组内该标的理由） */
   watchlistOptimizeReason: (id: string, code: string, reason?: string) =>
-    request<{ ok: boolean; reason?: string; topic?: WatchlistTopic; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
+    request<{ ok: boolean; reason?: string; group?: WatchGroup; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/optimize-reason`, jsonInit("POST", { code, reason })),
   /** 生成延续思路/扩展思考提示词（LLM；返回可粘贴 DeepSeek Chat 的提示词） */
-  watchlistExtendPrompt: (id: string, force = false) =>
-    request<{ ok: boolean; prompt?: string; fromCache?: boolean; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", { ...(force ? { force: true } : {}) })),
+  watchlistExtendPrompt: (id: string) =>
+    request<{ ok: boolean; prompt?: string; message?: string }>(`/tools/watchlist/${encodeURIComponent(id)}/extend-prompt`, jsonInit("POST", {})),
   newsSources: () => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/sources"),
   newsConfig: (sources: string[]) => request<{ ok: boolean; sources: { id: string; name: string; desc: string; enabled: boolean }[]; message?: string }>("/tools/news/config", jsonInit("POST", { sources })),
   /** 新闻流（服务端加工：tags 打标 / hits 高亮 / blocked 黑名单） */

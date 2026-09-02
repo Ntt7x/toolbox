@@ -10,6 +10,15 @@ export interface HealthResponse {
   service: string;
   version: string;
   time: string;
+  /**
+   * 运行环境（2026-09-02 引入 prod/dev 双环境）：prod=main 分支稳定实例；dev=开发分支验证实例。
+   * 用于确认「你正在跟哪个实例说话」——多环境并存时端口容易混淆，健康接口自报家门。
+   */
+  env?: "prod" | "dev";
+  /** 环境所属分支（prod 为 main） */
+  branch?: string;
+  /** 数据目录（dev 环境隔离到 .file/envs/<id>/data，确认不会写错库） */
+  dataDir?: string;
 }
 
 /** 单个小工具的元信息 */
@@ -1189,103 +1198,338 @@ export type LocalDataResult =
   | LocalDataErrorResponse;
 
 // ============================================================
-// 专题自选股（watchlist）：专题 + 入选个股（含入选理由）
+// 自选股（watchlist）：以「标的」为跟踪主体，以「分组」为组织单元
+// ------------------------------------------------------------
+// 概念模型（2026-09-01 重构，原「专题自选股」）：
+//   标的 WatchItem    —— 一个被跟踪的代码 + 入选理由 + 预期（跟踪与管理的原子单位）
+//   分组 WatchGroup   —— 一组标的的集合；aggSources 非空即聚合分组（标的 = 源分组并集）
+//   四个功能面        —— 行情跟踪（日/周/月）· 下沉分析（财报/新闻）· 提醒设置（点位）· 逻辑确认
+// 技术标识沿用 `watchlist`（API 路径 /tools/watchlist 与 KV 前缀 watchlist: 不变），
+// 避免历史数据迁移风险；业务术语与契约字段全面切换到「分组 / 标的」。
 // ============================================================
 
-/** 专题内的一只自选股（code 为标准 A/H 代码；name 为解析/用户填写的名称） */
-export interface WatchlistStock {
+/** 一个被跟踪的标的（原「专题内自选股」；逻辑围绕它展开） */
+export interface WatchItem {
   /** 标准代码：sh600519 / sz000001 / hk00700 / 600519 / 00700；场外基金为 6 位数字（如 161725） */
   code: string;
   /** 名称（行情接口解析，可空） */
   name?: string;
-  /** 入选理由 */
-  reason: string;
   /** 类型：stock=股票/场内ETF（默认），fund=场外基金（净值来自天天基金） */
   kind?: "stock" | "fund";
+  /** 入选理由（逻辑确认的「前提」：为什么选它） */
+  reason: string;
+  /** 预期（可验证的目标描述，如「Q3 业绩兑现 / 半年内估值修复到 25x」） */
+  expectation?: string;
+  /** 目标价（可选；用于「预期是否达成」的确定性判定，非 LLM） */
+  targetPrice?: number;
+  /** 入选时间（ISO；逻辑确认的时间基线——「随时间是否成立」的起点） */
+  addedAt: string;
 }
 
-/** 一个专题（KV 持久化：watchlist:<id>） */
-export interface WatchlistTopic {
+/** 分组：一组标的的集合（原「专题」）。aggSources 非空 = 聚合分组 */
+export interface WatchGroup {
   id: string;
   name: string;
-  /** 专题介绍（主题逻辑/选股思路，可选） */
+  /** 分组介绍（主题逻辑 / 选股思路，可选） */
   description?: string;
-  /** 分组名（缺省未分组；列表按此分组展示） */
-  group?: string;
+  /** 聚合分组的源分组 id 列表（基础分组缺省/空）；标的 = 源分组标的并集（按 code 去重） */
+  aggSources?: string[];
   createdAt: string;
   updatedAt: string;
-  stocks: WatchlistStock[];
+  /** 组内标的（顺序 = 优先级；聚合分组为源分组并集展开后的视图，落库仍只存 aggSources） */
+  items: WatchItem[];
+  /** 历史迁留：旧版「专题分组名」（新模型由聚合分组承担，仅归档不参与展示） */
+  legacyGroup?: string;
 }
 
-/** 专题列表项（轻量，不带全量个股） */
-export interface WatchlistSummary {
+/** 分组列表项（轻量，带聚合后的运营统计） */
+export interface WatchGroupSummary {
   id: string;
   name: string;
-  /** 专题介绍（列表悬浮展示用） */
   description?: string;
-  /** 分组名（缺省未分组；列表按此分组展示） */
-  group?: string;
-  stockCount: number;
-  /** 当前仓位占比 %（总市值/总仓位，未配置时缺省） */
-  positionPct?: number;
-  /** 当日平均涨幅 %（等权：专题内有行情的股票/基金涨跌幅算术平均；全部无行情时缺省） */
+  aggSources?: string[];
+  /** 标的数量：聚合分组 = 源分组并集数；基础分组 = items.length */
+  itemCount: number;
+  /** 等权平均日涨跌幅 %（组内有行情标的的算术平均；全部无行情时缺省） */
   avgPct?: number;
-  /** 参与平均统计的数量（有行情且涨跌幅可用的股票/基金数） */
+  /** 参与平均统计的标的数量 */
   avgCount?: number;
+  /** 待确认逻辑数（有理由/预期但从未复核，或最近复核结论为 review/exit） */
+  reviewCount?: number;
+  /** 已触发未读提醒数 */
+  alertCount?: number;
   updatedAt: string;
 }
 
-export interface WatchlistListResult {
+export interface WatchGroupListResult {
   ok: true;
-  topics: WatchlistSummary[];
+  groups: WatchGroupSummary[];
+  message?: string;
 }
 
-export interface WatchlistCreateRequest {
+export interface WatchGroupCreateRequest {
   name: string;
-  /** 专题介绍（可选） */
   description?: string;
-  /** 分组名（可选） */
-  group?: string;
+  /** 聚合分组的源分组 id（非空即创建聚合分组） */
+  aggSources?: string[];
 }
 
-export interface WatchlistCreateResult {
+export interface WatchGroupCreateResult {
   ok: true;
-  topic: WatchlistTopic;
+  group: WatchGroup;
+  message?: string;
 }
 
-/** 更新请求：改名 / 改介绍 / 增删个股 / 重排（原子提交） */
-export interface WatchlistUpdateRequest {
+/** 更新请求：改名 / 改介绍 / 改聚合来源 / 增删改标的 / 重排（原子提交） */
+export interface WatchGroupUpdateRequest {
   name?: string;
-  /** 专题介绍（传空字符串可清空） */
+  /** 分组介绍（传空字符串可清空） */
   description?: string;
-  /** 分组名（传空字符串可清空；缺省未分组） */
-  group?: string;
-  addStocks?: WatchlistStock[];
+  /** 聚合来源（传 null 或空数组 → 降级为基础分组；基础分组不得引用聚合分组） */
+  aggSources?: string[] | null;
+  /** 新增标的（同 code 已存在则覆盖更新） */
+  addItems?: WatchItem[];
+  /** 移除标的代码 */
   removeCodes?: string[];
-  /** 新顺序（code 数组，stocks 将按此重排；顺序 = 优先级） */
+  /** 更新已存在标的（同 code 覆盖：理由/预期/目标价） */
+  updateItems?: WatchItem[];
+  /** 新顺序（code 数组，items 将按此重排；顺序 = 优先级） */
   reorderCodes?: string[];
 }
 
-export interface WatchlistDetailResult {
+export interface WatchGroupDetailResult {
   ok: true;
-  topic: WatchlistTopic;
+  group: WatchGroup;
+  /** 聚合分组展开后的实际标的集合（基础分组与 group.items 相同）；含来源分组标注 */
+  items?: WatchItem[];
+  message?: string;
 }
 
-export interface WatchlistDeleteResult {
+export interface WatchGroupDeleteResult {
   ok: true;
   deleted: number;
+  message?: string;
 }
 
-/** 个股财报分析（LLM 驱动）请求：POST /api/tools/watchlist/:id/fundamental?code=xxx&force=1 */
-export interface WatchlistFundamentalRequest {
+// ---------- 行情跟踪（日 / 周 / 月） ----------
+
+/** 周期粒度 */
+export type WatchPeriod = "day" | "week" | "month";
+
+/**
+ * 单标的的周期行情统计（纯函数产出：日 K 序列 + 快照 → 周期聚合，可单测）。
+ * 日度取当日 OHLC；周/月度由日 K 按自然周/自然月分桶聚合。
+ */
+export interface WatchPeriodStat {
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  /** 周期起始日期 YYYY-MM-DD（周期内首个交易日） */
+  from: string;
+  /** 周期结束日期（周期内最后交易日） */
+  to: string;
+  /** 周期开 / 高 / 低 / 收 */
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  /** 周期涨跌幅 %（相对上一周期收盘） */
+  pct?: number;
+  /** 振幅 %（(high - low) / 上周期收盘） */
+  amplitude?: number;
+  /** 周期内交易日数 */
+  sessions: number;
+  /** 最新价（实时快照，可能领先于最后一根日 K） */
+  last?: number;
+  /** 最新快照日涨跌幅 % */
+  lastPct?: number;
+  /** 数据缺失/受限说明（缺失即标注，不静默留空，dev.md §数据工程·质量） */
+  caveat?: string;
+}
+
+/** 分组等权平均走势的一个点（周期内至少有一只标的涨跌幅可算才产出） */
+export interface GroupPeriodPoint {
+  from: string;
+  to: string;
+  /** 等权平均涨跌幅 % */
+  pct: number;
+  /** 参与平均的标的数量（≥1） */
+  count: number;
+}
+
+/** 分组的周期行情跟踪结果 */
+export interface WatchTrackResult {
+  ok: true;
+  groupId: string;
+  period: WatchPeriod;
+  /** 口径说明（如「周度 = 自然周内日 K 聚合」） */
+  note: string;
+  stats: WatchPeriodStat[];
+  /** 分组等权平均走势（升序；走势图用） */
+  group: GroupPeriodPoint[];
+  meta: WatchDataMeta;
+  message?: string;
+}
+
+/**
+ * 数据链路元信息（血缘 + 质量标注，随数据流动到前端）。
+ * sources 为上游数据源 id（tencent.quote / tencent.kline / eastmoney.news / llm.search）。
+ */
+export interface WatchDataMeta {
+  sources: string[];
+  /** 是否命中缓存 */
+  fromCache?: boolean;
+  /** 是否降级（stale-if-error：取数失败返回旧缓存） */
+  degraded?: boolean;
+  /** 数据提取时间（ISO） */
+  fetchedAt: string;
+  /** 缺失/受限说明（人读） */
+  caveats?: string[];
+}
+
+// ---------- 提醒设置（券商式：标的 + 条件 + 阈值） ----------
+
+/** 提醒类型 */
+export type WatchAlertKind =
+  /** 价格上破 / 下破某价位（券商最常用） */
+  | "price"
+  /** 当日涨跌幅超过 ±x% */
+  | "dayPct"
+  /** 周/月周期涨跌幅超过 ±x% */
+  | "periodPct"
+  /** 振幅超过 x% */
+  | "amplitude";
+
+/** 单条提醒规则（持久化：watchlist:alert:<groupId>） */
+export interface WatchAlertRule {
+  id: string;
+  /** 标的代码（须属于所属分组） */
+  code: string;
+  name?: string;
+  kind: WatchAlertKind;
+  /** price：目标价（>0）；dayPct/periodPct/amplitude：百分比阈值（>0，方向由 dir 决定） */
+  threshold: number;
+  /** 触发方向：up=向上突破 / down=向下跌破 */
+  dir: "up" | "down";
+  /** periodPct 专用周期（缺省 week） */
+  period?: WatchPeriod;
+  enabled: boolean;
+  /** once=触发一次后自动停用；always=每次命中都记录 */
+  repeat: "once" | "always";
+  createdAt: string;
+}
+
+/** 提醒命中记录（持久化：watchlist:alertHit:<groupId>，按 ruleId+date 去重） */
+export interface WatchAlertHit {
+  ruleId: string;
+  code: string;
+  name?: string;
+  /** 触发交易日 YYYY-MM-DD */
+  date: string;
+  /** 触发时的实际值（price=价格；其余为百分比） */
+  value: number;
+  /** 人读描述（如「上破 1800.00，现价 1812.50」） */
+  text: string;
+  /** 命中时间（ISO） */
+  at: string;
+}
+
+export interface WatchAlertsResult {
+  ok: true;
+  groupId: string;
+  rules: WatchAlertRule[];
+  /** 历史命中（按时间降序，默认最近 50 条） */
+  hits: WatchAlertHit[];
+  /** 当前行情下的实时命中（未落库，供即时提示） */
+  triggered: WatchAlertHit[];
+  meta: WatchDataMeta;
+  message?: string;
+}
+
+export interface WatchAlertsSaveRequest {
+  /** 全量覆盖保存的规则列表（服务端权威校验：code 须在分组内、阈值须 > 0） */
+  rules: WatchAlertRule[];
+}
+
+export interface WatchAlertsSaveResult {
+  ok: true;
+  groupId: string;
+  rules: WatchAlertRule[];
+  message?: string;
+}
+
+// ---------- 逻辑确认（入选理由 + 预期 → 随时间是否成立） ----------
+
+/** 确定性锚（非 LLM）：可观测事实，防「裁判兼运动员」假收敛（dev.md §6.2） */
+export interface WatchLogicAnchor {
+  /** 基准价：首次复核时的收盘价（缺省=尚无基准） */
+  basePrice?: number;
+  /** 当前价（实时快照） */
+  price?: number;
+  /** 入选（基准）以来涨跌幅 % */
+  sinceAddPct?: number;
+  /** 目标价达成度 %（price / targetPrice × 100） */
+  targetProgressPct?: number;
+  /** 命中该标的新闻条数（逻辑证据计数，确定性匹配） */
+  newsCount?: number;
+}
+
+/** 一次逻辑复核（LLM + 确定性锚；按标的时间序列持久化，体现「随时间」） */
+export interface WatchLogicReview {
+  /** 复核时间（ISO） */
+  at: string;
+  /** 入选理由（前提）是否仍成立 */
+  premise: "holds" | "partial" | "broken";
+  /** 预期是否达成 */
+  expectation: "met" | "pending" | "failed";
+  /** 证据要点（引用最新财报 / 新闻 / 行情事实） */
+  evidence: string;
+  /** 建议动作：hold=继续持有观察 / review=需复核 / exit=逻辑破坏建议移出 */
+  suggestion: "hold" | "review" | "exit";
+  /** 补充说明 */
+  note: string;
+  /** 复核时的确定性锚快照 */
+  anchors?: WatchLogicAnchor;
+  /** 是否命中缓存（同日同标的复用上次结论，省 LLM 成本） */
+  fromCache?: boolean;
+}
+
+/** 逻辑确认视图的单个标的 */
+export interface WatchLogicItem {
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  reason: string;
+  expectation?: string;
+  targetPrice?: number;
+  addedAt: string;
+  /** 最近一次复核（从未复核为 null） */
+  review: WatchLogicReview | null;
+  /** 复核历史条数（体现「随时间」跟踪） */
+  reviewCount: number;
+  anchors: WatchLogicAnchor;
+}
+
+export interface WatchLogicResult {
+  ok: true;
+  groupId: string;
+  items: WatchLogicItem[];
+  meta: WatchDataMeta;
+  message?: string;
+}
+
+// ---------- 下沉分析（财报 / 新闻） ----------
+
+/** 财报分析（LLM 驱动）请求：POST /api/tools/watchlist/:id/fundamental?code=xxx&force=1 */
+export interface WatchFundamentalRequest {
   /** 股票代码 */
   code: string;
   /** 是否强制重新分析（忽略缓存；默认 false） */
   force?: boolean;
 }
 
-/** 个股财报分析结果 */
-export interface WatchlistFundamentalResult {
+/** 财报分析结果（以标的为维度缓存，与分组无关——标的为中心） */
+export interface WatchFundamentalResult {
   ok: boolean;
   /** 股票代码/名称 */
   code: string;
@@ -1310,18 +1554,46 @@ export interface WatchlistFundamentalResult {
   message?: string;
 }
 
-export interface WatchlistErrorResult {
+/** 标的相关新闻（下沉分析·新闻：确定性关键词匹配，零 LLM、零额外请求） */
+export interface WatchNewsItem {
+  title: string;
+  digest: string;
+  /** 发布时间 YYYY-MM-DD HH:mm:ss */
+  time: string;
+  url: string;
+  /** 数据源 id */
+  source: string;
+  /** 数据源名称 */
+  sourceName: string;
+  /** 命中关键词（标的名 / 代码 / 自定义词） */
+  hits: string[];
+}
+
+export interface WatchNewsResult {
+  ok: true;
+  code: string;
+  items: WatchNewsItem[];
+  meta: WatchDataMeta;
+  message?: string;
+}
+
+export interface WatchErrorResult {
   ok: false;
   message: string;
 }
 
-export type WatchlistResult =
-  | WatchlistListResult
-  | WatchlistCreateResult
-  | WatchlistDetailResult
-  | WatchlistDeleteResult
-  | WatchlistFundamentalResult
-  | WatchlistErrorResult;
+export type WatchResult =
+  | WatchGroupListResult
+  | WatchGroupCreateResult
+  | WatchGroupDetailResult
+  | WatchGroupDeleteResult
+  | WatchTrackResult
+  | WatchAlertsResult
+  | WatchAlertsSaveResult
+  | WatchLogicResult
+  | WatchNewsResult
+  | WatchFundamentalResult
+  | WatchErrorResult;
 
 // ============================================================
 // 改进备忘录（memo）：TODO list（用户记录问题 → Agent 驱动修复）

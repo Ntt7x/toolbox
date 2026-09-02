@@ -13,7 +13,8 @@ scripts/
 ├── README.md        ← 本文件（入口说明 + 工具表 + 规范 + 归档）
 └── dev-utils/       所有可复用脚本
     ├── toolbox.mjs            ★ 统一入口（list/help/子命令转发）—— 优先用这个
-    ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重）
+    ├── env.mjs               ★ 环境管理（prod=main / dev=分支；端口槽位 + 数据目录隔离；也被其它脚本 import 为库）
+    ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重；环境感知）
     ├── proc.mjs              进程诊断/清理 CLI（status/list/kill/kill-port）
     ├── typecheck.mjs         TypeScript 类型检查（全仓 / --app server|web）
     ├── smoke-pages.mjs       页面冒烟（18 页；--page <路径> 定向单页）
@@ -38,7 +39,8 @@ scripts/
 
 | 命令 | 用途 | 典型用法 |
 |---|---|---|
-| `dev` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，单实例防重 | `toolbox dev start|stop|restart|status|kill-port <port>` |
+| `env` | **★ 环境管理**：prod(main)/dev(分支) 双环境，端口槽位 + 数据目录隔离，可并存 | `toolbox env status\|list\|start\|stop\|restart\|sync-data\|url\|release [branch]` |
+| `dev` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，单实例防重（等价于 `env start/stop/...`） | `toolbox dev start\|stop\|restart\|status\|kill-port <port>` |
 | `proc` | **进程诊断/清理**：端口占用 + supervisor 状态 + node 进程命令行（查残留） | `toolbox proc status|list|kill <pid>|kill-port <port>` |
 | `typecheck` | **TypeScript 类型检查（L0 必跑）**：全仓或单 app | `toolbox typecheck [--app server|web]` |
 | `test` | **模块单测快捷**（自动定位测试文件/全量；自动探测：能 spawn 走 tsx，受限自动回退 resolve hook） | `toolbox test tradePlan` |
@@ -55,11 +57,68 @@ scripts/
 
 > 所有命令也可直接调用底层脚本：`node scripts/dev-utils/<脚本>.mjs ...`（参数一致）。
 
+---
+
+## 2.5 环境模型（prod / dev）—— 2026-09-02 引入
+
+> 目标：日常使用的稳定实例与开发分支的验证实例**彻底分离**，可同时运行互不干扰。
+
+| 维度 | **prod**（`main` 分支） | **dev**（其它分支） |
+|---|---|---|
+| 定位 | 日常使用的稳定实例，真实数据 | 分支验证实例，随便折腾 |
+| server 端口 | `8787`（固定，历史约定不变） | `8800 + slot` |
+| web 端口 | `5173`（固定） | `5180 + slot` |
+| 数据目录 | `.file/`（真实数据） | `.file/envs/<branch-id>/data/` |
+| 日志 / 状态 | `.file/` | `.file/envs/<branch-id>/{logs,dev.pids.json}` |
+
+- **槽位分配**：首次在某分支跑脚本时自动取最小空闲槽位，写入注册表 `.file/envs/registry.json`，
+  **分支 ↔ 槽位稳定映射**（重启不变）。并发上限 50 个分支。
+- **切换分支即切换环境**：所有脚本（`dev` / `proc` / `api` / `smoke` / `browser`）都按**当前 git 分支**
+  自动解析环境，无需手工改端口。
+- **数据隔离是硬保证**：dev 分支写库写到自己的目录，**绝不污染 prod 真实数据**
+  （服务端 `core/db.ts` 的 `DATA_DIR` 由 `TOOLBOX_DATA_DIR` 覆盖，`docs` 二进制目录随 `DATA_DIR` 走）。
+
+### 常用操作
+
+```bash
+toolbox env status              # 当前分支环境：端口 / 存活 / 数据目录
+toolbox env list                # 全部环境总览（跨分支，看谁占着谁）
+toolbox env start|stop|restart  # 管理当前分支环境（转发 dev.mjs）
+toolbox env sync-data           # prod → dev 数据快照（须先 stop；SQLite 三件套 db+wal+shm）
+toolbox env url                 # 打印当前环境 URL
+toolbox env release [branch]    # 释放分支槽位（须先 stop；不影响数据目录）
+toolbox proc envs               # 等价 env list（进程视角）
+```
+
+### 自报家门
+
+`GET /api/health` 返回 `env` / `branch` / `dataDir`——多环境并存、端口容易混淆时，
+先打健康接口确认「你正在跟哪个实例说话」：
+
+```bash
+toolbox api GET /health
+# {"ok":true,...,"env":"dev","branch":"refactor/watchlist-to-watchgroups","dataDir":"...\\.file\\envs\\...\\data"}
+```
+
+### 数据同步
+
+`env sync-data` 只做 **prod → dev 单向**快照（dev → prod 一律拒绝，防实验数据污染真实库）；
+要求先 `stop`（运行中复制 SQLite 会拿到不一致快照）。
+
+### 注意事项
+
+- `env.mjs` 顶层 CLI **有 `isMain` 闸门**：被 import 时不执行 CLI（否则 import 方的 `--page` 等参数会
+  掉进 else 分支打印用法——冒烟输出混进「用法: …」即此原因）。
+- 端口用 `strictPort`：**不自动顺延**。顺延会让「env status 显示的端口」与实际不符，排查成本高。
+
+---
+
 ## 3. 库模块（仅脚本内 import，不提供 CLI）
 
 | 模块 | 用途 |
 |---|---|
-| `api.mjs` | 通用 API 客户端：`import { call, get, post, put, del } from "./api.mjs"`；非 2xx 抛带 message 的 Error（含 rejectReason）；BASE 可用环境变量 `TOOLBOX_API` 覆盖 |
+| `env.mjs` | 环境解析库：`import { resolveEnv, listEnvs, pidOnPort, isNodePid, branchToId, gitBranch, syncData } from "./env.mjs"`；同时是 `toolbox env` 的 CLI（有 `isMain` 闸门，import 不触发 CLI） |
+| `api.mjs` | 通用 API 客户端：`import { call, get, post, put, del } from "./api.mjs"`；非 2xx 抛带 message 的 Error（含 rejectReason）；BASE 默认按**当前分支环境**解析，可用 `TOOLBOX_API` 覆盖；连接失败给出「先 `toolbox env start`」的可执行提示 |
 | `e2e.mjs` | API E2E 断言脚手架：`import { e2e, assert } from "./e2e.mjs"`；用例列表 + 统计 + 失败 exit 1 |
 
 ## 4. 使用规范

@@ -11,14 +11,19 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import fs from "node:fs";
 import path from "node:path";
 import { kvGet, kvSet, kvListRaw, kvDelete } from "../../core/kvStore.js";
+import { DATA_DIR } from "../../core/db.js";
+import { join } from "node:path";
 import { parseShareId, extractShare } from "../../core/deepseekShare.js";
 import type { DocFolder, DocItem, ShareMessage } from "@toolbox/shared";
 
 export const DOCS_FOLDERS_KEY = "docs:folders";
 export const DOCS_META_KEY = "docs:meta";
 export const DOCS_CONTENT_PREFIX = "docs:content:";
-/** pdf 二进制目录（相对项目根 .file/docs/） */
-export const DOCS_FILE_DIR = ".file/docs";
+/**
+ * PDF 二进制目录（相对数据目录；dev 环境随 TOOLBOX_DATA_DIR 隔离，见 core/db.ts）。
+ * 2026-09-02：由写死 `.file/docs` 改为基于 DATA_DIR 解析，保证 dev 分支的文档数据不落进 prod。
+ */
+export const DOCS_FILE_DIR = join(DATA_DIR, "docs");
 const MAX_DOCS = 500;
 
 // ---------- 基础工具（模块级，服务共享） ----------
@@ -324,9 +329,9 @@ export class DocFileService extends Service {
     });
   }
 
-  /** pdf 目录绝对路径（项目根 .file/docs/） */
+  /** pdf 目录绝对路径（数据目录 docs/；DOCS_FILE_DIR 已按 TOOLBOX_DATA_DIR 隔离） */
   fileDir(): string {
-    return path.join(path.resolve(process.cwd()), DOCS_FILE_DIR);
+    return DOCS_FILE_DIR;
   }
 
   writePdf(id: string, buf: Buffer): void {
@@ -347,7 +352,7 @@ export class DocFileService extends Service {
 
   /** 导出文档到 .file/docs-edit/（供「在 VSCode 中打开」唤起本地编辑器，memo msuxceh7） */
   exportForEdit(item: DocItem): { ok: boolean; path?: string; message?: string } {
-    const dir = path.join(path.resolve(process.cwd()), ".file", "docs-edit");
+    const dir = path.join(DATA_DIR, "docs-edit");
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, message: (e as Error).message }; }
     const safe = item.name.replace(/[\\/:*?"<>|]/g, "_");
     const target = path.join(dir, safe);

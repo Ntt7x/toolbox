@@ -79,15 +79,35 @@
   operations.source 标注；日期格式统一 YYYY-MM-DD / YYYY-MM（前端显示「月内」）；
   无权威披露的 netChange/cumulativeNet 填 null 不编造；UpdateState 带 taskId 且 running
   超 15 分钟降级 failed（防进程残留卡死）；数据源注册齐备（monthly/daily/monthlyUpdate 三 key）
-- **专题自选股（watchlist）**：每专题一个 KV 文档 `watchlist:<id>`（stocks 含 code/name/reason），
-  数据源 `watchlist:`（自选数据）+ `watchlist:fundamental:`（分析数据，TTL 2 年）；
-  个股名称解析复用 core/quote（标准行情工具）；财报分析 = LLM（watchlist.fundamental 提示词，
-  默认联网搜索 + robustJsonParse + KV 缓存）；**Hono 静态路由必须注册在 `/:id` 参数路由之前**
-  （否则被当 id 吞掉）
-- **专题列表等权平均涨幅（2026-08-10）**：`GET /tools/watchlist` 列表接口为 async，附
-  `avgPct/avgCount`（专题内有行情股票的涨跌幅**算术平均**；行情分 40 只一批批量拉取，复用
-  quote:s: 5 分钟缓存，不与详情页重复拉取；索引 normCode+裸码双键兼容用户任意代码写法）；
-  前端列表行「N 只」旁红涨绿跌徽章（title 显示参与统计数）；全部无行情 → avgPct 缺省不展示
+- **自选股（watchlist，2026-09-01 重构，原「专题自选股」）**：**以「标的」为跟踪主体、以「分组」为组织单元**
+  —— 每个分组一个 KV 文档 `watchlist:<id>`（items 含 code/name/kind/reason/expectation/targetPrice/addedAt）；
+  分组分**基础分组**（自有 items）与**聚合分组**（`aggSources` 指向多个基础分组，标的 = 源分组 items 并集按 code 去重，
+  **不落库存储并集**——单一数据源，改源分组即实时反映）。
+  概念映射：旧「专题」→ 新「分组」；旧「专题内个股」→ 新「标的」；旧「专题 group 标签」→ `legacyGroup`（仅归档，由聚合分组承担）。
+  技术标识沿用 `watchlist`（API 路径与 KV 前缀不变），历史数据 **读取时升级**（store.normalizeGroup：`stocks`→`items`、`group`→`legacyGroup`），零迁移脚本。
+  数据源：`watchlist:` / `watchlist:alert:` / `watchlist:alertHit:` / `watchlist:logic:`（自选数据）+ `watchlist:fundamental:` / `watchlist:extend:`（分析数据）。
+  数据分层（数据工程观点）：**源**（tencent.quote 快照 / tencent.kline 日 K / eastmoney.news 快讯 / llm.search）
+  → **采集**（features/watchlist/track.ts 批量取数 + 降级标注）→ **加工**（periodStats.ts 周期聚合、alerts.ts 提醒判定，均为**纯函数 + 单测 29 例**）
+  → **服务**（features/watchlist/index.ts 路由 + 编排）；血缘与质量随结果下沉前端（`WatchDataMeta.sources/fromCache/degraded/caveats`，**缺失即标注**不静默留空）。
+  路由分层：`store.ts`（KV + 规范化）/ `track.ts`（采集编排）/ `periodStats.ts`（周期聚合纯函数）/ `alerts.ts`（提醒判定纯函数）/
+  `logic.ts`（逻辑复核编排）/ `news.ts`（新闻关联）/ `service.ts`（财报 LLM + Chat 导入）；
+  **Hono 静态路由必须注册在 `/:id` 参数路由之前**（否则被当 id 吞掉）。
+  ⚠️ 坑（2026-09-01）：`kvListRaw` 返回的是**原始 JSON 字符串**，必须自行 `JSON.parse`（与 `kvGet` 不同），
+  直接交给 normalize* 会静默返回全空列表。
+- **分组列表统计（2026-08-10 引入，2026-09-01 扩展）**：`GET /tools/watchlist` 为 async，附
+  `avgPct/avgCount`（组内有行情标的的涨跌幅**算术平均**；行情分 40 只一批批量拉取，复用
+  quote:s: 5 分钟缓存，不与详情页重复拉取；索引 normCode+裸码双键兼容用户任意代码写法）、
+  `reviewCount`（待复核 / 逻辑动摇的标的数）、`alertCount`（当前已触发提醒数）；
+  前端分组切换条展示红涨绿跌徽章 + 🧭/🔔 计数；全部无行情 → avgPct 缺省不展示
+- **四个功能面（2026-09-01 新增，横向 Tab，与仓位管理 v2 同布局范式）**：
+  ① **行情跟踪** —— `GET /:id/track?period=day|week|month`，日 K 按自然周/自然月分桶聚合（周一为周起点，UTC 计算防时区漂移），
+  产 OHLC/涨跌幅/振幅/交易日数 + 分组等权走势（SVG 折线，无第三方图表依赖）；
+  ② **下沉分析** —— 财报（LLM，以**标的**为维度缓存，跨分组复用）+ 新闻（**确定性关键词匹配**，零 LLM 零额外请求）；
+  ③ **提醒设置** —— 券商式（标的 + 条件 + 阈值 + 方向 + 周期 + 一次/每次），服务端权威校验（标的须在分组内、阈值 > 0），
+  按 `ruleId + 交易日` 去重落库，`once` 规则命中后自动停用；
+  ④ **逻辑确认** —— 入选理由（前提）+ 预期随时间是否成立：**确定性锚**（基准价/入选以来涨跌幅/目标达成度/相关新闻条数，
+  非 LLM，防「裁判兼运动员」假收敛）+ LLM 仅做定性判定（输入为服务端真实采集事实，禁止自造数据）；
+  每次复核落库形成**时间序列**，同日同标的复用结论（可强制复核，省成本）
 - **行情多源兜底（2026-08-10）**：quote.ts 腾讯批量**逐行容错**（单只解析失败只跳过该只，
   不再拖垮整批，坏代码走单源降级）+ 批量命中**无价降级**（price 缺失/为 0 也降级东财/新浪补价）；
   fund.ts 场外基金天天基金主源失败自动降级**新浪**（`hq.sinajs.cn/list=of{code}`）；
