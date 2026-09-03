@@ -11,17 +11,22 @@
 // ============================================================
 
 import { Hono } from "hono";
-import { getDailyBars } from "../../core/kline.js";
+import { getIntraday, getKlineBars, supportedPeriods } from "../../core/kline.js";
 import {
   API_PREFIX,
+  MINUTE_KLINE_PERIODS,
+  WATCH_KLINE_PERIOD_LABEL,
+  WATCH_KLINE_PERIODS,
   WATCH_ROOT_TAG,
   type ToolMeta,
   type WatchAlertRule,
   type WatchDataMeta,
+  type WatchIntradayResult,
   type WatchItem,
   type WatchItemRow,
   type WatchItemUpdateRequest,
   type WatchKlineBar,
+  type WatchKlinePeriod,
   type WatchKlineResult,
   type WatchTagNode,
 } from "@toolbox/shared";
@@ -423,20 +428,25 @@ export function register(app: Hono): void {
 
   // ---------- 四个功能面（服务对象 = 单一标的） ----------
 
-  // 行情跟踪：日 K 序列（券商式 K 线的唯一数据源）
-  // K 线本身已表达 OHLC / 涨跌 / 成交量，故不再提供日/周/月周期聚合与明细表
+  // 行情跟踪：K 线序列（多周期：日/周/月 前复权 + 5/15/30/60 分钟 不复权）
+  // K 线本身已表达 OHLC / 涨跌 / 成交量，故不再提供「周期聚合明细表」这类可被 K 线表达的冗余视图
   app.get(`${API_PREFIX}/tools/watchlist/items/:code/kline`, async (c) => {
     const code = c.req.param("code");
     const item = getItem(code);
     if (!item) return c.json({ ok: false, message: "标的不存在" }, 404);
     const force = c.req.query("force") === "1";
+    const supported = supportedPeriods(code, item.kind);
+    // 周期白名单校验：非法值静默回落日 K（不报错打断看图），并在 note 里回显实际周期
+    const asked = c.req.query("period") as WatchKlinePeriod | undefined;
+    const period: WatchKlinePeriod = asked && WATCH_KLINE_PERIODS.includes(asked) && asked !== "min" ? asked : "day";
     // count=500 ≈ 两年交易日（券商图默认跨度）；缓存增量合并，历史只增不减
-    const raw = await getDailyBars(code, { count: KLINE_COUNT, force });
+    const raw = await getKlineBars(code, { period, count: KLINE_COUNT, force });
     // 旧缓存/部分行情源缺 OHLC → 过滤掉不成 K 的行（缺失即不画，不用快照伪造 K）
     const bars: WatchKlineBar[] = raw
       .filter((b) => typeof b.open === "number" && typeof b.high === "number" && typeof b.low === "number")
       .map((b) => ({
         date: b.date,
+        ...(b.time ? { time: b.time } : {}),
         open: b.open as number,
         high: b.high as number,
         low: b.low as number,
@@ -444,15 +454,59 @@ export function register(app: Hono): void {
         ...(typeof b.volume === "number" ? { volume: b.volume } : {}),
       }));
     const hasVolume = bars.some((b) => typeof b.volume === "number");
+    const isMinute = MINUTE_KLINE_PERIODS.includes(period);
     const caveats: string[] = [];
     if (bars.length === 0) {
-      caveats.push(item.kind === "fund" ? "场外基金为净值型，无日 K 数据" : "无日 K 数据（数据源不可达或代码无行情）");
-    } else if (!hasVolume) {
-      caveats.push("该行情源未提供成交量，成交量副图不可绘制");
+      caveats.push(
+        item.kind === "fund"
+          ? "场外基金为净值型，无 K 线数据"
+          : isMinute
+            ? "该标的无分钟 K 数据（行情源仅对沪深两市提供分钟 K）"
+            : "无 K 线数据（数据源不可达或代码无行情）",
+      );
+    } else {
+      // 复权口径必须显式标注：分钟 K 无复权，除权日会看到假跳空（用户最容易误读的点）
+      if (isMinute) caveats.push("分钟 K 为不复权数据，除权除息日会出现跳空（非真实涨跌）");
+      if (!hasVolume) caveats.push("该行情源未提供成交量，成交量副图不可绘制");
     }
     const meta: WatchDataMeta = {
       sources: ["tencent.kline"],
       fetchedAt: new Date().toISOString(),
+      ...(caveats.length ? { caveats } : {}),
+    };
+    const label = WATCH_KLINE_PERIOD_LABEL[period];
+    const unit = isMinute ? "根" : "个交易日";
+    return c.json({
+      ok: true,
+      code,
+      ...(item.name ? { name: item.name } : {}),
+      ...(item.kind ? { kind: item.kind } : {}),
+      period,
+      bars,
+      supported,
+      note: `腾讯${label}（${isMinute ? "不复权" : "前复权"}）· 最近 ${bars.length} ${unit}`,
+      meta,
+    } satisfies WatchKlineResult);
+  });
+
+  // 行情跟踪：分时（1 分钟价格线 + 均价线 + 昨收基准；非交易日返回最近一个交易日）
+  app.get(`${API_PREFIX}/tools/watchlist/items/:code/intraday`, async (c) => {
+    const code = c.req.param("code");
+    const item = getItem(code);
+    if (!item) return c.json({ ok: false, message: "标的不存在" }, 404);
+    const force = c.req.query("force") === "1";
+    const data = await getIntraday(code, { force });
+    const supported = supportedPeriods(code, item.kind);
+    const caveats: string[] = [];
+    if (!data || data.points.length === 0) {
+      caveats.push(item.kind === "fund" ? "场外基金为净值型，无分时数据" : "无分时数据（数据源不可达或代码无行情）");
+    } else if (!Number.isFinite(data.prevClose)) {
+      caveats.push("行情源未提供昨收价，分时涨跌基准线不可绘制");
+    }
+    const meta: WatchDataMeta = {
+      sources: ["tencent.kline"],
+      fetchedAt: new Date().toISOString(),
+      ...(data?.fromCache ? { fromCache: true } : {}),
       ...(caveats.length ? { caveats } : {}),
     };
     return c.json({
@@ -460,10 +514,13 @@ export function register(app: Hono): void {
       code,
       ...(item.name ? { name: item.name } : {}),
       ...(item.kind ? { kind: item.kind } : {}),
-      bars,
-      note: `腾讯日 K（前复权）· 最近 ${bars.length} 个交易日`,
+      date: data?.date ?? "",
+      prevClose: data?.prevClose ?? Number.NaN,
+      points: data?.points ?? [],
+      supported,
+      note: data?.date ? `腾讯分时（${data.date}）· ${data.points.length} 个分钟点` : "腾讯分时",
       meta,
-    } satisfies WatchKlineResult);
+    } satisfies WatchIntradayResult);
   });
 
   // 下沉分析·新闻（确定性关键词匹配，零 LLM）

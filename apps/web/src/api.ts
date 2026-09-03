@@ -61,6 +61,8 @@ import {
   type WatchLogicReview,
   type WatchNewsResult,
   type WatchPeriod,
+  type WatchIntradayResult,
+  type WatchKlinePeriod,
   type WatchKlineResult,
   type MemoCreateResult,
   type MemoKind,
@@ -205,10 +207,18 @@ export const api = {
     request<WatchTagDeleteResult>(`/tools/watchlist/tags/${encodeURIComponent(id)}?mode=${mode}`, jsonInit("DELETE", {})),
   watchlistResolve: (code: string, kind?: string) =>
     request<{ ok: boolean; code: string; name: string }>(`/tools/watchlist/resolve?code=${encodeURIComponent(code)}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`),
-  /** 行情跟踪（单一标的；日 K 序列，券商式 K 线用；force=1 强制刷新日 K） */
-  watchlistKline: (code: string, force = false) =>
-    request<WatchKlineResult>(
-      `/tools/watchlist/items/${encodeURIComponent(code)}/kline${force ? "?force=1" : ""}`,
+  /** 行情跟踪（单一标的；K 线序列，多周期；force=1 强制刷新） */
+  watchlistKline: (code: string, period: WatchKlinePeriod = "day", force = false) => {
+    const q = new URLSearchParams();
+    if (period !== "day") q.set("period", period);
+    if (force) q.set("force", "1");
+    const qs = q.toString();
+    return request<WatchKlineResult>(`/tools/watchlist/items/${encodeURIComponent(code)}/kline${qs ? `?${qs}` : ""}`);
+  },
+  /** 分时（单一标的；1 分钟价格线 + 均价 + 昨收；force=1 强制刷新） */
+  watchlistIntraday: (code: string, force = false) =>
+    request<WatchIntradayResult>(
+      `/tools/watchlist/items/${encodeURIComponent(code)}/intraday${force ? "?force=1" : ""}`,
     ),
   /** 下沉分析·新闻（单一标的，确定性关键词匹配） */
   watchlistNews: (code: string) =>

@@ -47,6 +47,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@getcandlekit/charts':
+        specifier: 0.1.0
+        version: 0.1.0(lightweight-charts-indicators@0.4.2(oakscriptjs@0.2.8(lightweight-charts@5.2.1)))(lightweight-charts@5.2.1)(oakscriptjs@0.2.8(lightweight-charts@5.2.1))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@toolbox/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -65,6 +68,9 @@ importers:
       lightweight-charts:
         specifier: ^5.2.1
         version: 5.2.1
+      lightweight-charts-indicators:
+        specifier: ^0.4.2
+        version: 0.4.2(oakscriptjs@0.2.8(lightweight-charts@5.2.1))
       lucide-react:
         specifier: ^1.30.0
         version: 1.30.0(react@19.2.8)
@@ -577,6 +583,28 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@getcandlekit/charts@0.1.0':
+    resolution: {integrity: sha512-E7TQWwcRi5uLJoOrSIoRHvBmrP9FhXUa9QfN5hcj1kitSnYaOmXiMrwO4Hpa5HF1aU9EFC49j1y9XJmkcYaLVQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      flexlayout-react: ^0.9.1
+      lightweight-charts: ^5.0.0
+      lightweight-charts-indicators: ^0.4.0
+      oakscriptjs: ^0.2.0
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+    peerDependenciesMeta:
+      flexlayout-react:
+        optional: true
+      lightweight-charts-indicators:
+        optional: true
+      oakscriptjs:
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
 
   '@hono/node-server@1.19.17':
     resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
@@ -1199,6 +1227,11 @@ packages:
     resolution: {integrity: sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==}
     engines: {node: '>= 12.0.0'}
 
+  lightweight-charts-indicators@0.4.2:
+    resolution: {integrity: sha512-UITNFEaKYqvRPm+67Mz7nXMZIE+dilqdeQsIcFqwe3I4n0U3BQm95/OKSlWIpBqiqftJff9iq3i4rtOg/p2tLQ==}
+    peerDependencies:
+      oakscriptjs: ^0.2.8
+
   lightweight-charts@5.2.1:
     resolution: {integrity: sha512-IVwoK1RLFiLPubaKIjNbtjWLnpPMqiABSrTay6whmNa8L1+19292VtHJ+BWyPUuLCwF0tcQlhEWd1CLB2a1nsQ==}
 
@@ -1369,6 +1402,12 @@ packages:
   node-releases@2.0.51:
     resolution: {integrity: sha512-wRNIrw4DmVLKQlbgOMdkMx27Wrpzes2hh5Jtbi2bjPd+4wJstWIqP5A+lscnqbm0xxmT5Bpg8Lec5ItEBwx6BQ==}
     engines: {node: '>=18'}
+
+  oakscriptjs@0.2.8:
+    resolution: {integrity: sha512-SRLR1QpnO3k8MNFzT5ZLEauWeULAcDTJ+0L0JXtshMvfDc5f8ezXVwgQ3D9Lv2g4aiUbJNmK+sNuZ8NKeC1I7Q==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      lightweight-charts: ^5.0.0
 
   parse-entities@4.0.2:
     resolution: {integrity: sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==}
@@ -1941,6 +1980,15 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
+  '@getcandlekit/charts@0.1.0(lightweight-charts-indicators@0.4.2(oakscriptjs@0.2.8(lightweight-charts@5.2.1)))(lightweight-charts@5.2.1)(oakscriptjs@0.2.8(lightweight-charts@5.2.1))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      lightweight-charts: 5.2.1
+    optionalDependencies:
+      lightweight-charts-indicators: 0.4.2(oakscriptjs@0.2.8(lightweight-charts@5.2.1))
+      oakscriptjs: 0.2.8(lightweight-charts@5.2.1)
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+
   '@hono/node-server@1.19.17(hono@4.12.34)':
     dependencies:
       hono: 4.12.34
@@ -2500,6 +2548,10 @@ snapshots:
       lightningcss-win32-arm64-msvc: 1.32.0
       lightningcss-win32-x64-msvc: 1.32.0
 
+  lightweight-charts-indicators@0.4.2(oakscriptjs@0.2.8(lightweight-charts@5.2.1)):
+    dependencies:
+      oakscriptjs: 0.2.8(lightweight-charts@5.2.1)
+
   lightweight-charts@5.2.1:
     dependencies:
       fancy-canvas: 2.1.0
@@ -2893,6 +2945,10 @@ snapshots:
   nanoid@3.3.17: {}
 
   node-releases@2.0.51: {}
+
+  oakscriptjs@0.2.8(lightweight-charts@5.2.1):
+    dependencies:
+      lightweight-charts: 5.2.1
 
   parse-entities@4.0.2:
     dependencies:

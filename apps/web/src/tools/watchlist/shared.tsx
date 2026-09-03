@@ -168,7 +168,7 @@ export function SegTabs<T extends string>({
   size = "md",
 }: {
   value: T;
-  options: { value: T; label: string; badge?: number; title?: string }[];
+  options: { value: T; label: string; badge?: number; title?: string; disabled?: boolean }[];
   onChange: (v: T) => void;
   size?: "sm" | "md";
 }) {
@@ -182,6 +182,7 @@ export function SegTabs<T extends string>({
             key={o.value}
             type="button"
             title={o.title}
+            disabled={o.disabled}
             onClick={() => onChange(o.value)}
             style={{
               padding: pad,
@@ -191,7 +192,8 @@ export function SegTabs<T extends string>({
               color: active ? C.accent : C.faint,
               fontSize: size === "sm" ? "0.78rem" : "0.85rem",
               fontWeight: active ? 700 : 500,
-              cursor: "pointer",
+              cursor: o.disabled ? "not-allowed" : "pointer",
+              opacity: o.disabled ? 0.4 : 1,
               whiteSpace: "nowrap",
               display: "flex",
               alignItems: "center",

@@ -1443,13 +1443,58 @@ export interface WatchPeriodStat {
 }
 
 /**
- * 日 K 一根（券商式 K 线的原子数据；qfq 前复权、升序）。
- * 行情跟踪页直接消费它：K 线本身已表达 OHLC / 涨跌 / 成交量，
- * 不再额外提供「日/周/月周期聚合 + 明细表」这类可被 K 线表达的冗余视图。
+ * 行情周期（前端 candlekit 图表消费；口径与腾讯行情源一致）。
+ * - `min`  分时：1 分钟价格折线（非 K 线）
+ * - `m*`   分钟 K：5 / 15 / 30 / 60 分钟（腾讯 mkline，**不复权**）
+ * - `day|week|month` 日 / 周 / 月 K（腾讯 fqkline，**前复权**）
+ */
+export type WatchKlinePeriod =
+  | "min"
+  | "m5"
+  | "m15"
+  | "m30"
+  | "m60"
+  | "day"
+  | "week"
+  | "month";
+
+/** 分钟 K 周期集合（`min` 是分时折线，不是 K 线，不在此列） */
+export const MINUTE_KLINE_PERIODS: WatchKlinePeriod[] = ["m5", "m15", "m30", "m60"];
+
+/** 全部周期（前端 Tab 顺序） */
+export const WATCH_KLINE_PERIODS: WatchKlinePeriod[] = [
+  "min",
+  ...MINUTE_KLINE_PERIODS,
+  "day",
+  "week",
+  "month",
+];
+
+/**
+ * 周期中文名（前端 Tab 文案）。
+ * 放在契约层是为了让「口径」只有一处定义：改名不必前后端各改一遍。
+ */
+export const WATCH_KLINE_PERIOD_LABEL: Record<WatchKlinePeriod, string> = {
+  min: "分时",
+  m5: "5分",
+  m15: "15分",
+  m30: "30分",
+  m60: "60分",
+  day: "日K",
+  week: "周K",
+  month: "月K",
+};
+
+/**
+ * K 线一根（券商式 K 线的原子数据；升序）。
+ * 日 / 周 / 月 K 为腾讯 fqkline **前复权**；分钟 K 为腾讯 mkline **不复权**
+ * （行情源不提供分钟级复权，消费方须在 caveat 中标注，避免用户误读跳空）。
  */
 export interface WatchKlineBar {
-  /** 交易日 YYYY-MM-DD */
+  /** 交易日 YYYY-MM-DD（分钟 K 为该根 K 线所属交易日） */
   date: string;
+  /** 分钟 K 的 K 线时刻 HH:mm；日 / 周 / 月 K 无此字段 */
+  time?: string;
   open: number;
   high: number;
   low: number;
@@ -1458,15 +1503,55 @@ export interface WatchKlineBar {
   volume?: number;
 }
 
-/** 单一标的的日 K 序列（行情跟踪页的唯一数据源） */
+/** 单一标的的 K 线序列（行情跟踪页的数据源，按周期拉取） */
 export interface WatchKlineResult {
   ok: true;
   code: string;
   name?: string;
   kind?: "stock" | "fund";
-  /** 日 K（升序） */
+  /** 本次返回的周期（回显，避免前端 Tab 与数据错位） */
+  period: WatchKlinePeriod;
+  /** K 线（升序） */
   bars: WatchKlineBar[];
+  /**
+   * 该标的**实际支持**的周期（由行情源能力决定，不靠试探请求）。
+   * 分钟 K 仅沪深两市可得（北交所 / 港股返回空），场外基金无任何 K 线。
+   */
+  supported: WatchKlinePeriod[];
+  /** 上一周期收盘（涨跌幅基准）；分钟 K 不复权，基准缺失时前端不显示涨跌 */
+  prevClose?: number;
   /** 数据口径（如「腾讯日 K，前复权」） */
+  note: string;
+  meta: WatchDataMeta;
+  message?: string;
+}
+
+/** 分时一点（1 分钟粒度） */
+export interface WatchIntradayPoint {
+  /** 时刻 HH:mm（交易所本地时间） */
+  time: string;
+  /** 该分钟价格 */
+  price: number;
+  /** 截至该分钟的均价（累计成交额 / 累计成交量），券商分时图的黄线 */
+  avg: number;
+  /** 该分钟成交量（手，非累计） */
+  volume: number;
+}
+
+/** 分时图数据（当日 1 分钟价格线 + 均价线 + 昨收基准） */
+export interface WatchIntradayResult {
+  ok: true;
+  code: string;
+  name?: string;
+  kind?: "stock" | "fund";
+  /** 交易日 YYYY-MM-DD（非交易日返回最近一个交易日） */
+  date: string;
+  /** 昨收（分时涨跌基准线） */
+  prevClose: number;
+  /** 分时点（升序，按交易时刻） */
+  points: WatchIntradayPoint[];
+  /** 该标的实际支持的周期（与 K 线接口同口径，便于 Tab 联动） */
+  supported: WatchKlinePeriod[];
   note: string;
   meta: WatchDataMeta;
   message?: string;
@@ -1705,6 +1790,7 @@ export type WatchResult =
   | WatchItemUpdateResult
   | WatchItemDeleteResult
   | WatchKlineResult
+  | WatchIntradayResult
   | WatchAlertsResult
   | WatchAlertsSaveResult
   | WatchLogicResult
