@@ -175,9 +175,31 @@ const SNAPSHOT_TTL_MS = 5 * 60 * 1000;
 
 const SNAPSHOT_PREFIX = "quote:s:";
 
+/**
+ * 字段解析：0 视为「缺失」（用于价格/量额等——0 价无意义，代表停牌或无数据）。
+ * ⚠️ 不可用于涨跌幅/涨跌额：平盘的 0 是合法值，见 {@link numOrZero}。
+ */
 const num = (v: unknown): number | undefined => {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) && n !== 0 ? n : undefined;
+};
+
+/**
+ * 字段解析：0 视为「合法值」（用于涨跌幅 / 涨跌额 / 成交量 / 换手）。
+ *
+ * 历史 bug：涨跌幅原先用 `num()` 解析，而 `num()` 把 0 当「缺失」→
+ * 涨跌幅恰好 0（平盘，含停牌，行情源对二者都返回 0）的标的被静默丢弃。
+ * 后果：自选股 tag 的等权平均涨跌幅把它们排除在分母外，均值被放大
+ * （实测 159 只里 4 只被剔除，6 个 tag 涨幅失真，最大偏差 0.14 个百分点）。
+ *
+ * 取舍：停牌与平盘在行情源里数据形态相同（现价=昨收、涨跌幅=0），
+ * 唯一可区分的是成交量=0，但据此判定会引入跨源不一致与误判风险
+ * （盘前集合竞价、港股/基金量字段口径各异）。收益（多标一个「停牌」角标）
+ * 不抵复杂度与误判成本 → 统一按 0.00% 正常显示并计入平均。
+ */
+const numOrZero = (v: unknown): number | undefined => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : undefined;
 };
 
 /** 解析腾讯快照行（GBK 已转码；~ 分隔）。
@@ -190,20 +212,23 @@ function parseTencent(line: string, market: "sh" | "sz" | "hk" | "bj"): Partial<
   const hk = market === "hk";
   const price = num(f[3]);
   const prevClose = num(f[4]);
-  const amountRaw = num(f[37]);
+  // 成交额 0（无成交）同为合法值，与 volume 同口径
+  const amountRaw = numOrZero(f[37]);
   const amount = amountRaw !== undefined ? (hk ? amountRaw / 1e8 : amountRaw / 1e4) : undefined; // 港股元→亿；A 股万元→亿
   return {
     name: f[1],
     price,
     prevClose,
     open: num(f[5]),
-    change: num(f[31]),
-    pct: num(f[32]),
+    // 涨跌额/涨跌幅：0 是合法值（平盘），不可丢弃 → numOrZero
+    change: numOrZero(f[31]),
+    pct: numOrZero(f[32]),
     high: num(f[33]),
     low: num(f[34]),
-    volume: num(f[36]),
+    // 成交量/额：0 是合法值（无成交），也是停牌判据 → 不可丢弃
+    volume: numOrZero(f[36]),
     amount,
-    turnover: hk ? undefined : num(f[38]),
+    turnover: hk ? undefined : numOrZero(f[38]),
     pe: num(f[39]),
     pb: num(f[hk ? 47 : 46]),
     marketCap: num(f[45]),
@@ -213,10 +238,11 @@ function parseTencent(line: string, market: "sh" | "sz" | "hk" | "bj"): Partial<
   };
 }
 
-/** 解析东财快照 JSON（fields：f58名 f43现价 f46昨收 f44高 f45低 f169涨跌 f170涨跌幅 f168换手 f162PE f167PB f116总市值） */
+/** 解析东财快照 JSON（fields：f58名 f43现价 f46昨收 f44高 f45低 f47成交量 f169涨跌 f170涨跌幅 f168换手 f162PE f167PB f116总市值） */
 async function fetchEastmoney(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
   const secid = p.market === "hk" ? `116.${p.code}` : p.market === "sh" ? `1.${p.code}` : p.market === "bj" ? `0.${p.code}` : `0.${p.code}`;
-  const fields = "f57,f58,f43,f44,f45,f46,f60,f116,f162,f167,f168,f169,f170";
+  // f47=成交量（手）——停牌判定依赖它（停牌股现价=昨收、涨跌幅=0，只有成交量为 0 能区分「停牌」与「平盘」）
+  const fields = "f57,f58,f43,f44,f45,f46,f47,f60,f116,f162,f167,f168,f169,f170";
   const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&invt=2`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`东财响应异常（HTTP ${res.status}）`);
@@ -263,7 +289,8 @@ async function fetchSina(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
     low: num(f[5]),
     change: price !== undefined && prevClose !== undefined ? Math.round((price - prevClose) * 1000) / 1000 : undefined,
     pct: price !== undefined && prevClose !== undefined && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : undefined,
-    volume: num(f[8]),
+    // 成交量 0 = 无成交（停牌判据），不可丢弃——与腾讯源同口径
+    volume: numOrZero(f[8]),
   };
 }
 

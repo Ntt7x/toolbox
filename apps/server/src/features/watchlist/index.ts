@@ -180,12 +180,22 @@ async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; trigg
   ]);
   // 索引：normCode（sh600519）+ 裸码（600519）双键 → 兼容用户输入的任意写法
   const snapByCode = new Map<string, { pct?: number; price?: number; name?: string }>();
-  for (const q of [...stockGroups.flat(), ...fundGroups.flat()]) {
+  // 股票与基金分开装配：二者类型不同（FundSnapshot 用 nav 而非 price）
+  for (const q of stockGroups.flat()) {
     if (!q.ok) continue;
-    const price = (q as { price?: number }).price ?? (q as { nav?: number }).nav;
     const rec: { pct?: number; price?: number; name?: string } = {};
     if (typeof q.pct === "number") rec.pct = q.pct;
-    if (typeof price === "number") rec.price = price;
+    if (typeof q.price === "number") rec.price = q.price;
+    if (typeof q.name === "string" && q.name) rec.name = q.name;
+    snapByCode.set(q.code, rec);
+    const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
+    if (bare !== q.code) snapByCode.set(bare, rec);
+  }
+  for (const q of fundGroups.flat()) {
+    if (!q.ok) continue;
+    const rec: { pct?: number; price?: number; name?: string } = {};
+    if (typeof q.pct === "number") rec.pct = q.pct;
+    if (typeof q.nav === "number") rec.price = q.nav;
     if (typeof q.name === "string" && q.name) rec.name = q.name;
     snapByCode.set(q.code, rec);
     const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
@@ -223,6 +233,7 @@ async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; trigg
       addedAt: it.addedAt,
       tags: it.tags,
       ...(typeof snap?.price === "number" ? { price: snap.price } : {}),
+      // 平盘 pct=0 正常下发（0 是合法值，前端显示 0.00%；停牌股行情源同样返回 0 → 一并显示 0.00%）
       ...(typeof snap?.pct === "number" ? { pct: snap.pct } : {}),
       ...(needReview ? { reviewCount: 1 } : {}),
       ...(triggeredByCode.has(it.code) ? { alertCount: triggeredByCode.get(it.code) as number } : {}),
@@ -277,15 +288,15 @@ async function treeWithAvg(): Promise<WatchTagNode[]> {
 
   const fill = (n: WatchTagNode): WatchTagNode => {
     const ids = descCache.get(n.id) ?? new Set([n.id]);
-    const seen = new Set<string>();
     let sum = 0;
     let count = 0;
+    // items 内 code 唯一，直接遍历即可（原先用 seen 去重，实为死代码且置于末尾从未生效）
     for (const it of items) {
-      if (seen.has(it.code)) continue;
       if (!it.tags.some((t) => ids.has(t))) continue;
       const pct = pctByCode.get(it.code);
-      if (typeof pct !== "number") continue;
-      seen.add(it.code); // 同一标的在多个子 tag 下只计一次（去重）
+      // 只统计有行情的标的：快照取数失败/停牌的标的 pct 缺省 → 排除
+      // （平盘 pct=0 是合法值，必须计入，否则分母偏小、均值被放大）
+      if (typeof pct !== "number" || !Number.isFinite(pct)) continue;
       sum += pct;
       count++;
     }

@@ -481,7 +481,11 @@ export interface QuoteSnapshot {
   open?: number;
   /** 涨跌额 */
   change?: number;
-  /** 涨跌幅（%） */
+  /**
+   * 涨跌幅（%）。
+   * 注意：**0 是合法值**（平盘，含停牌——行情源对二者都返回 0）。
+   * 消费方必须正常显示 0.00% 并计入等权平均，不可当作「无行情」丢弃。
+   */
   pct?: number;
   /** 最高/最低 */
   high?: number;
@@ -1341,7 +1345,11 @@ export interface WatchItemRow {
   tags: string[];
   /** 实时快照价（批量行情装配；取数失败缺省，不静默置 0） */
   price?: number;
-  /** 实时日涨跌幅 % */
+  /**
+   * 实时日涨跌幅（%）。
+   * 0 是合法值（平盘，含停牌——行情源对二者都返回 0）→ 正常显示 0.00%
+   * 且计入 tag 等权平均。取数失败/无行情时才缺省。
+   */
   pct?: number;
   /** 待复核数（从未复核 / 最近结论为 review|exit） */
   reviewCount?: number;

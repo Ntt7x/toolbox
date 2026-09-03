@@ -32,16 +32,22 @@ async function fetchFundInfo(code: string): Promise<Partial<FundSnapshot>> {
   } | null;
   if (!json?.Success || !json.Datas) throw new Error(json?.ErrMsg ?? "天天基金未返回数据");
   const d = json.Datas;
+  /** 净值/累计净值：0 无意义 → 视为缺失 */
   const num = (v: unknown): number | undefined => {
     const n = Number(v);
     return Number.isFinite(n) && n !== 0 ? n : undefined;
+  };
+  /** 日涨跌：0 是合法值（净值持平），不可丢——否则该基金会从等权平均里被静默剔除 */
+  const numOrZero = (v: unknown): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
   };
   const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() && v !== "--" ? v.trim() : undefined);
   return {
     name: str(d.SHORTNAME),
     nav: num(d.DWJZ),
     navDate: str(d.FSRQ),
-    pct: num(d.RZDF),
+    pct: numOrZero(d.RZDF),
     totalNav: num(d.LJJZ),
     m1: num(d.SYL_Y), // 近 1 月
     y1: num(d.SYL_1N), // 近 1 年
@@ -71,15 +77,21 @@ async function fetchSinaFund(code: string): Promise<Partial<FundSnapshot>> {
   if (!m || !m[1]) throw new Error("新浪基金未返回数据");
   const f = m[1].split(",");
   if (f.length < 6) throw new Error("新浪基金字段不足");
+  /** 净值类：0 无意义 → 视为缺失 */
   const num = (v: string): number | undefined => {
     const n = Number(v);
     return Number.isFinite(n) && n !== 0 ? n : undefined;
+  };
+  /** 日增长率：0 是合法值（净值持平） */
+  const numOrZero = (v: string): number | undefined => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
   };
   return {
     name: f[0] || undefined,
     nav: num(f[1]),
     totalNav: num(f[2]),
-    pct: num(f[4]),
+    pct: numOrZero(f[4]),
     navDate: f[5] || undefined,
   };
 }
