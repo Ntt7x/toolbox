@@ -8,6 +8,8 @@
 //   node scripts/dev-utils/dev.mjs kill-port <port|all>  按端口强杀（确认 node）
 // 环境感知（v3，2026-09-02）：prod（main 分支）与 dev（其它分支）端口/状态文件/日志/数据目录全隔离，
 //   由 env.mjs 解析；`toolbox dev start` 在哪个分支跑就管哪个环境，prod 与多个 dev 分支可并存。
+// 配置化（2026-09-04）：健康检查间隔 / 空闲阈值 / 重启上限 / 宽限期 / 就绪超时
+//   全部取自 toolbox.config.json 的 supervisor 段（不再散落硬编码）。
 // 可靠性设计（v2）：
 //   - 常驻 supervisor 用 setInterval 每 5s 健康检查：server/web 进程死了且端口空闲 → 自动拉起
 //   - start/restart 前单实例防重：读本环境 dev.pids.json，发现旧 supervisor 存活 → 终止
@@ -29,6 +31,8 @@ for (const a of process.argv.slice(3)) {
   if (m) process.env[m[1]] = m[2];
 }
 const ENV = resolveEnv();
+/** 进程管理参数（配置化：toolbox.config.json 的 supervisor 段） */
+const SUP = ENV.config.supervisor;
 const STATE_FILE = ENV.paths.stateFile;
 const STOP_FLAG = ENV.paths.stopFlag;
 const PORTS = [ENV.serverPort, ENV.webPort];
@@ -86,9 +90,10 @@ const svc = {
   web: { child: null, spawnAt: 0, restarts: 0, idleCount: 0, logFd: null },
 };
 
-/** 端口空闲连续 N 次（≈N×5s）才判定服务异常——tsx watch 改文件重编译时端口短暂空闲是正常现象，
- *  单次空闲直接重启是历史「进程反复重启」的根因（2026-08-14 修复） */
-const IDLE_THRESHOLD = 3;
+/** 端口空闲连续 N 次（≈N×健康检查间隔）才判定服务异常——tsx watch 改文件重编译时端口短暂空闲是正常现象，
+ *  单次空闲直接重启是历史「进程反复重启」的根因（2026-08-14 修复）。
+ *  阈值来自配置 supervisor.idleThreshold（2026-09-04）。 */
+const IDLE_THRESHOLD = SUP.idleThreshold;
 
 /** 以独立进程启动 supervisor（脱离调用者进程树）。
  *  2026-08-14 二次根治：Windows 下 spawn(detached) 仍被 taskkill /T 按父进程链级联杀
@@ -116,9 +121,9 @@ function spawnSupervisor() {
   ];
   spawnSync("powershell", ps, { stdio: "ignore", encoding: "utf8" });
   log(`supervisor 独立进程启动（Start-Process，脱离父进程树），服务日志 ${LOG_DIR}/{server,web}.log`);
-  // 就绪等待：start/restart 前台命令等两个端口起来（最多 20s），避免用户 start 后
+  // 就绪等待：start/restart 前台命令等两个端口起来（超时由配置 supervisor.readyTimeoutMs 控制）
   // 服务还在编译就以为脚本坏了；未就绪时 supervisor 仍会持续拉起
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + SUP.readyTimeoutMs;
   while (Date.now() < deadline) {
     if (pidOnPort(ENV.serverPort) && pidOnPort(ENV.webPort)) {
       log(`✅ ${ENV.name} 环境就绪：server(${ENV.serverPort}) + web(${ENV.webPort}) — ${ENV.urls.web}`);
@@ -158,8 +163,8 @@ function stopped() { return fs.existsSync(STOP_FLAG); }
 
 /** 重启单个服务（进程退出立即；端口连续空闲 IDLE_THRESHOLD 次判卡死；带重启次数上限） */
 function restartService(name, port, s, reason) {
-  if (s.restarts >= 12) {
-    log(`${name} 重启次数超限（12 次），停止自动拉起——请检查日志 .file/dev-logs/${name}.log`);
+  if (s.restarts >= SUP.restartLimit) {
+    log(`${name} 重启次数超限（${SUP.restartLimit} 次，配置 supervisor.restartLimit），停止自动拉起——请检查日志 ${LOG_DIR}\\${name}.log`);
     return;
   }
   s.restarts += 1;
@@ -179,9 +184,12 @@ function healthCheck() {
     return;
   }
   const now = Date.now();
-  for (const [name, port] of [["server", 8787], ["web", 5173]]) {
+  // ⚠️ 端口必须取当前环境的实际端口（2026-09-04 修复）：
+  // 原实现写死 8787/5173 → dev 环境（8800+/5180+）的健康检查永远看到"端口空闲"，
+  // dev 服务一挂就再也拉不起来（或反过来疯狂重启 prod 端口）。
+  for (const [name, port] of [["server", ENV.serverPort], ["web", ENV.webPort]]) {
     const s = svc[name];
-    if (now - s.spawnAt < 15_000) { s.idleCount = 0; continue; } // 宽限期：刚拉起还没就绪，空闲计数归零
+    if (now - s.spawnAt < SUP.spawnGraceMs) { s.idleCount = 0; continue; } // 宽限期：刚拉起还没就绪，空闲计数归零
     const processDead = !s.child || s.child.killed;
     if (processDead) {
       restartService(name, port, s, "进程已退出");
@@ -268,8 +276,8 @@ switch (cmd) {
     startServer();
     startWeb();
     writeSupervisorPid();
-    setInterval(healthCheck, 5000); // 常驻 supervisor（保持 event loop）
-    log("supervisor 运行中（每 5s 健康检查）");
+    setInterval(healthCheck, SUP.healthCheckMs); // 常驻 supervisor（保持 event loop）
+    log(`supervisor 运行中（每 ${SUP.healthCheckMs}ms 健康检查）`);
     break;
   case "stop":
     killOldSupervisor(); // 杀旧 supervisor 进程树（级联杀其 tsx/vite 子进程）
@@ -287,7 +295,7 @@ switch (cmd) {
     break;
   case "kill-port":
     if (argPort === "all") { cleanupPorts(); break; }
-    if (!argPort || !/^\d+$/.test(argPort)) { log("用法: node scripts/dev.mjs kill-port <8787|5173|all>"); break; }
+    if (!argPort || !/^\d+$/.test(argPort)) { log(`用法: node scripts/dev.mjs kill-port <${ENV.serverPort}|${ENV.webPort}|all>`); break; }
     killPort(Number(argPort));
     break;
   default:

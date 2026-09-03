@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+toolbox.config.local.json
 *.log
 .DS_Store
 .vscode/

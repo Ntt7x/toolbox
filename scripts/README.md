@@ -13,6 +13,8 @@ scripts/
 ├── README.md        ← 本文件（入口说明 + 工具表 + 规范 + 归档）
 └── dev-utils/       所有可复用脚本
     ├── toolbox.mjs            ★ 统一入口（list/help/子命令转发）—— 优先用这个
+    ├── config-cli.mjs        ★ 配置 CLI（show/paths/check/init：生效来源、库文件绝对路径、端口、环境变量覆盖）
+    ├── config.mjs             配置库（转发 packages/shared/config.mjs，与服务端共用同一配置内核）
     ├── env.mjs               ★ 环境管理（prod=main / dev=分支；端口槽位 + 数据目录隔离；也被其它脚本 import 为库）
     ├── dev.mjs               开发进程管理器（supervisor：start/stop/restart/status/kill-port；单实例防重；环境感知）
     ├── proc.mjs              进程诊断/清理 CLI（status/list/kill/kill-port）
@@ -39,6 +41,7 @@ scripts/
 
 | 命令 | 用途 | 典型用法 |
 |---|---|---|
+| `config` | **★ 配置查看/校验**：生效来源、库文件绝对路径、端口、环境变量覆盖（部署排障第一命令） | `toolbox config show\|paths\|check\|init [--json]` |
 | `env` | **★ 环境管理**：prod(main)/dev(分支) 双环境，端口槽位 + 数据目录隔离，可并存 | `toolbox env status\|list\|start\|stop\|restart\|sync-data\|url\|release [branch]` |
 | `dev` | **开发进程管理器**：server(tsx watch)+web(vite) supervisor，健康检查自动拉起，单实例防重（等价于 `env start/stop/...`） | `toolbox dev start\|stop\|restart\|status\|kill-port <port>` |
 | `proc` | **进程诊断/清理**：端口占用 + supervisor 状态 + node 进程命令行（查残留） | `toolbox proc status|list|kill <pid>|kill-port <port>` |
@@ -66,13 +69,15 @@ scripts/
 | 维度 | **prod**（`main` 分支） | **dev**（其它分支） |
 |---|---|---|
 | 定位 | 日常使用的稳定实例，真实数据 | 分支验证实例，随便折腾 |
-| server 端口 | `8787`（固定，历史约定不变） | `8800 + slot` |
-| web 端口 | `5173`（固定） | `5180 + slot` |
-| 数据目录 | `.file/`（真实数据） | `.file/envs/<branch-id>/data/` |
-| 日志 / 状态 | `.file/` | `.file/envs/<branch-id>/{logs,dev.pids.json}` |
+| server 端口 | `server.port`（默认 `8787`） | `env.devServerPortBase + slot`（默认 `8800 + slot`） |
+| web 端口 | `web.port`（默认 `5173`） | `env.devWebPortBase + slot`（默认 `5180 + slot`） |
+| 数据目录 | `server.dataDir`（默认 `.file/`） | `<env.envsDir>/<branch-id>/data/` |
+| 日志 / 状态 | `server.dataDir` | `<env.envsDir>/<branch-id>/{logs,dev.pids.json}` |
 
-- **槽位分配**：首次在某分支跑脚本时自动取最小空闲槽位，写入注册表 `.file/envs/registry.json`，
-  **分支 ↔ 槽位稳定映射**（重启不变）。并发上限 50 个分支。
+> 上表括号里的默认值全部可在 **仓库根 `toolbox.config.json`** 改（配置化，2026-09-04）——见 §2.6。
+
+- **槽位分配**：首次在某分支跑脚本时自动取最小空闲槽位，写入注册表 `<envsDir>/registry.json`，
+  **分支 ↔ 槽位稳定映射**（重启不变）。并发上限 `env.maxSlots`（默认 50）。
 - **切换分支即切换环境**：所有脚本（`dev` / `proc` / `api` / `smoke` / `browser`）都按**当前 git 分支**
   自动解析环境，无需手工改端口。
 - **数据隔离是硬保证**：dev 分支写库写到自己的目录，**绝不污染 prod 真实数据**
@@ -84,11 +89,67 @@ scripts/
 toolbox env status              # 当前分支环境：端口 / 存活 / 数据目录
 toolbox env list                # 全部环境总览（跨分支，看谁占着谁）
 toolbox env start|stop|restart  # 管理当前分支环境（转发 dev.mjs）
-toolbox env sync-data           # prod → dev 数据快照（须先 stop；SQLite 三件套 db+wal+shm）
+toolbox env sync-data           # prod → dev 数据快照（须先 stop；SQLite 三件套 db+(-wal)(-shm)）
 toolbox env url                 # 打印当前环境 URL
 toolbox env release [branch]    # 释放分支槽位（须先 stop；不影响数据目录）
 toolbox proc envs               # 等价 env list（进程视角）
 ```
+
+---
+
+## 2.6 配置化（toolbox.config.json）—— 2026-09-04 引入
+
+> 目标：**部署与服务管理**相关的一切（监听端口、SQLite 库文件、数据目录、多环境端口段、
+> 进程管理参数）集中在一个配置文件里，代码里不留硬编码。
+
+### 配置文件与优先级
+
+| 层 | 文件 | 是否提交 | 用途 |
+|---|---|---|---|
+| 1 | 内置默认值（`packages/shared/config.mjs`） | 代码内 | 无任何配置文件时的行为（等同历史约定） |
+| 2 | `toolbox.config.json` | **提交** | 部署基线，所有人共享 |
+| 3 | `toolbox.config.local.json` | 不提交（已 gitignore） | 本机私有覆盖 |
+| 4 | `TOOLBOX_CONFIG_FILE` 指向的文件 | 视部署而定 | 部署时指向 `/etc/toolbox.json` 之类 |
+| 5 | 环境变量（`PORT` / `TOOLBOX_SERVER_PORT` / `TOOLBOX_DATA_DIR` / `TOOLBOX_DB_FILE` …） | — | CI/临时覆盖，优先级最高 |
+
+- 文件支持 **注释与尾逗号**（非标准 JSON，由配置内核预处理剥离；字符串内的 `//` 不受影响）。
+- 路径语义：相对路径一律相对**仓库根**；**绝对路径直接胜出**（dev 环境注入绝对路径靠这条）。
+  `server.dbFile` 相对 `server.dataDir`；写绝对路径则整体指向别处的库。
+- 配置写错（字段拼错 / 类型错 / 端口越界）→ **启动即失败并指出来源文件**，绝不静默降级。
+
+### 可配置字段
+
+| 字段 | 默认 | 消费方 |
+|---|---|---|
+| `server.host` / `server.port` | `null` / `8787` | 服务端监听（`null` = Node 默认双栈） |
+| `server.dataDir` | `.file` | 数据目录（SQLite / docs / 浏览器 profile） |
+| `server.dbFile` | `toolbox.db` | SQLite 库文件名 |
+| `server.cors` | `true` | CORS（`true` / origin 字符串 / 数组） |
+| `web.host` / `web.port` | `localhost` / `5173` | vite dev server |
+| `env.prodBranch` | `main` | 命中即 prod 环境 |
+| `env.devServerPortBase` / `env.devWebPortBase` | `8800` / `5180` | dev 端口段 |
+| `env.maxSlots` | `50` | 可并存 dev 环境上限 |
+| `env.envsDir` | `.file/envs` | dev 环境与注册表根目录 |
+| `supervisor.*` | 见文件 | 健康检查间隔 / 空闲阈值 / 重启上限 / 宽限期 / 就绪超时 |
+
+### 唯一实现，两端共用
+
+配置内核是 `packages/shared/config.mjs`（**纯 ESM、零依赖**）——
+服务端（TS）与 `scripts/dev-utils/*.mjs`（纯 node）都引它，避免「两份默认值各改一半」的漂移。
+脚本侧经 `scripts/dev-utils/config.mjs` 转发（仓库根 `node_modules` 里没有 `@toolbox/shared`，
+用相对路径引内核）。
+
+### 常用操作
+
+```bash
+toolbox config show            # 生效配置全貌（来源 / 库文件绝对路径 / 端口 / 环境变量覆盖）
+toolbox config paths           # 关键绝对路径
+toolbox config check           # 校验配置（拼错字段会报错，退出码 1）
+toolbox config init            # 生成本地覆盖模板
+```
+
+⚠️ 改配置后需**重启服务**生效（开发时 tsx watch 自动重启）；
+启动日志会打印 `[config] … db=…` 自报实际使用的配置文件与库文件。
 
 ### 自报家门
 
