@@ -131,19 +131,35 @@ export function listEntries(): TradeV2Entry[] {
 
 /** 组内交易（按日期、录入时间升序——重放顺序） */
 export function listEntriesByGroup(groupId: string): TradeV2Entry[] {
-  return listEntries()
-    .filter((e) => e.groupId === groupId)
-    .sort((a, b) =>
-      a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1,
-    );
+  return sortReplay(listEntries().filter((e) => e.groupId === groupId));
+}
+
+/** 组内交易（基于已加载的全量条目——批量派生场景复用，避免每组重读一次全部 KV） */
+export function listEntriesByGroupFrom(all: TradeV2Entry[], groupId: string): TradeV2Entry[] {
+  return sortReplay(all.filter((e) => e.groupId === groupId));
+}
+
+/** 重放顺序排序（日期升序，同日按录入时间升序） */
+function sortReplay(entries: TradeV2Entry[]): TradeV2Entry[] {
+  return entries.sort((a, b) =>
+    a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1,
+  );
 }
 
 /**
  * 分组条目派生（聚合分组核心，memo 新增）：
  * 基础分组 = 自有条目；聚合分组 = 来源分组（基础/聚合均可）条目递归并集。
  * 环检测：聚合嵌套循环引用时跳过已访问分组，避免死循环。
+ *
+ * 性能：批量派生（如总览一次性算全部分组）用 getGroupEntriesFrom 复用已加载条目，
+ * 否则每分组都要重读一次全量 KV 并排序（组数 × 条目数的重复 IO）。
  */
 export function getGroupEntries(groupId: string): TradeV2Entry[] {
+  return getGroupEntriesFrom(listEntries(), groupId);
+}
+
+/** 分组条目派生（基于已加载的全量条目） */
+export function getGroupEntriesFrom(all: TradeV2Entry[], groupId: string): TradeV2Entry[] {
   const seen = new Set<string>();
   const out: TradeV2Entry[] = [];
   const visit = (gid: string): void => {
@@ -154,13 +170,11 @@ export function getGroupEntries(groupId: string): TradeV2Entry[] {
     if (Array.isArray(g.aggSources) && g.aggSources.length > 0) {
       for (const src of g.aggSources) visit(src);
     } else {
-      out.push(...listEntriesByGroup(gid));
+      out.push(...listEntriesByGroupFrom(all, gid));
     }
   };
   visit(groupId);
-  return out.sort((a, b) =>
-    a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1,
-  );
+  return sortReplay(out);
 }
 
 export function getEntry(id: string): TradeV2Entry | null {

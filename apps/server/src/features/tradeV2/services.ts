@@ -16,7 +16,7 @@ import type {
   TradeV2Group,
   TradeV2Position,
 } from "@toolbox/shared";
-import { kvGet } from "../../core/kvStore.js";
+import { kvGet, kvSet } from "../../core/kvStore.js";
 import { fetchKlinesForCodes } from "../../core/kline.js";
 import { getStockVolatilities } from "../../core/volatilityStore.js";
 // 港股通人民币口径（memo mtd5uf43）：港股行情/成本按港币计价，计算时 × HKD/CNY 汇率换算人民币
@@ -77,20 +77,33 @@ async function enrichPositions(positions: TradeV2Position[]): Promise<TradeV2Pos
 
 // ---------- 名称解析（交易员可读性：代码 → 名称） ----------
 
-/** 进程内名称缓存（行情 KV 缓存已有 5min；名称极少变化） */
+/** 名称持久化缓存前缀（落在已注册的 tradeV2: 数据源下） */
+export const NAME_PREFIX = "tradeV2:name:";
+/** 一级缓存：进程内（避免每个条目一次 SQLite 读）；二级：KV 持久化（跨重启保留） */
 const nameCache = new Map<string, string>();
 
-/** 解析标的名称（core/quote 行情快照 name 字段；失败缓存空串防重复打接口） */
+/**
+ * 解析标的名称（core/quote 行情快照 name 字段）。
+ * 缓存两级：进程内 Map → KV（跨重启保留）；解析失败缓存空串，防重复打接口。
+ * 名称极少变化，持久化后冷启动不再为缺名条目发起网络请求。
+ */
 export async function resolveStockNameCached(code: string): Promise<string> {
-  const hit = nameCache.get(code);
-  if (hit !== undefined) return hit;
+  const mem = nameCache.get(code);
+  if (mem !== undefined) return mem;
+  const persisted = kvGet<string>(NAME_PREFIX + code);
+  if (persisted !== null) {
+    nameCache.set(code, persisted);
+    return persisted;
+  }
   try {
     const q = await getQuoteSnapshot(code);
     const name = q.ok && q.name ? q.name : "";
     nameCache.set(code, name);
+    kvSet(NAME_PREFIX + code, name);
     return name;
   } catch {
     nameCache.set(code, "");
+    kvSet(NAME_PREFIX + code, "");
     return "";
   }
 }
@@ -109,6 +122,7 @@ import {
   getEntry,
   getGroup,
   getGroupEntries,
+  getGroupEntriesFrom,
   listEntries,
   listEntriesByGroup,
   listGroups,
@@ -236,6 +250,11 @@ export class TradeV2LedgerService extends Service {
     return getGroupEntries(groupId);
   }
 
+  /** 组内交易（基于已加载的全量条目——总览一次读取、多组复用，避免组数 × 全量 KV 读） */
+  listByGroupFrom(all: TradeV2Entry[], groupId: string): TradeV2Entry[] {
+    return getGroupEntriesFrom(all, groupId);
+  }
+
   /** 组内标的列表（去重；供提交交易单空白补全——memo 补充：直接接口获取，前端不过滤） */
   async stocksOfGroup(groupId: string): Promise<{ code: string; name?: string }[]> {
     const map = new Map<string, { code: string; name?: string }>();
@@ -309,21 +328,22 @@ export class TradeV2AnalysisService extends Service {
     super(ctx, "tradeV2Analysis");
   }
 
-  /** 批量取最新价（行情走 KV 缓存；失败静默跳过 → 按成本口径估算） */
+  /**
+   * 批量取最新价（code → 最新价；行情走 KV 缓存，冷却时一次腾讯批量拉全部代码）。
+   * 原实现逐代码 `getQuoteSnapshot`（N 次网络往返 + 单只三源 failover），
+   * 是仓位页首屏 15s+ 的根因；改为批量快照后 N 只≈1~2 次请求。
+   * 行情不可得的标的直接缺席 → 下游按成本口径估算。
+   */
   async latestPrices(entries: TradeV2Entry[]): Promise<Record<string, number>> {
     const codes = [...new Set(entries.map((e) => e.code))];
+    if (codes.length === 0) return {};
+    const quotes = await getQuoteSnapshots(codes, {});
     const out: Record<string, number> = {};
-    await Promise.all(
-      codes.map(async (code) => {
-        try {
-          const q = await getQuoteSnapshot(code, {});
-          const px = Number(q?.price);
-          if (px > 0) out[code] = px;
-        } catch {
-          /* 行情不可得：按成本口径 */
-        }
-      }),
-    );
+    // getQuoteSnapshots 保序返回 → 按下标配对回输入 code（entry.code 口径）
+    codes.forEach((code, i) => {
+      const px = Number(quotes[i]?.price);
+      if (px > 0) out[code] = px;
+    });
     return out;
   }
 
@@ -385,11 +405,19 @@ export class TradeV2AnalysisService extends Service {
     return checkEntry(group, allEntries, { targetDate, latestPrices: prices });
   }
 
-    /** 组摘要（列表接口用） */
-  async groupSummary(group: TradeV2Group): Promise<ReturnType<typeof buildGroupSummary>> {
-    const entries = this.ctx.tradeV2Ledger.listByGroup(group.id);
-    const prices = await this.latestPrices(entries);
-    return buildGroupSummary(group, entries, prices);
+    /**
+   * 组摘要（列表接口用）。
+   * @param entries 已加载的组内条目（总览批量派生时传入，避免每组重读全量 KV）
+   * @param prices  已取好的价格表（总览全代码一次批量；缺省才自行取数）
+   */
+  async groupSummary(
+    group: TradeV2Group,
+    entries?: TradeV2Entry[],
+    prices?: Record<string, number>,
+  ): Promise<ReturnType<typeof buildGroupSummary>> {
+    const es = entries ?? this.ctx.tradeV2Ledger.listByGroup(group.id);
+    const ps = prices ?? (await this.latestPrices(es));
+    return buildGroupSummary(group, es, ps);
   }
 }
 

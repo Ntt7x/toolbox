@@ -2065,6 +2065,7 @@ export default function TradeV2Tool() {
   });
   const [detail, setDetail] = useState<{ group: TradeV2Group; analysis: TradeV2GroupAnalysis } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [tab, setTab] = useState("positions");   // 默认仓位明细（memo msvpak4x）
   const [entryEditorOpen, setEntryEditorOpen] = useState(false);
@@ -2091,15 +2092,27 @@ export default function TradeV2Tool() {
     }
   }, []);
 
+  // 分组分析请求序号：快速切分组时丢弃过期响应（避免旧请求后到覆盖新分组数据）
+  const analysisSeq = useRef(0);
+  // 已发起过分析的分组 id：避免同一分组重复请求（init 与 selectedId effect 会各触发一次）
+  const analysisLoadedFor = useRef<string>("");
+
   const loadAnalysis = useCallback(async (groupId: string) => {
+    const seq = ++analysisSeq.current;
+    analysisLoadedFor.current = groupId;
     try {
       if (!groupId) { setDetail(null); return; }
+      setAnalysisLoading(true);
       const r = await api.tradeV2Group(groupId);
+      if (seq !== analysisSeq.current) return; // 过期响应（用户已切到别的分组）→ 丢弃
       // 聚合分组与基础分组同路径（analyzeGroup 基于派生条目即组合分析）——统一 detail 渲染
       if (r.analysis && r.group) setDetail({ group: r.group, analysis: r.analysis });
       else setDetail(null);
     } catch (e) {
+      if (seq !== analysisSeq.current) return;
       setMsg("❌ 分析加载失败：" + errMsg(e));
+    } finally {
+      if (seq === analysisSeq.current) setAnalysisLoading(false);
     }
   }, []);
 
@@ -2108,7 +2121,7 @@ export default function TradeV2Tool() {
     await loadAnalysis(selectedId);
   }, [loadOverview, loadAnalysis, selectedId]);
 
-  // 初始化一次：loadOverview 填充 groups；恢复 localStorage 记忆的分组（若有），否则全部
+  // 初始化：只加载总览（分组行 + 交易流水的数据），选中的分组分析交给下方 effect 统一加载
   const initRef = useRef(false);
   useEffect(() => {
     if (initRef.current) return;
@@ -2119,15 +2132,17 @@ export default function TradeV2Tool() {
       const saved = typeof localStorage !== "undefined" ? localStorage.getItem("tradeV2:selectedGroup") : null;
       const initialId = saved && loaded.some((g) => g.id === saved) ? saved : loaded[0]?.id ?? "";
       setSelectedId(initialId);
-      await loadAnalysis(initialId);
       setLoading(false);
     })();
   }, [loadOverview, loadAnalysis]);
 
+  // 分组分析加载（唯一入口）：仅在「目标分组变化且未加载过」时请求，
+  // 消除 init 与 selectedId effect 各自触发导致的首屏重复请求（原实现首屏分析请求 2 次）
   useEffect(() => {
-    if (selectedId && groups.some((g) => g.id === selectedId)) {
-      void loadAnalysis(selectedId);
-    }
+    if (!selectedId) return;
+    if (!groups.some((g) => g.id === selectedId)) return;
+    if (analysisLoadedFor.current === selectedId) return;
+    void loadAnalysis(selectedId);
   }, [selectedId, groups, loadAnalysis]);
 
   const isGroupView = !!detail;
@@ -2411,6 +2426,14 @@ export default function TradeV2Tool() {
             <div style={{ flex: 1 }} />
             <Button size="sm" variant="outline" onClick={() => { setEditingGroup(null); setGroupEditorOpen(true); }}>🗂️ 新建分组</Button>
                       </div>
+
+          {/* 渐进加载：总览就绪后分组行与交易流水立即可用（流水数据来自总览），
+              分组分析（仓位明细/收益分析）稍后填充，不再整体白屏等待 */}
+          {analysisLoading && !detail && (
+            <div style={{ padding: "0.55rem 0.8rem", borderRadius: 8, fontSize: "0.82rem", color: C.sub, background: C.panel, border: "1px solid " + C.border }}>
+              ⏳ 正在分析「{groups.find((g) => g.id === selectedId)?.name ?? "分组"}」的仓位与收益…
+            </div>
+          )}
 
           {/* 功能区横向分段控件（通栏等宽）——置于具体功能区上方 */}
           <Tabs value={activeTab} onValueChange={setTab}>

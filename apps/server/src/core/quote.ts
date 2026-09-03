@@ -12,6 +12,7 @@
 import type { QuoteResult, QuoteSnapshot } from "@toolbox/shared";
 import { kvGet, kvSet } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
+import { mapLimit, NET_CONCURRENCY } from "./concurrency.js";
 
 // 注册数据源：行情快照缓存（本地数据管理可见，避免落入"未标记"）
 registerDataSource({
@@ -444,60 +445,80 @@ async function fetchTencentBatch(parsedList: ParsedCode[]): Promise<Map<string, 
   return out;
 }
 
+/** 腾讯批量单次请求的代码数上限（URL 长度与对端稳定性折中） */
+const BATCH_SIZE = 60;
+/** 批量请求的并发度（多批之间；单批内部是一次 HTTP） */
+const BATCH_CONCURRENCY = 4;
+
+/** 分批并发调用腾讯批量（单批失败静默 → 该批代码后续走单源降级，不拖垮整批） */
+async function fetchTencentBatched(parsedList: ParsedCode[]): Promise<Map<string, Partial<QuoteSnapshot>>> {
+  const chunks: ParsedCode[][] = [];
+  for (let i = 0; i < parsedList.length; i += BATCH_SIZE) chunks.push(parsedList.slice(i, i + BATCH_SIZE));
+  const maps = await mapLimit(chunks, BATCH_CONCURRENCY, (c) =>
+    fetchTencentBatch(c).catch(() => new Map<string, Partial<QuoteSnapshot>>()),
+  );
+  const out = new Map<string, Partial<QuoteSnapshot>>();
+  for (const m of maps) for (const [k, v] of m) out.set(k, v);
+  return out;
+}
+
 /**
- * 批量实时快照（一次拉取多只，个股列表展示用）。
- * 策略：先查缓存（5 分钟内命中直接返回）→ 未命中代码走腾讯批量（一次请求）→
- * 批量失败则逐代码降级（getQuoteSnapshot 单代码 failover）；全部失败返回错误项。
+ * 批量实时快照（一次拉取多只，个股列表/组合估值展示用）。
+ * 策略：先查缓存（5 分钟内命中直接返回）→ 未命中代码走腾讯批量（每批一次请求）→
+ * 批量未覆盖（无价/无名/批量失败）的走单代码 failover（东财→新浪）。
+ *
+ * 性能要点（2026-09-03 仓位页首屏 15s→亚秒级修复）：
+ *   - **保序返回**：out 与 codes 下标严格一一对应，调用方可按下标配对（原实现先推缓存命中、
+ *     后推未命中，顺序与入参不一致）；
+ *   - **批量结果落缓存**：原实现只缓存单源降级结果，批量命中的不写缓存 → 每次冷启都要重跑批量；
+ *   - **降级走有界并发**：原实现串行 await，N 只未命中 = N 次串联 RTT（冷缓存长尾主因）。
  */
 export async function getQuoteSnapshots(codes: string[], opts: { force?: boolean } = {}): Promise<QuoteSnapshot[]> {
   const now = Date.now();
-  const out: QuoteSnapshot[] = [];
-  const missing: { code: string; parsed: ParsedCode }[] = [];
+  // 占位数组 → 保序；未填位置用错误项兜底（不丢项）
+  const slots: (QuoteSnapshot | null)[] = codes.map(() => null);
+  const missing: { index: number; code: string; parsed: ParsedCode }[] = [];
 
-  for (const c of codes) {
+  codes.forEach((c, index) => {
     const parsed = parseSecCode(c);
     if (!parsed) {
-      out.push({ ok: false, code: c.trim(), message: "无法识别的代码格式" });
-      continue;
+      slots[index] = { ok: false, code: c.trim(), message: "无法识别的代码格式" };
+      return;
     }
     if (!opts.force) {
       const cached = kvGet<QuoteSnapshot>(`${SNAPSHOT_PREFIX}${parsed.normCode}`);
       const at = cached?.ts ? Date.parse(cached.ts) : NaN;
       if (cached && cached.ok && Number.isFinite(at) && now - at < SNAPSHOT_TTL_MS) {
-        out.push({ ...cached, source: `${cached.source ?? "cache"}` });
-        continue;
+        slots[index] = { ...cached, source: `${cached.source ?? "cache"}` };
+        return;
       }
     }
-    missing.push({ code: parsed.normCode, parsed });
-  }
+    missing.push({ index, code: parsed.normCode, parsed });
+  });
 
   if (missing.length > 0) {
-    // 腾讯批量优先
-    let batch: Map<string, Partial<QuoteSnapshot>> | null = null;
-    try {
-      batch = await fetchTencentBatch(missing.map((m) => m.parsed));
-    } catch {
-      batch = null; // 批量失败 → 逐代码降级
+    const batch = await fetchTencentBatched(missing.map((m) => m.parsed));
+    const needFallback: { index: number; code: string }[] = [];
+    for (const m of missing) {
+      const part = batch.get(m.code);
+      // 无价（未开盘/停牌/字段缺失）或无名 → 降级单源补价
+      if (part && part.price && part.name) {
+        const snapshot: QuoteSnapshot = { ok: true, code: m.code, ...part, source: "tencent", ts: new Date().toISOString() };
+        kvSet(`${SNAPSHOT_PREFIX}${m.code}`, snapshot);
+        slots[m.index] = snapshot;
+      } else {
+        needFallback.push({ index: m.index, code: m.code });
+      }
     }
-    for (const { code, parsed } of missing) {
-      let snapshot: QuoteSnapshot | null = null;
-      const part = batch?.get(code);
-      if (part) {
-        snapshot = { ok: true, code, ...part, source: "tencent", ts: new Date().toISOString() };
-        // 无价（未开盘/停牌/字段缺失，price 为 0 或 undefined）→ 降级单源补价；无名无价同样降级
-        if (!snapshot.price || !snapshot.name) snapshot = null;
-      }
-      if (!snapshot) {
-        // 单代码降级（东财→新浪；未命中批量/批量失败/无价的代码都走这里）
-        snapshot = await getQuoteSnapshot(code, { force: true });
-      }
-      if (snapshot) {
-        if (snapshot.ok) kvSet(`${SNAPSHOT_PREFIX}${code}`, snapshot);
-        out.push(snapshot);
-      }
+    if (needFallback.length > 0) {
+      const resolved = await mapLimit(needFallback, NET_CONCURRENCY, (m) => getQuoteSnapshot(m.code, { force: true }));
+      resolved.forEach((snapshot, k) => {
+        slots[needFallback[k]!.index] = snapshot;
+      });
     }
   }
-  return out;
+
+  return slots.map((s, i) => s ?? { ok: false, code: String(codes[i] ?? "").trim(), message: "行情不可得" });
 }
 // ============================================================
 // 行情数据源注册（血缘/目录：统一数据工程层）
