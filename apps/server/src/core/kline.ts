@@ -21,6 +21,7 @@
 import type { WatchKlinePeriod } from "@toolbox/shared";
 import { kvGet, kvSet } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
+import { mapLimit, NET_CONCURRENCY } from "./concurrency.js";
 
 registerDataSource({
   kind: "kv",
@@ -402,7 +403,8 @@ export async function getIntraday(
  */
 export async function fetchKlinesForCodes(codes: string[]): Promise<Map<string, Map<string, number>>> {
   const uniq = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
-  const results = await Promise.all(uniq.map(async (code) => [code, await getDailyKline(code)] as const));
+  // 有界并发：无界 Promise.all 在几十只标的时会对行情源瞬时打满并发（限流/失败率上升）
+  const results = await mapLimit(uniq, NET_CONCURRENCY, async (code) => [code, await getDailyKline(code)] as const);
   return new Map(results);
 }
 

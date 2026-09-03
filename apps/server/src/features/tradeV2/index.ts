@@ -42,8 +42,15 @@ export function registerTradeV2Feature(app: Hono) {
   app.get(`${API_PREFIX}/tools/trade-v2`, async (c: Context) => {
     const ctx = await getTradeV2Ctx();
     const groups = ctx.tradeV2Group.list();
-    const summaries = await Promise.all(groups.map((g) => ctx.tradeV2Analysis.groupSummary(g)));
-    const entries = await ctx.tradeV2Ledger.enrichNames(ctx.tradeV2Ledger.list(), groups);
+    // 单一取数（2026-09-03 首屏 15s+ 修复）：
+    //   ① 全部条目只读一次 KV（原：每分组各派生一次 = 组数 × 全量读）
+    //   ② 全部标的一次批量行情（原：每分组各自逐代码请求 = 124 次网络往返）
+    const allEntries = ctx.tradeV2Ledger.list();
+    const prices = await ctx.tradeV2Analysis.latestPrices(allEntries);
+    const summaries = await Promise.all(
+      groups.map((g) => ctx.tradeV2Analysis.groupSummary(g, ctx.tradeV2Ledger.listByGroupFrom(allEntries, g.id), prices)),
+    );
+    const entries = await ctx.tradeV2Ledger.enrichNames(allEntries, groups);
     return c.json({ ok: true, groups: summaries, entries });
   });
 

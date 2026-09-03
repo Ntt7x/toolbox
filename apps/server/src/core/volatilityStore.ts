@@ -10,6 +10,7 @@ import { kvGet, kvSet } from "./kvStore.js";
 import { initVolState, pushBar, diffVolState, type VolEvent, type VolState } from "./volatility.js";
 import { fetchDailyCloses, fetchDailyOHLC, getQuoteSnapshot } from "./quote.js";
 import { registerDataSource } from "./dataRegistry.js";
+import { mapLimit, NET_CONCURRENCY } from "./concurrency.js";
 import { registerConsumer } from "./data-infra/consumer.js";
 import { enqueue } from "./data-infra/queue.js";
 
@@ -177,7 +178,8 @@ export async function getStockVolatility(code: string): Promise<StockVolatility>
 /** 批量获取（并去重；逐标的独立失败不影响其他） */
 export async function getStockVolatilities(codes: string[]): Promise<Map<string, StockVolatility>> {
   const uniq = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
-  const entries = await Promise.all(uniq.map(async (code) => [code, await getStockVolatility(code)] as const));
+  // 有界并发：未命中缓存时会回源拉日线，无界并发会瞬时打满行情源
+  const entries = await mapLimit(uniq, NET_CONCURRENCY, async (code) => [code, await getStockVolatility(code)] as const);
   return new Map(entries);
 }
 

@@ -66,7 +66,8 @@
 
 | 命令 | 用途 |
 |---|---|
-| `toolbox commit "feat(x): 说明"` | git 提交包装（自动 add+commit+push；--no-add / --no-push） |
+| `toolbox commit "feat(x): 说明"` | git 提交包装（自动 add+commit+push；--no-add / --no-push / --amend） |
+| `toolbox commit --file <UTF-8消息文件>` | **中文提交消息必须用此形式**（cmd/PowerShell 以 GBK 传参给 node → 乱码写进历史且无法还原；脚本含 U+FFFD 哨兵拦截）；--amend 改写尖端并 `--force-with-lease` 推送 |
 | `toolbox patch <patch.json> [--apply]` | 文件文本替换（dry-run 检查 → --apply 原子写盘；替代 node -e 长替换） |
 | `toolbox self-test` | dev-utils 工具自测（工具改动后必跑） |
 
