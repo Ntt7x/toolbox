@@ -6,25 +6,26 @@
 // 环境隔离（2026-09-02）：prod（main 分支）用项目根 .file/（真实数据，路径不变）；
 //   dev（开发分支）由 dev.mjs 注入 TOOLBOX_DATA_DIR=.file/envs/<id>/data，各分支互不干扰。
 //   —— dev 分支可随意改表/写测试数据，绝不污染 prod。
+// 配置化（2026-09-04）：数据目录与库文件名不再由本模块推断，统一取自配置内核
+//   （toolbox.config.json 的 server.dataDir / server.dbFile，环境变量可覆盖）→ core/config.ts。
 // ============================================================
 
 import { mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { config } from "./config.js";
 
-/** 默认数据目录（prod）：项目根 /.file（相对本模块位置解析，与 cwd 无关） */
-const DEFAULT_DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", ".file");
-/** 项目根（默认数据目录的上一级） */
-const PROJECT_ROOT = join(DEFAULT_DATA_DIR, "..");
 /**
- * 数据目录：TOOLBOX_DATA_DIR 覆盖（dev 环境隔离）。
- * 用 resolve 而非 join——join 遇到绝对路径会拼接成 `D:\proj\D:\env\data`，
- * 而 resolve 让绝对路径直接胜出（2026-09-02 修复，正是 dev 环境注入的绝对路径场景）。
+ * 数据目录（配置化，2026-09-04）：来自 `server.dataDir`
+ * （toolbox.config.json → toolbox.config.local.json → TOOLBOX_DATA_DIR）。
+ * 绝对路径直接胜出——dev 环境注入绝对路径隔离数据就靠这条。
+ * 导出名不变，所有消费方（docs / 浏览器 profile / 日志…）无需改动。
  */
-const rawDataDir = process.env.TOOLBOX_DATA_DIR?.trim();
-export const DATA_DIR = rawDataDir ? resolve(PROJECT_ROOT, rawDataDir) : DEFAULT_DATA_DIR;
-export const DB_PATH = join(DATA_DIR, "toolbox.db");
+export const DATA_DIR = config.paths.dataDir;
+/**
+ * SQLite 库文件绝对路径（配置化）：`server.dbFile`，相对 dataDir 解析（绝对路径直接指向别处）。
+ * 换库/分库部署只改配置，不动代码。
+ */
+export const DB_PATH = config.paths.dbPath;
 
 let db: DatabaseSync | null = null;
 

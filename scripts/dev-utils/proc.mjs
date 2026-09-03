@@ -25,21 +25,8 @@ const run = (cmd, args) => {
   return { status: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
 };
 
-function pidOnPort(port) {
-  const { out } = run("netstat", ["-ano"]);
-  for (const line of out.split(/\r?\n/)) {
-    if (!/LISTENING/i.test(line)) continue;
-    if (!line.includes(`:${port} `)) continue;
-    const m = line.match(/(\d+)\s*$/);
-    if (m) return m[1];
-  }
-  return null;
-}
-
-function isNodePid(pid) {
-  const { out } = run("tasklist", ["/FI", `PID eq ${pid}`]);
-  return /node\.exe/i.test(out);
-}
+// pidOnPort / isNodePid 由 env.mjs 提供（2026-09-04 修复）：
+// 本文件原先在 import 同名符号后又重复声明一遍 → SyntaxError，整个 proc CLI 直接不可用。
 
 function listNodeProcesses() {
   // wmic CSV 行形如: HOST,<CommandLine 可能含引号>,<PID>

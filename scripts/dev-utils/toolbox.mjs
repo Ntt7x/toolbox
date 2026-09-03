@@ -16,6 +16,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 /** 工具注册表（唯一真相；scripts/README.md 与之同步） */
 const TOOLS = [
   // ---- 环境 ----
+  { cmd: "config", script: "config-cli.mjs", group: "环境", desc: "服务配置查看/校验（生效来源、库文件绝对路径、端口、环境变量覆盖）", example: "toolbox config show|paths|check|init [--json]" },
   { cmd: "env", script: "env.mjs", group: "环境", desc: "环境管理（prod=main 稳定实例 / dev=分支验证实例，端口与数据隔离）", example: "toolbox env status|list|start|stop|restart|sync-data|url|release [branch]" },
   // ---- 开发进程 ----
   { cmd: "dev", script: "dev.mjs", group: "进程", desc: "开发进程管理（server tsx watch + web vite supervisor；环境感知）", example: "toolbox dev start|stop|restart|status|kill-port <port>" },
@@ -45,6 +46,7 @@ const LIBS = [
   { cmd: "api", script: "api.mjs", desc: "通用 API 客户端（fetch+json 包装，非 2xx 抛带 message 的 Error）" },
   { cmd: "e2e", script: "e2e.mjs", desc: "API E2E 断言脚手架（用例列表 + 统计 + 失败 exit 1）" },
   { cmd: "_lib", script: "_lib.mjs", desc: "共享库（ROOT/tsxCli/viteCli 动态路径）" },
+  { cmd: "config", script: "config.mjs", desc: "配置库（转发 packages/shared/config.mjs；与服务端共用同一配置内核）" },
   { cmd: "env", script: "env.mjs", desc: "环境解析库（prod/dev 判定、端口槽位分配、数据目录隔离；也被 dev/proc/api/smoke/browser import）" },
   { cmd: "ts-hook", script: "ts-resolve-hook.mjs", desc: "TS resolve hook（免 spawn 跑 TS 单测，--no-spawn 模式用）" },
 ];

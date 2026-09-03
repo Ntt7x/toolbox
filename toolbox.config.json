@@ -1,0 +1,75 @@
+// ============================================================
+// Toolbox 服务配置（提交进仓库的默认配置 = 部署基线）
+// ------------------------------------------------------------
+// 所有可部署相关的开关集中在此：监听端口、SQLite 库文件、数据目录、多环境端口段、
+// 进程管理参数。改这里即改基线；机器私有覆盖写 toolbox.config.local.json（不提交）。
+//
+// 支持注释与尾逗号（非标准 JSON，由配置内核预处理剥离；字符串内的 // 不受影响）。
+//
+// 优先级（后者覆盖前者）：
+//   本文件 → toolbox.config.local.json → TOOLBOX_CONFIG_FILE 指定的文件 → 环境变量
+//
+// 路径语义：相对路径一律相对**仓库根**解析；绝对路径直接胜出。
+//   server.dbFile 相对 server.dataDir 解析；写成绝对路径则整体指向别处的库。
+//
+// 完整字段说明见 docs/for_agent/dev.md §6.10（配置化）。
+// ============================================================
+{
+  "server": {
+    // 监听地址：null = 不指定（Node 默认绑定，IPv4/IPv6 双栈）。部署到内网可写 "0.0.0.0"；
+    // 写 "127.0.0.1" 则只本机可访问。
+    "host": null,
+
+    // server 监听端口（prod 环境；dev 环境按 env.devServerPortBase + 槽位另算）
+    "port": 8787,
+
+    // 数据目录：SQLite 库、docs 二进制、浏览器 profile 等运行时数据都在其下
+    "dataDir": ".file",
+
+    // SQLite 数据库文件名（相对 dataDir）。换库/分库部署改这里即可。
+    "dbFile": "toolbox.db",
+
+    // CORS：true = 允许全部来源；也可写具体 origin 字符串或字符串数组
+    "cors": true
+  },
+
+  "web": {
+    // vite dev server 监听地址与端口（prod 环境）
+    "host": "localhost",
+    "port": 5173
+  },
+
+  "env": {
+    // 命中该分支即视为 prod（真实数据实例），其它分支为 dev（独立端口 + 独立数据）
+    "prodBranch": "main",
+
+    // dev 环境端口段：server = devServerPortBase + slot，web = devWebPortBase + slot
+    // slot 由 .file/envs/registry.json 按分支稳定分配（重启不变）
+    "devServerPortBase": 8800,
+    "devWebPortBase": 5180,
+
+    // 可并存的 dev 环境上限（槽位总数）
+    "maxSlots": 50,
+
+    // dev 环境根目录（槽位注册表 / 各分支数据与日志都在其下）
+    "envsDir": ".file/envs"
+  },
+
+  "supervisor": {
+    // 健康检查间隔：检测子进程存活与端口占用
+    "healthCheckMs": 5000,
+
+    // 端口连续空闲 N 次才判定服务卡死（tsx watch 重编译期间端口会短暂空闲，
+    // 单次空闲就重启是历史「进程反复重启」的根因）
+    "idleThreshold": 3,
+
+    // 单个服务自动重启次数上限，超过即停止拉起（避免无限重启刷屏）
+    "restartLimit": 12,
+
+    // 刚拉起后的宽限期：宽限期内不做空闲判定（等编译完成）
+    "spawnGraceMs": 15000,
+
+    // start/restart 前台等待两个端口就绪的超时
+    "readyTimeoutMs": 20000
+  }
+}

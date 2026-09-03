@@ -2,12 +2,15 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import { loadConfig } from "../../packages/shared/config.mjs";
 
-// 环境感知（2026-09-02）：端口与 API 代理目标由 dev.mjs 注入环境变量驱动。
-//   prod（main 分支）：web 5173 + 代理到 server 8787（历史默认，行为不变）
-//   dev（开发分支）  ：web 5180+slot + 代理到 server 8800+slot，与 prod 及其它分支并存互不干扰
-const serverPort = Number(process.env.TOOLBOX_SERVER_PORT ?? 8787);
-const webPort = Number(process.env.TOOLBOX_WEB_PORT ?? 5173);
+// 配置化（2026-09-04）：端口与 API 代理目标统一取自配置内核（与服务端、脚本同一份实现），
+//   不再在此处兜底硬编码——改 toolbox.config.json 即改全套端口。
+// 环境感知：prod（main 分支）用 server.port / web.port；
+//   dev（开发分支）由 dev.mjs 注入 TOOLBOX_SERVER_PORT / TOOLBOX_WEB_PORT 覆盖（8800+slot / 5180+slot）。
+const config = loadConfig();
+const serverPort = config.server.port;
+const webPort = config.web.port;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

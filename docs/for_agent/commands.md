@@ -18,6 +18,10 @@
 
 | 命令 | 用途 |
 |---|---|
+| `toolbox config show` | **生效配置全貌**：配置文件来源 / 库文件绝对路径 / 端口 / 环境变量覆盖（部署排障第一命令） |
+| `toolbox config paths` | 只打印关键绝对路径（root / dataDir / dbPath / envsDir），供脚本取用 |
+| `toolbox config check` | 校验配置文件（字段拼错、类型/范围错误 → 报错退出 1；配置写错**启动即失败**不静默） |
+| `toolbox config init` | 生成 `toolbox.config.local.json` 本地覆盖模板（不提交，已在 .gitignore） |
 | `toolbox env status` | 当前分支环境详情（端口 / 存活 / 数据目录） |
 | `toolbox env list` | 全部环境总览（跨分支，看谁占着谁） |
 | `toolbox env start` / `stop` / `restart` | 管理**当前分支**环境（转发 dev.mjs） |

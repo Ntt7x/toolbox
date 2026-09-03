@@ -7,6 +7,7 @@
 
 | 文件 | 主题 |
 |---|---|
+| `2026-09-04-01.md` | **服务配置配置化 + 配置文件化**：配置内核 `packages/shared/config.mjs`（服务端 TS 与 scripts 共用）→ `toolbox.config.json`（部署基线，支持注释/本地覆盖/环境变量/绝对路径）；SQLite 库路径+端口+CORS+多环境端口段+supervisor 参数全配置化；新增 `toolbox config` CLI；随带修 `dev.mjs` 健康检查硬编码端口（dev 失效 bug）与 `proc.mjs` 重复声明（整个 proc CLI 不可用）；L3 prod 22 页 ALL-PASS |
 | `2026-09-03-02.md` | **仓位管理页首屏 15.8s → 0.8s**：根因 = N+1 逐代码行情（115 只 ≈ 124 次请求）+ 前端重复/瀑布请求；修复 = 批量行情（`getQuoteSnapshots` 保序+批量落缓存+有界并发降级）、总览一次读取多组复用、名称缓存持久化、前端去重复请求+竞态保护+渐进加载；L3 全量 22 页 ALL-PASS |
 | `2026-09-03-01.md` | **watchlist 标签树重构 + 券商式 K 线（无成交量）+ 历史分组残留键清理**：tag 取代 group 为顶层组织，KlineChart 用 lightweight-charts 日 K，迁移后清理 `watchlist:group` 残留键消除未标记数据源告警 |
 | `2026-09-02-01.md` | **引入 prod/dev 双环境**：prod=main（8787/5173，`.file` 真实数据）/ dev=分支（8800+slot、5180+slot，`.file/envs/<id>/data` 隔离）；新增 `toolbox env`（env.mjs）+ 全脚本环境感知 + 当前分支部署到 dev 验证 |
@@ -42,6 +43,7 @@
 | 数据安全 / SQLite 事故 | `08-31-02`（低级 agent 误删数据事故复盘 + sqlite-safety 规范 + dbdiag/WAL 恢复工具） |
 | 仓位管理 v2（trade-v2） | `08-15-02`（逐笔交易 → 仓位派生 + 分组约束 + 复盘 + 收益三视图 + 每日交易单 + V1 导入，Cordis 服务化）、`08-16-01`（UI 批量修复：Select 名称/市值排序/占比/颜色/弹窗）、`08-19-01`（标的补全下拉遮挡：portal 定位+翻转）、**`09-03-02`（首屏性能 15.8s→0.8s：批量行情 + 有界并发 + 前端去重复请求）** |
 | 性能优化（批量取数/有界并发） | **`09-03-02`（`core/concurrency.ts` mapLimit + `getQuoteSnapshots` 批量化/保序/落缓存；批量网络取数统一替代无界 Promise.all 与串行 await）** |
+| 配置化 / 部署治理 | **`09-04-01`（`packages/shared/config.mjs` 配置内核 + `toolbox.config.json` 部署基线 + `toolbox config` CLI；端口/库路径/CORS/多环境段/supervisor 全配置化；业务代码禁直接 `process.env.*`）** |
 | 文档中心（docs-center） | `08-15-01`（md/pdf 管理 + Cordis + 右键/拖拽/回收站 + KaTeX）、`08-16-02`（vscode 布局：tab 多开/树含叶子/数学公式/TOC/菜单 portal/高度/重命名 + 前端经验文档沉淀）、`08-16-03`（TOC 任意层级收起 + 仅文档文件夹可折叠 + 组件调研修正 9.3） |
 | 待办清单（todo） | `08-10-07`、`08-10-08`、`08-10-09`、`08-10-12` |
 | 菜单/分组/UI | `08-10-06`、`08-10-11` |

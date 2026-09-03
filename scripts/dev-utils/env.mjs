@@ -23,27 +23,26 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSyn
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT } from "./_lib.mjs";
+import { loadConfig } from "./config.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = ROOT;
 
-// ---------- 常量 ----------
+// ---------- 常量（配置化） ----------
+// 2026-09-04：端口段 / 数据目录 / envs 根目录 / 主分支名全部取自 toolbox.config.json
+// （server.port、web.port、env.*、server.dataDir），不再散落硬编码——改配置即改部署。
+//
+// ⚠️ **必须惰性读取**（每次用的时候 loadConfig()），不能提到模块顶层求值：
+// dev.mjs 在 import 完成后才把命令行 `KEY=VALUE` 回填进 process.env，
+// 顶层求值会让 TOOLBOX_DATA_DIR / 端口覆盖失效（与 2026-09-02 同款的时序坑）。
+const cfg = () => loadConfig();
 
-/** prod 环境固定端口（历史约定，保持不变——不动 prod 使用习惯） */
-export const PROD_PORTS = { server: 8787, web: 5173 };
-/** dev 环境端口段（按槽位递增；窗口 50 个并发分支足够） */
-const DEV_SERVER_BASE = 8800;
-const DEV_WEB_BASE = 5180;
-const MAX_SLOTS = 50;
-
-/** prod 数据目录（项目根 .file，真实数据） */
-const PROD_DATA_DIR = path.join(ROOT_DIR, ".file");
-/** 环境元数据根目录（各 dev 环境的配置/日志/数据都在其下） */
-const ENVS_DIR = path.join(ROOT_DIR, ".file", "envs");
-const REGISTRY_FILE = path.join(ENVS_DIR, "registry.json");
-
-/** 主分支名（命中即 prod） */
-const MAIN_BRANCH = "main";
+/** prod 环境端口（server/web） */
+export const prodPorts = (C) => ({ server: C.server.port, web: C.web.port });
+/** dev 环境端口段起点与槽位上限 */
+const devPortBase = (C) => ({ server: C.env.devServerPortBase, web: C.env.devWebPortBase });
+/** 环境注册表文件（在 envs 根目录下） */
+const registryFile = (C) => path.join(C.paths.envsDir, "registry.json");
 
 // ---------- 基础工具 ----------
 
@@ -85,45 +84,46 @@ export function isNodePid(pid) {
 
 // ---------- 注册表（分支 ↔ 槽位） ----------
 
-function readRegistry() {
+function readRegistry(C) {
   try {
-    const j = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"));
+    const j = JSON.parse(readFileSync(registryFile(C), "utf8"));
     return j && typeof j === "object" && j.slots && typeof j.slots === "object" ? j : { slots: {} };
   } catch {
     return { slots: {} };
   }
 }
 
-function writeRegistry(reg) {
-  mkdirSync(ENVS_DIR, { recursive: true });
-  writeFileSync(REGISTRY_FILE, JSON.stringify(reg, null, 2));
+function writeRegistry(C, reg) {
+  mkdirSync(C.paths.envsDir, { recursive: true });
+  writeFileSync(registryFile(C), JSON.stringify(reg, null, 2));
 }
 
 /**
  * 取得（必要时分配）分支的端口槽位。
  * 分配策略：取「当前未被其它分支占用」的最小槽位；已注册的分支沿用原槽位（重启/重开终端不变）。
  */
-function allocateSlot(branch) {
-  const reg = readRegistry();
+function allocateSlot(C, branch) {
+  const maxSlots = C.env.maxSlots;
+  const reg = readRegistry(C);
   const existing = reg.slots[branch];
-  if (existing && typeof existing.slot === "number" && existing.slot >= 0 && existing.slot < MAX_SLOTS) {
+  if (existing && typeof existing.slot === "number" && existing.slot >= 0 && existing.slot < maxSlots) {
     return { slot: existing.slot, reg, allocated: false };
   }
   const used = new Set(Object.values(reg.slots).map((v) => v?.slot).filter((n) => typeof n === "number"));
   let slot = 0;
-  while (slot < MAX_SLOTS && used.has(slot)) slot += 1;
-  if (slot >= MAX_SLOTS) throw new Error(`dev 环境槽位已满（${MAX_SLOTS}）；先释放不用的分支：node scripts/dev-utils/env.mjs release <branch>`);
+  while (slot < maxSlots && used.has(slot)) slot += 1;
+  if (slot >= maxSlots) throw new Error(`dev 环境槽位已满（${maxSlots}，见配置 env.maxSlots）；先释放不用的分支：node scripts/dev-utils/env.mjs release <branch>`);
   reg.slots[branch] = { slot, id: branchToId(branch), createdAt: new Date().toISOString() };
-  writeRegistry(reg);
+  writeRegistry(C, reg);
   return { slot, reg, allocated: true };
 }
 
 /** 释放分支槽位（不影响其数据目录，数据需手工删） */
-function releaseSlot(branch) {
-  const reg = readRegistry();
+function releaseSlot(C, branch) {
+  const reg = readRegistry(C);
   if (!reg.slots[branch]) return false;
   delete reg.slots[branch];
-  writeRegistry(reg);
+  writeRegistry(C, reg);
   return true;
 }
 
@@ -135,32 +135,38 @@ function releaseSlot(branch) {
  * 返回结构同时给出「传给子进程的 env 片段」（childEnv），供 dev.mjs 注入 server/web。
  */
 export function resolveEnv(opts = {}) {
+  // 配置惰性加载（见上方常量说明：必须在调用时读，不能提到模块顶层）
+  const C = cfg();
+  const MAIN_BRANCH = C.env.prodBranch;
   const branch = opts.branch ?? process.env.TOOLBOX_BRANCH?.trim() ?? gitBranch() ?? "unknown";
   const forced = opts.name ?? process.env.TOOLBOX_ENV?.trim();
   const isProd = forced ? forced === "prod" : branch === MAIN_BRANCH;
   const name = isProd ? "prod" : "dev";
   const id = isProd ? "prod" : branchToId(branch);
 
+  // 端口来自配置：prod 用 server.port/web.port；dev 用 env.devServerPortBase/devWebPortBase + 槽位
+  // （环境变量 PORT/TOOLBOX_SERVER_PORT/TOOLBOX_WEB_PORT 的覆盖已由配置内核完成，此处直接取结果）
   let serverPort;
   let webPort;
   let slot = null;
   if (isProd) {
-    serverPort = PROD_PORTS.server;
-    webPort = PROD_PORTS.web;
+    serverPort = C.server.port;
+    webPort = C.web.port;
   } else {
-    const a = allocateSlot(branch);
+    const a = allocateSlot(C, branch);
     slot = a.slot;
-    serverPort = DEV_SERVER_BASE + slot;
-    webPort = DEV_WEB_BASE + slot;
+    serverPort = C.env.devServerPortBase + slot;
+    webPort = C.env.devWebPortBase + slot;
+    // 环境变量显式覆盖端口（临时调试用；不写注册表）——prod 侧已由配置内核处理，
+    // dev 侧端口是算出来的，需在此叠加
+    if (process.env.TOOLBOX_SERVER_PORT) serverPort = Number(process.env.TOOLBOX_SERVER_PORT) || serverPort;
+    if (process.env.TOOLBOX_WEB_PORT) webPort = Number(process.env.TOOLBOX_WEB_PORT) || webPort;
   }
-  // 环境变量可强制覆盖端口（临时调试用；不写注册表）
-  if (process.env.TOOLBOX_SERVER_PORT) serverPort = Number(process.env.TOOLBOX_SERVER_PORT) || serverPort;
-  if (process.env.TOOLBOX_WEB_PORT) webPort = Number(process.env.TOOLBOX_WEB_PORT) || webPort;
 
-  // 数据目录：prod 用 .file（保持不变）；dev 用 .file/envs/<id>/data
-  const dataDir = isProd ? PROD_DATA_DIR : path.join(ENVS_DIR, id, "data");
+  // 数据目录：prod 用 server.dataDir；dev 用 <envsDir>/<id>/data
+  const dataDir = isProd ? C.paths.dataDir : path.join(C.paths.envsDir, id, "data");
   // 环境私有目录（supervisor 状态/stop 标记/日志）
-  const envDir = isProd ? PROD_DATA_DIR : path.join(ENVS_DIR, id);
+  const envDir = isProd ? C.paths.dataDir : path.join(C.paths.envsDir, id);
 
   return {
     name,
@@ -193,24 +199,29 @@ export function resolveEnv(opts = {}) {
       stateFile: path.join(envDir, "dev.pids.json"),
       stopFlag: path.join(envDir, "dev.stop"),
       logDir: path.join(envDir, "logs"),
-      db: path.join(process.env.TOOLBOX_DATA_DIR?.trim() || dataDir, "toolbox.db"),
+      // 库文件名取自配置 server.dbFile（绝对路径则整体指向别处的库）
+      db: path.join(process.env.TOOLBOX_DATA_DIR?.trim() || dataDir, C.server.dbFile),
     },
+    /** 生效配置（端口段/目录等来源，供排障与 `toolbox config` 展示） */
+    config: C,
   };
 }
 
 /** 列出全部已注册 dev 环境（含 prod），附带端口存活状态 */
 export function listEnvs() {
-  const reg = readRegistry();
+  const C = cfg();
+  const base = devPortBase(C);
+  const reg = readRegistry(C);
   const now = resolveEnv();
   const rows = [];
   rows.push({
     name: "prod",
     id: "prod",
-    branch: MAIN_BRANCH,
+    branch: C.env.prodBranch,
     slot: null,
-    serverPort: PROD_PORTS.server,
-    webPort: PROD_PORTS.web,
-    dataDir: PROD_DATA_DIR,
+    serverPort: C.server.port,
+    webPort: C.web.port,
+    dataDir: C.paths.dataDir,
     current: now.isProd,
   });
   for (const [branch, v] of Object.entries(reg.slots)) {
@@ -220,9 +231,9 @@ export function listEnvs() {
       id: v?.id ?? branchToId(branch),
       branch,
       slot,
-      serverPort: DEV_SERVER_BASE + slot,
-      webPort: DEV_WEB_BASE + slot,
-      dataDir: path.join(ENVS_DIR, v?.id ?? branchToId(branch), "data"),
+      serverPort: base.server + slot,
+      webPort: base.web + slot,
+      dataDir: path.join(C.paths.envsDir, v?.id ?? branchToId(branch), "data"),
       current: !now.isProd && now.branch === branch,
     });
   }
@@ -239,9 +250,10 @@ export function listEnvs() {
  */
 export function syncData(env, opts = {}) {
   if (env.isProd) throw new Error("sync-data 只用于 dev 环境（prod 是数据源，不能被覆盖）");
-  const srcDir = PROD_DATA_DIR;
+  const dbFile = env.config.server.dbFile;
+  const srcDir = env.config.paths.dataDir;
   const dstDir = env.dataDir;
-  if (!existsSync(path.join(srcDir, "toolbox.db"))) throw new Error(`prod 数据不存在：${path.join(srcDir, "toolbox.db")}`);
+  if (!existsSync(path.join(srcDir, dbFile))) throw new Error(`prod 数据不存在：${path.join(srcDir, dbFile)}`);
 
   const serverPid = pidOnPort(env.serverPort);
   if (serverPid && !opts.force) {
@@ -250,12 +262,21 @@ export function syncData(env, opts = {}) {
 
   mkdirSync(dstDir, { recursive: true });
   const copied = [];
+  // ⚠️ 先清掉目标残留的 WAL/SHM（2026-09-04 修复，血泪）：
+  // `env stop` 用 taskkill /T /F 强杀，server 来不及 checkpoint → 目标目录留下**旧 WAL**。
+  // 若只覆盖主库而留着旧 WAL，SQLite 打开时会**回放旧 WAL 覆盖刚复制进来的新数据**——
+  // 实测新库 2577 条被回滚成 35 条，冒烟 22 页全挂且极难定位。复制前三件套必须先清干净。
+  const cleaned = [];
+  for (const suffix of ["-wal", "-shm"]) {
+    const stale = path.join(dstDir, `${dbFile}${suffix}`);
+    if (existsSync(stale)) { rmSync(stale, { force: true }); cleaned.push(`${dbFile}${suffix}`); }
+  }
   // SQLite 三件套（db + WAL + SHM）：缺一不可，否则 WAL 未回放导致数据缺失
   for (const suffix of ["", "-wal", "-shm"]) {
-    const src = path.join(srcDir, `toolbox.db${suffix}`);
+    const src = path.join(srcDir, `${dbFile}${suffix}`);
     if (!existsSync(src)) continue;
-    copyFileSync(src, path.join(dstDir, `toolbox.db${suffix}`));
-    copied.push(`toolbox.db${suffix || ""}`);
+    copyFileSync(src, path.join(dstDir, `${dbFile}${suffix}`));
+    copied.push(`${dbFile}${suffix || ""}`);
   }
   // docs PDF 二进制目录（递归复制）
   const srcDocs = path.join(srcDir, "docs");
@@ -269,7 +290,7 @@ export function syncData(env, opts = {}) {
       } catch { /* 单个文件失败不阻断 */ }
     }
   }
-  return { from: srcDir, to: dstDir, copied };
+  return { from: srcDir, to: dstDir, copied, cleaned };
 }
 
 // ---------- CLI ----------
@@ -342,9 +363,9 @@ if (!isMain) {
   const branch = arg || gitBranch();
   if (!branch) { console.error("❌ 无法确定分支"); process.exit(1); }
   const env = resolveEnv();
-  if (branch === MAIN_BRANCH) { console.error("❌ prod 槽位不可释放"); process.exit(1); }
+  if (branch === env.config.env.prodBranch) { console.error(`❌ prod 槽位不可释放（prodBranch=${env.config.env.prodBranch}）`); process.exit(1); }
   if (arg === "" && pidOnPort(env.serverPort)) { console.error(`❌ 当前环境仍在运行（端口 ${env.serverPort}）→ 先 \`toolbox env stop\``); process.exit(1); }
-  console.log(releaseSlot(branch) ? `✅ 已释放分支槽位：${branch}` : `（分支 ${branch} 未注册槽位）`);
+  console.log(releaseSlot(env.config, branch) ? `✅ 已释放分支槽位：${branch}` : `（分支 ${branch} 未注册槽位）`);
 } else if (cmd === "clean-data") {
   // 危险操作：仅删 dev 环境数据，prod 一律拒绝
   const env = resolveEnv();

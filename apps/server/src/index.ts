@@ -18,6 +18,7 @@ import {
 } from "@toolbox/shared";
 import { registerLlmRoutes, registerLlmUsageRoutes, registerPromptRoutes, registerQuoteRoutes, registerDataInfraRoutes } from "./core/routes.js";
 import { DATA_DIR } from "./core/db.js";
+import { config } from "./core/config.js";
 import { initDataInfra, startDataInfraRuntime } from "./core/data-infra/index.js";
 import { registerVolJob } from "./features/volatilityJob/index.js";
 import * as gridPlanFeature from "./features/gridPlan/index.js";
@@ -41,7 +42,10 @@ import * as tradeV2Feature from "./features/tradeV2/index.js";
 import * as experimentFeature from "./features/experiment/index.js";
 
 const app = new Hono();
-app.use(`${API_PREFIX}/*`, cors());
+// CORS 配置化（server.cors）：true=放行全部来源；字符串/数组=限定 origin（部署到内网/反向代理后按需收紧）
+if (config.server.cors !== false) {
+  app.use(`${API_PREFIX}/*`, config.server.cors === true ? cors() : cors({ origin: config.server.cors }));
+}
 
 // 健康检查：验证前后端联通；多环境并存时自报环境（prod=main / dev=开发分支），避免端口混淆看错实例
 app.get(`${API_PREFIX}/health`, (c) => {
@@ -131,16 +135,23 @@ initDataInfra();
 // 市场波动率数据工程工作流（调度枚举 + 队列消费 FaaS）
 registerVolJob();
 
-const port = Number(process.env.PORT ?? 8787);
+// 端口/监听地址配置化（server.port / server.host，环境变量 PORT、TOOLBOX_SERVER_PORT、TOOLBOX_HOST 可覆盖）
+const port = config.server.port;
+const hostname = config.server.host ?? undefined;
 // 集成测试（TOOLBOX_TEST=1）import 本模块时不启动端口监听
 if (process.env.TOOLBOX_TEST !== "1") {
   // 环境自报：多环境（prod=main / dev=分支）并存时，日志里能直接看出这是哪个实例、写哪个库
   console.log(`[env] ${process.env.TOOLBOX_ENV ?? "prod"} · branch=${process.env.TOOLBOX_BRANCH ?? "main"} · port=${port} · data=${DATA_DIR}`);
+  // 配置自报：启动日志直接给出生效的配置来源与库文件，部署排障时不用猜「到底读的哪个库」
+  console.log(`[config] 配置 ${config.sources.filter((s) => s.loaded).map((s) => s.label).join(" → ") || "(全部默认)"} · db=${config.paths.dbPath}`);
+  if (config.envOverrides.length > 0) {
+    console.log(`[config] 环境变量覆盖：${config.envOverrides.map((o) => `${o.name}=${o.value}`).join(", ")}`);
+  }
   // 端口监听韧性（2026-08-14）：tsx watch 在源码变更重启时，旧子进程端口未释放会导致新进程 EADDRINUSE 崩溃——
   // 监听失败自动等待重试自愈（dev.mjs supervisor 无法感知 tsx 内部子进程竞态，由 server 自身兜底）
   const MAX_LISTEN_RETRY = 10;
   const listenWithRetry = (attempt: number): void => {
-    const srv = serve({ fetch: app.fetch, port }, (info) => {
+    const srv = serve({ fetch: app.fetch, port, hostname }, (info) => {
       console.log(`toolbox server: http://localhost:${info.port}${API_PREFIX}/health`);
     });
     srv.on("error", (e: NodeJS.ErrnoException) => {
