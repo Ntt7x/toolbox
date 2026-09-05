@@ -4,9 +4,10 @@
 // 命中：按 ruleId + 交易日去重落库；once 规则命中后自动停用
 // ============================================================
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errMsg } from "../../api";
-import type { WatchAlertHit, WatchAlertKind, WatchAlertRule, WatchItem } from "@toolbox/shared";
+import type { WatchAlertHit, WatchAlertKind, WatchAlertRule } from "@toolbox/shared";
+import { useAsyncData } from "../../hooks/useAsyncData";
 import {
   C, Caveats, Empty, Loading, MetaBar, SectionTitle, SegTabs,
   btn, btnGhost, btnSmall, input, table, th, thTd,
@@ -37,7 +38,6 @@ export function AlertsPanel({ code, name }: { code: string; name?: string }) {
   const [rules, setRules] = useState<WatchAlertRule[]>([]);
   const [hits, setHits] = useState<WatchAlertHit[]>([]);
   const [triggered, setTriggered] = useState<WatchAlertHit[]>([]);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -45,31 +45,35 @@ export function AlertsPanel({ code, name }: { code: string; name?: string }) {
   const [meta, setMeta] = useState<import("@toolbox/shared").WatchDataMeta | undefined>();
   const [sub, setSub] = useState<"rules" | "hits">("rules");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const r = await api.watchlistAlerts(code);
-      if (r.ok) {
-        setRules(r.rules);
-        setHits(r.hits);
-        setTriggered(r.triggered);
-        setMeta(r.meta);
-        setDirty(false);
-      } else setErr(r.message ?? "加载失败");
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [code]);
+  // switchMap 语义：切标的时旧请求自动作废（不会用 A 的命中覆盖 B）
+  const { data, loading, error, reload } = useAsyncData(
+    () => api.watchlistAlerts(code),
+    [code],
+  );
 
   useEffect(() => {
     setRules([]);
     setHits([]);
     setTriggered([]);
-    void load();
-  }, [load]);
+    setMeta(undefined);
+  }, [code]);
+
+  useEffect(() => {
+    if (!data) return;
+    if (data.ok) {
+      setRules(data.rules);
+      setHits(data.hits);
+      setTriggered(data.triggered);
+      setMeta(data.meta);
+      setDirty(false);
+    } else {
+      setErr(data.message ?? "加载失败");
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (error) setErr(error);
+  }, [error]);
 
   const patch = (id: string, p: Partial<WatchAlertRule>) => {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...p } : r)));
@@ -96,7 +100,7 @@ export function AlertsPanel({ code, name }: { code: string; name?: string }) {
         setRules(r.rules);
         setDirty(false);
         setInfo("✅ 提醒规则已保存");
-        await load();
+        reload();
       } else setErr(r.message ?? "保存失败");
     } catch (e) {
       setErr(errMsg(e));

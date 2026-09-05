@@ -6,7 +6,8 @@
 
 import { useEffect, useState } from "react";
 import { api, errMsg } from "../../api";
-import type { WatchFundamentalResult, WatchItem, WatchNewsResult } from "@toolbox/shared";
+import type { WatchFundamentalResult, WatchNewsResult } from "@toolbox/shared";
+import { useAsyncData } from "../../hooks/useAsyncData";
 import {
   C, Caveats, Empty, ItemPicker, Loading, MetaBar, SectionTitle, SegTabs,
   btn, btnSmall, stockDetailUrl,
@@ -93,7 +94,7 @@ export function DeepDivePanel({
   const [sub, setSub] = useState<SubTab>("report");
   const [report, setReport] = useState<WatchFundamentalResult | null>(null);
   const [news, setNews] = useState<WatchNewsResult | null>(null);
-  const [busy, setBusy] = useState<"" | "report" | "news">("");
+  const [busy, setBusy] = useState<"" | "report">("");
   const [err, setErr] = useState<string | null>(null);
 
   // 切标的 → 重置结果（标的是本面板唯一的服务对象）
@@ -102,6 +103,18 @@ export function DeepDivePanel({
     setNews(null);
     setErr(null);
   }, [code]);
+
+  // 新闻：随 sub === "news" + code 自动加载（switchMap 语义，切标的旧请求自动作废）
+  const { data: newsData, loading: newsLoading, error: newsError, reload: reloadNews } = useAsyncData(
+    () => api.watchlistNews(code),
+    [code, sub],
+  );
+
+  useEffect(() => {
+    if (sub !== "news") return;
+    if (newsData) setNews(newsData);
+    if (newsError) setErr(newsError);
+  }, [newsData, newsError, sub]);
 
   const runReport = async (force = false) => {
     setBusy("report");
@@ -127,22 +140,7 @@ export function DeepDivePanel({
     }
   };
 
-  const runNews = async () => {
-    setBusy("news");
-    setErr(null);
-    try {
-      setNews(await api.watchlistNews(code));
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  useEffect(() => {
-    if (sub === "news" && !news && !busy) void runNews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sub, code]);
+  const runNews = () => reloadNews();
 
   return (
     <div>
@@ -205,8 +203,8 @@ export function DeepDivePanel({
         <div>
           <SectionTitle
             extra={
-              <button type="button" style={btn} onClick={() => void runNews()} disabled={busy === "news"}>
-                {busy === "news" ? "加载中…" : "🔄 刷新新闻"}
+              <button type="button" style={btn} onClick={runNews} disabled={newsLoading}>
+                {newsLoading ? "加载中…" : "🔄 刷新新闻"}
               </button>
             }
           >
@@ -215,7 +213,7 @@ export function DeepDivePanel({
           <div style={{ fontSize: "0.75rem", color: C.faintest }}>
             扫描已启用新闻源（新闻中心配置），按标的名称/代码做确定性关键词匹配；零 LLM、零额外请求。
           </div>
-          {busy === "news" ? <Loading text="扫描新闻源…" /> : null}
+          {newsLoading ? <Loading text="扫描新闻源…" /> : null}
           {news ? (
             <>
               <Caveats meta={news.meta} />
@@ -248,7 +246,7 @@ export function DeepDivePanel({
                 </div>
               )}
             </>
-          ) : busy !== "news" ? (
+          ) : !newsLoading ? (
             <Empty>点击「刷新新闻」扫描</Empty>
           ) : null}
         </div>

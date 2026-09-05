@@ -51,6 +51,7 @@ export function ItemList({
   allTags,
   selectedCode,
   tagName,
+  live,
   onSelect,
   onAdd,
   onUpdateTags,
@@ -59,6 +60,8 @@ export function ItemList({
   allTags: WatchTagNode[];
   selectedCode: string;
   tagName: string;
+  /** 是否已接上实时行情流（展示实时标识，用户可据此判断数字是否在动） */
+  live?: boolean;
   onSelect: (code: string) => void;
   onAdd: (payload: {
     code: string;
@@ -177,6 +180,14 @@ export function ItemList({
         <span style={{ fontSize: "0.72rem", color: C.faintest, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${tagName} · ${items.length} 只`}>
           {tagName} · {items.length}
         </span>
+        {live ? (
+          <span
+            title="已连接实时行情流（SSE），价格自动刷新"
+            style={{ fontSize: "0.66rem", color: C.accent, background: C.accentBg, borderRadius: 999, padding: "0 0.3rem", flexShrink: 0 }}
+          >
+            实时
+          </span>
+        ) : null}
         <span style={{ flex: 1 }} />
         {/* 排序：仅按涨跌幅，点击切升/降序 */}
         <button
@@ -310,7 +321,8 @@ export function ItemList({
           sorted.map((it) => {
             const active = it.code === selectedCode;
             // 该标的的其它标签名（当前筛选标签之外的；显示名称而非 id）
-            const otherNames = it.tags
+            // tags 可能缺省（仅属「全部」的标的没有 tags 字段）→ 兜底空数组，避免 .filter 崩溃
+            const otherNames = (it.tags ?? [])
               .filter((t) => t !== currentTagId)
               .map((t) => nameById.get(t) ?? t)
               .slice(0, 2);
@@ -362,7 +374,7 @@ export function ItemList({
                           标的本身<b>不会被删除</b>，仍保留在它所属的其它标签下。
                         </>
                       }
-                      onConfirm={() => onUpdateTags(it.code, it.tags.filter((t) => t !== currentTagId))}
+                      onConfirm={() => onUpdateTags(it.code, (it.tags ?? []).filter((t) => t !== currentTagId))}
                     >
                       ✕
                     </ConfirmButton>

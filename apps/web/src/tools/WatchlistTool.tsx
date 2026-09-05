@@ -18,6 +18,7 @@ import type {
 import { WATCH_ROOT_TAG } from "@toolbox/shared";
 import { C, Empty, Loading, SegTabs, btnSmall, input, pctColor, fmtPct, fmtPrice, stockDetailUrl } from "./watchlist/shared";
 import { ConfirmButton } from "./watchlist/ui";
+import { useQuoteStream, mergeLiveQuotes } from "../hooks/useQuoteStream";
 import { TagTree } from "./watchlist/TagTree";
 import { ItemList, tagNameMap } from "./watchlist/ItemList";
 import { TrackPanel } from "./watchlist/TrackPanel";
@@ -148,6 +149,14 @@ export function WatchlistTool() {
     if (tags.length === 0) return;
     void loadItems(selectedTag);
   }, [selectedTag, tags.length, loadItems]);
+
+  // ---------- 实时行情（SSE 流，多面板共享一条连接） ----------
+  // 只订阅当前可见的标的：切 tag 后自动换成新的代码集合（旧集合随引用计数归零而停推）
+  const visibleCodes = useMemo(() => items.map((i) => i.code), [items]);
+  const live = useQuoteStream(visibleCodes);
+  /** 列表数据 + 实时行情（实时值优先，列表自带的价/涨跌作为兜底） */
+  const liveItems = useMemo(() => mergeLiveQuotes(items, live.quotes), [items, live.quotes]);
+  const liveCurrent = useMemo(() => liveItems.find((x) => x.code === selectedCode) ?? null, [liveItems, selectedCode]);
 
   /** 选中项跟随列表：切 tag 后若当前标的已不在列表，默认选第一只 */
   const current = useMemo(() => items.find((x) => x.code === selectedCode) ?? null, [items, selectedCode]);
@@ -384,10 +393,11 @@ export function WatchlistTool() {
           }}
         >
           <ItemList
-            items={items}
+            items={liveItems}
             allTags={tags}
             selectedCode={selectedCode}
             tagName={tagName}
+            live={live.connected}
             onSelect={setSelectedCode}
             onAdd={onAddItem}
             onUpdateTags={(code, nextTags) => onUpdateItem(code, { tags: nextTags })}
@@ -403,13 +413,13 @@ export function WatchlistTool() {
             <div style={{ padding: "1rem" }}>
               <Loading text="加载自选股…" />
             </div>
-          ) : !current ? (
+          ) : !liveCurrent ? (
             <div style={{ padding: "1rem" }}>
               <Empty>{items.length === 0 ? `「${tagName}」下暂无标的——先在中栏添加，或换个标签` : "请在中栏选择一个标的"}</Empty>
             </div>
           ) : (
             <ItemDetail
-              item={current}
+              item={liveCurrent}
               tab={tab}
               onTabChange={setTab}
               onUpdate={onUpdateItem}

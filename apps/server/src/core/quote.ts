@@ -10,9 +10,14 @@
 // ============================================================
 
 import type { QuoteResult, QuoteSnapshot } from "@toolbox/shared";
+import { Effect, Either } from "effect";
 import { kvGet, kvSet } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
-import { mapLimit, NET_CONCURRENCY } from "./concurrency.js";
+import { NET_CONCURRENCY } from "./concurrency.js";
+import { requestBuffer, requestJson, requestText } from "./effect/http.js";
+import { ParseError, describeError, type FetchError } from "./effect/errors.js";
+import { runEffect, runEffectOrMessage } from "./effect/runtime.js";
+import { allOrdered, allSettled } from "./effect/concurrency.js";
 
 // 注册数据源：行情快照缓存（本地数据管理可见，避免落入"未标记"）
 registerDataSource({
@@ -80,29 +85,37 @@ function parseSecCode(input: string): ParsedCode | null {
   return null;
 }
 
+// ---- 取数档位（统一超时/重试，替掉原先散落各处的魔法值）----
+/** 快照类请求：行情时效敏感，8s 超时、最多 2 次退避重试 */
+const SNAPSHOT_TIMEOUT_MS = 8000;
+/** K 线类请求：响应体更大，12s 超时、重试 1 次（重试成本高，失败即降级到缓存） */
+const KLINE_TIMEOUT_MS = 12000;
+const SNAPSHOT_RETRIES = 2;
+const KLINE_RETRIES = 1;
+/** 腾讯系接口统一 UA/Referer（缺 Referer 会被挡） */
+const QT_HEADERS = { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" };
+const UA_HEADERS = { "User-Agent": "Mozilla/5.0" };
+
 /** 从腾讯拉取月 K 线（返回按时间升序的收盘价序列，含当前未完成月） */
-async function fetchMonthlyCloses(p: ParsedCode): Promise<{ name: string; bars: { date: string; close: number }[] }> {
+function fetchMonthlyCloses(p: ParsedCode): Effect.Effect<{ name: string; bars: { date: string; close: number }[] }, FetchError> {
   const paramKey = `${p.market}${p.code}`;
   const url = QT_URL.replace("{param}", paramKey).replace("{count}", String(FETCH_COUNT));
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" },
-    signal: AbortSignal.timeout(10000),
+  return Effect.gen(function* () {
+    const json = yield* requestJson<{
+      data?: Record<string, { qfqmonth?: string[][]; month?: string[][]; qt?: Record<string, string[]> }>;
+    }>({ url, headers: QT_HEADERS, timeoutMs: KLINE_TIMEOUT_MS, retries: KLINE_RETRIES });
+    const data = json.data?.[paramKey];
+    const klines = data?.qfqmonth ?? data?.month;
+    if (!Array.isArray(klines) || klines.length === 0) {
+      return yield* Effect.fail(new ParseError({ source: "tencent.monthly", reason: "未查询到该代码的月 K 数据，请检查代码是否正确" }));
+    }
+    const bars = klines
+      .map((row) => ({ date: String(row[0]), close: Number(row[2]) }))
+      .filter((b) => Number.isFinite(b.close) && b.close > 0);
+    // qt 形如 { "sh600519": ["1", "贵州茅台", "600519", ...] }
+    const name = data?.qt?.[paramKey]?.[1] ?? "";
+    return { name, bars };
   });
-  if (!res.ok) throw new Error(`行情接口响应异常（HTTP ${res.status}）`);
-  const json = (await res.json()) as {
-    data?: Record<string, { qfqmonth?: string[][]; month?: string[][]; qt?: Record<string, string[]> }>;
-  };
-  const data = json.data?.[paramKey];
-  const klines = data?.qfqmonth ?? data?.month;
-  if (!Array.isArray(klines) || klines.length === 0) {
-    throw new Error("未查询到该代码的月 K 数据，请检查代码是否正确");
-  }
-  const bars = klines
-    .map((row) => ({ date: String(row[0]), close: Number(row[2]) }))
-    .filter((b) => Number.isFinite(b.close) && b.close > 0);
-  // qt 形如 { "sh600519": ["1", "贵州茅台", "600519", ...] }
-  const name = data?.qt?.[paramKey]?.[1] ?? "";
-  return { name, bars };
 }
 
 /** 由收盘价序列计算 BOLL（取最近 period 根，末尾为最新） */
@@ -139,7 +152,7 @@ export async function queryMonthlyBoll(codeInput: string): Promise<QuoteResult> 
     };
   }
   try {
-    const { name, bars } = await fetchMonthlyCloses(parsed);
+    const { name, bars } = await runEffect(fetchMonthlyCloses(parsed));
     // 排除未结束的当月（腾讯月线最后一条为当前月）
     const complete = bars.length > 1 ? bars.slice(0, -1) : bars;
     const boll = calcBoll(complete);
@@ -239,76 +252,86 @@ function parseTencent(line: string, market: "sh" | "sz" | "hk" | "bj"): Partial<
   };
 }
 
-/** 解析东财快照 JSON（fields：f58名 f43现价 f46昨收 f44高 f45低 f47成交量 f169涨跌 f170涨跌幅 f168换手 f162PE f167PB f116总市值） */
-async function fetchEastmoney(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
-  const secid = p.market === "hk" ? `116.${p.code}` : p.market === "sh" ? `1.${p.code}` : p.market === "bj" ? `0.${p.code}` : `0.${p.code}`;
-  // f47=成交量（手）——停牌判定依赖它（停牌股现价=昨收、涨跌幅=0，只有成交量为 0 能区分「停牌」与「平盘」）
-  const fields = "f57,f58,f43,f44,f45,f46,f47,f60,f116,f162,f167,f168,f169,f170";
-  const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&invt=2`;
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`东财响应异常（HTTP ${res.status}）`);
-  const json = (await res.json()) as { data?: Record<string, number | string> };
-  const d = json.data;
-  if (!d) throw new Error("东财未返回数据");
-  const scale = (v: unknown, k: number): number | undefined => (typeof v === "number" ? v / k : undefined);
-  return {
-    name: typeof d.f58 === "string" ? d.f58 : undefined,
-    price: scale(d.f43, 100),
-    prevClose: scale(d.f46, 100),
-    high: scale(d.f44, 100),
-    low: scale(d.f45, 100),
-    change: scale(d.f169, 100),
-    pct: scale(d.f170, 100),
-    turnover: scale(d.f168, 100),
-    pe: scale(d.f162, 100),
-    pb: scale(d.f167, 100),
-    marketCap: scale(d.f116, 1e8), // 元 → 亿元
-  };
-}
-
-/** 解析新浪快照（价量为主，仅兜底）：name,昨收,今开,现价,最高,最低,... */
-async function fetchSina(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
-  const url = `https://hq.sinajs.cn/list=${p.market === "hk" ? `hk${p.code}` : `${p.market}${p.code}`}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://finance.sina.com.cn" },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`新浪响应异常（HTTP ${res.status}）`);
-  const text = await res.text();
-  const m = text.match(/="([^"]*)"/);
-  if (!m || !m[1]) throw new Error("新浪未返回数据");
-  const f = m[1].split(",");
-  if (f.length < 10) throw new Error("新浪字段不足");
-  const price = num(f[3]);
-  const prevClose = num(f[2]);
-  return {
-    name: f[0],
-    prevClose,
-    open: num(f[1]),
-    price,
-    high: num(f[4]),
-    low: num(f[5]),
-    change: price !== undefined && prevClose !== undefined ? Math.round((price - prevClose) * 1000) / 1000 : undefined,
-    pct: price !== undefined && prevClose !== undefined && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : undefined,
-    // 成交量 0 = 无成交（停牌判据），不可丢弃——与腾讯源同口径
-    volume: numOrZero(f[8]),
-  };
-}
-
 /** GBK 转码（腾讯/新浪返回 GBK；Node 内置 ICU） */
 function decodeGbk(buf: ArrayBuffer): string {
   return new TextDecoder("gbk").decode(buf);
 }
 
-/** 腾讯快照主源 */
-async function fetchTencent(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
+/** 腾讯快照主源：Effect 版（超时/重试/类型化错误由 core/effect/http 统一提供） */
+function fetchTencent(p: ParsedCode): Effect.Effect<Partial<QuoteSnapshot>, FetchError> {
   const url = `https://qt.gtimg.cn/q=${p.market}${p.code}`;
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`腾讯响应异常（HTTP ${res.status}）`);
-  const text = decodeGbk(await res.arrayBuffer());
-  const m = text.match(/="([^"]*)"/);
-  if (!m || !m[1]) throw new Error("腾讯未返回数据");
-  return parseTencent(m[1], p.market);
+  return Effect.gen(function* () {
+    const buf = yield* requestBuffer({ url, headers: UA_HEADERS, timeoutMs: SNAPSHOT_TIMEOUT_MS, retries: SNAPSHOT_RETRIES });
+    const m = decodeGbk(buf).match(/="([^"]*)"/);
+    if (!m || !m[1]) return yield* Effect.fail(new ParseError({ source: "tencent", reason: "腾讯未返回数据" }));
+    return yield* Effect.try({
+      try: () => parseTencent(m[1], p.market),
+      catch: (e) => new ParseError({ source: "tencent", reason: e instanceof Error ? e.message : String(e) }),
+    });
+  });
+}
+
+/** 东财快照降级源（fields：f58名 f43现价 f46昨收 f44高 f45低 f47成交量 f169涨跌 f170涨跌幅 f168换手 f162PE f167PB f116总市值） */
+function fetchEastmoney(p: ParsedCode): Effect.Effect<Partial<QuoteSnapshot>, FetchError> {
+  const secid = p.market === "hk" ? `116.${p.code}` : p.market === "sh" ? `1.${p.code}` : `0.${p.code}`;
+  // f47=成交量（手）——停牌判定依赖它（停牌股现价=昨收、涨跌幅=0，只有成交量为 0 能区分「停牌」与「平盘」）
+  const fields = "f57,f58,f43,f44,f45,f46,f47,f60,f116,f162,f167,f168,f169,f170";
+  const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=${fields}&invt=2`;
+  return Effect.gen(function* () {
+    const json = yield* requestJson<{ data?: Record<string, number | string> }>({
+      url,
+      headers: UA_HEADERS,
+      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+      retries: SNAPSHOT_RETRIES,
+    });
+    const d = json.data;
+    if (!d) return yield* Effect.fail(new ParseError({ source: "eastmoney", reason: "东财未返回数据" }));
+    const scale = (v: unknown, k: number): number | undefined => (typeof v === "number" ? v / k : undefined);
+    return {
+      name: typeof d.f58 === "string" ? d.f58 : undefined,
+      price: scale(d.f43, 100),
+      prevClose: scale(d.f46, 100),
+      high: scale(d.f44, 100),
+      low: scale(d.f45, 100),
+      change: scale(d.f169, 100),
+      pct: scale(d.f170, 100),
+      turnover: scale(d.f168, 100),
+      pe: scale(d.f162, 100),
+      pb: scale(d.f167, 100),
+      marketCap: scale(d.f116, 1e8), // 元 → 亿元
+    };
+  });
+}
+
+/** 新浪快照兜底源（价量为主）：name,昨收,今开,现价,最高,最低,... */
+function fetchSina(p: ParsedCode): Effect.Effect<Partial<QuoteSnapshot>, FetchError> {
+  const url = `https://hq.sinajs.cn/list=${p.market === "hk" ? `hk${p.code}` : `${p.market}${p.code}`}`;
+  return Effect.gen(function* () {
+    const text = yield* requestText({
+      url,
+      headers: { "User-Agent": "Mozilla/5.0", Referer: "https://finance.sina.com.cn" },
+      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+      retries: SNAPSHOT_RETRIES,
+    });
+    const m = text.match(/="([^"]*)"/);
+    if (!m || !m[1]) return yield* Effect.fail(new ParseError({ source: "sina", reason: "新浪未返回数据" }));
+    const f = m[1].split(",");
+    if (f.length < 10) return yield* Effect.fail(new ParseError({ source: "sina", reason: "新浪字段不足" }));
+    const price = num(f[3]);
+    const prevClose = num(f[2]);
+    return {
+      name: f[0],
+      prevClose,
+      open: num(f[1]),
+      price,
+      high: num(f[4]!),
+      low: num(f[5]!),
+      change: price !== undefined && prevClose !== undefined ? Math.round((price - prevClose) * 1000) / 1000 : undefined,
+      pct: price !== undefined && prevClose !== undefined && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : undefined,
+      // 成交量 0 = 无成交（停牌判据），不可丢弃——与腾讯源同口径
+      volume: numOrZero(f[8]),
+    };
+  });
 }
 
 /**
@@ -317,7 +340,7 @@ async function fetchTencent(p: ParsedCode): Promise<Partial<QuoteSnapshot>> {
  */
 /** 日 K 收盘序列（腾讯 qfqday；from/to 格式 YYYY-MM-DD）。返回 [{date, close}] 升序；失败返回空数组。 */
 export async function fetchDailyCloses(codeInput: string, from: string, to: string, max = 500): Promise<{ date: string; close: number }[]> {
-  const rows = await fetchDailyRows(codeInput, from, to, max);
+  const rows = await fetchDailyRowsOrEmpty(codeInput, from, to, max);
   return rows.map((r) => ({ date: r.date, close: r.close }));
 }
 
@@ -328,23 +351,24 @@ export async function fetchDailyCloses(codeInput: string, from: string, to: stri
 export async function fetchDailyOHLC(
   codeInput: string, from: string, to: string, max = 500,
 ): Promise<{ date: string; open: number; close: number; high: number; low: number }[]> {
-  const rows = await fetchDailyRows(codeInput, from, to, max);
+  const rows = await fetchDailyRowsOrEmpty(codeInput, from, to, max);
   return rows.map((r) => ({ date: r.date, open: r.open, close: r.close, high: r.high, low: r.low }));
 }
 
-/** 腾讯日K原始行（内部共用；qfqday 优先，退 day） */
-async function fetchDailyRows(
+/** 腾讯日K原始行（内部共用；qfqday 优先，退 day）。取数失败降级为空数组（调用方按「无数据」处理） */
+function fetchDailyRows(
   codeInput: string, from: string, to: string, max = 500,
-): Promise<{ date: string; open: number; close: number; high: number; low: number }[]> {
-  try {
+): Effect.Effect<{ date: string; open: number; close: number; high: number; low: number }[], FetchError> {
+  return Effect.gen(function* () {
     const parsed = parseSecCode(codeInput);
     if (!parsed) return [];
-    const r = await fetch(
-      `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${parsed.market}${parsed.code},day,${from},${to},${max},qfq`,
-      { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(12000) },
-    );
-    const j = (await r.json()) as Record<string, any>;
-    const data = j?.data?.[`${parsed.market}${parsed.code}`];
+    const json = yield* requestJson<Record<string, any>>({
+      url: `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${parsed.market}${parsed.code},day,${from},${to},${max},qfq`,
+      headers: QT_HEADERS,
+      timeoutMs: KLINE_TIMEOUT_MS,
+      retries: KLINE_RETRIES,
+    });
+    const data = json?.data?.[`${parsed.market}${parsed.code}`];
     const kline = data?.qfqday ?? data?.day ?? [];
     if (!Array.isArray(kline)) return [];
     const out: { date: string; open: number; close: number; high: number; low: number }[] = [];
@@ -357,92 +381,123 @@ async function fetchDailyRows(
       if (d && isFinite(close)) out.push({ date: d, open, close, high, low });
     }
     return out;
-  } catch {
-    return [];
-  }
+  });
+}
+
+/** 日 K 取数：失败降级为空数组（波动率流水线等消费方按「无数据」处理，不中断整批） */
+async function fetchDailyRowsOrEmpty(
+  codeInput: string, from: string, to: string, max = 500,
+): Promise<{ date: string; open: number; close: number; high: number; low: number }[]> {
+  const r = await runEffectOrMessage(fetchDailyRows(codeInput, from, to, max));
+  return r.ok ? r.value : [];
 }
 
 export async function fetchFx(code: "EURJPY" | "USDJPY" | "EURUSD" | "HKDCNY" | "USDCNY"): Promise<{ price: number; prevClose: number; changePct: number } | null> {
-  try {
-    const r = await fetch(`https://qt.gtimg.cn/q=wh${code}`, { headers: { Referer: "https://gu.qq.com/" }, signal: AbortSignal.timeout(8000) });
-    const t = await r.text();
-    const m = t.match(/="([^"]+)"/);
-    if (!m || !m[1]) return null;
-    const f = m[1].split("~");
-    const price = Number(f[3]);
-    const prevClose = Number(f[6]);
-    if (!isFinite(price)) return null;
-    return { price, prevClose, changePct: prevClose > 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : 0 };
-  } catch {
-    return null;
+  return runEffect(
+    Effect.gen(function* () {
+      const text = yield* requestText({
+        url: `https://qt.gtimg.cn/q=wh${code}`,
+        headers: QT_HEADERS,
+        timeoutMs: SNAPSHOT_TIMEOUT_MS,
+        retries: SNAPSHOT_RETRIES,
+      });
+      const m = text.match(/="([^"]+)"/);
+      if (!m || !m[1]) return null;
+      const f = m[1].split("~");
+      const price = Number(f[3]);
+      const prevClose = Number(f[6]);
+      if (!isFinite(price)) return null;
+      return { price, prevClose, changePct: prevClose > 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : 0 };
+    }).pipe(Effect.catchAll(() => Effect.succeed(null))),
+  );
+}
+
+const BAD_CODE_MSG = "无法识别的代码格式。支持：sh600519 / sz000001 / 600519 / hk00700 / 00700";
+
+/** 快照缓存读取（TTL 内且成功才命中；force 跳过） */
+function readSnapshotCache(normCode: string, force?: boolean): QuoteSnapshot | null {
+  if (force) return null;
+  const cached = kvGet<QuoteSnapshot>(`${SNAPSHOT_PREFIX}${normCode}`);
+  const at = cached?.ts ? Date.parse(cached.ts) : NaN;
+  if (cached && cached.ok && Number.isFinite(at) && Date.now() - at < SNAPSHOT_TTL_MS) {
+    return { ...cached, source: `${cached.source ?? "cache"}` };
   }
+  return null;
 }
 
 /**
- * 获取实时行情快照（多源 failover：腾讯 → 东财 → 新浪）。
- * KV 缓存 5 分钟（force 可绕过）。
+ * 降级源定义（数组顺序 = 降级顺序）。
+ * 串行逐源、成功即停：并行打三源只会把成本翻三倍，收益近乎为零。
  */
-export async function getQuoteSnapshot(codeInput: string, opts: { force?: boolean } = {}): Promise<QuoteSnapshot> {
-  const parsed = parseSecCode(codeInput);
-  if (!parsed) {
-    return { ok: false, code: codeInput.trim(), message: "无法识别的代码格式。支持：sh600519 / sz000001 / 600519 / hk00700 / 00700" };
-  }
-  const cacheKey = `${SNAPSHOT_PREFIX}${parsed.normCode}`;
-  if (!opts.force) {
-    const cached = kvGet<QuoteSnapshot>(cacheKey);
-    const at = cached?.ts ? Date.parse(cached.ts) : NaN;
-    if (cached && cached.ok && Number.isFinite(at) && Date.now() - at < SNAPSHOT_TTL_MS) {
-      return { ...cached, source: `${cached.source ?? "cache"}` };
-    }
-  }
+const SNAPSHOT_SOURCES: readonly { name: string; fn: (p: ParsedCode) => Effect.Effect<Partial<QuoteSnapshot>, FetchError> }[] = [
+  { name: "tencent", fn: fetchTencent },
+  { name: "eastmoney", fn: fetchEastmoney },
+  { name: "sina", fn: fetchSina },
+];
 
-  const attempts: { name: string; fn: () => Promise<Partial<QuoteSnapshot>> }[] = [
-    { name: "tencent", fn: () => fetchTencent(parsed) },
-    { name: "eastmoney", fn: () => fetchEastmoney(parsed) },
-    { name: "sina", fn: () => fetchSina(parsed) },
-  ];
-  const errors: string[] = [];
-  for (const a of attempts) {
-    try {
-      const part = await a.fn();
-      const snapshot: QuoteSnapshot = {
-        ok: true,
-        code: parsed.normCode,
-        ...part,
-        source: a.name,
-        ts: new Date().toISOString(),
-      };
-      if (!snapshot.price && !snapshot.name) throw new Error(`${a.name} 返回空数据`);
-      kvSet(cacheKey, snapshot);
+/**
+ * 单标的实时快照的 Effect 实现（多源 failover：腾讯 → 东财 → 新浪，KV 缓存 5 分钟）。
+ *
+ * 错误语义：失败**不抛**——降级为 `ok:false` 快照返回。
+ * 理由：批量/列表场景中单只取不到不该让整屏失败（缺失即标注，由消费方决定是否提示）。
+ * 需要「取不到就报错」的调用方自行检查 `snapshot.ok`。
+ */
+export function snapshotEffect(codeInput: string, opts: { force?: boolean } = {}): Effect.Effect<QuoteSnapshot, never> {
+  return Effect.gen(function* () {
+    const parsed = parseSecCode(codeInput);
+    if (!parsed) return { ok: false as const, code: codeInput.trim(), message: BAD_CODE_MSG };
+    const cached = readSnapshotCache(parsed.normCode, opts.force);
+    if (cached) return cached;
+
+    const errors: string[] = [];
+    for (const s of SNAPSHOT_SOURCES) {
+      const r = yield* Effect.either(s.fn(parsed));
+      if (Either.isLeft(r)) {
+        errors.push(`${s.name}: ${describeError(r.left)}`);
+        continue;
+      }
+      const part = r.right;
+      if (!part.price && !part.name) {
+        errors.push(`${s.name}: 返回空数据`);
+        continue;
+      }
+      const snapshot: QuoteSnapshot = { ok: true, code: parsed.normCode, ...part, source: s.name, ts: new Date().toISOString() };
+      kvSet(`${SNAPSHOT_PREFIX}${parsed.normCode}`, snapshot);
       return snapshot;
-    } catch (e) {
-      errors.push(`${a.name}: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }
-  return { ok: false, code: parsed.normCode, message: `行情源均不可用（${errors.join("；")}）` };
+    return { ok: false as const, code: parsed.normCode, message: `行情源均不可用（${errors.join("；")}）` };
+  });
+}
+
+/** 获取实时行情快照（Promise 门面，供非 Effect 调用方使用） */
+export async function getQuoteSnapshot(codeInput: string, opts: { force?: boolean } = {}): Promise<QuoteSnapshot> {
+  return runEffect(snapshotEffect(codeInput, opts));
 }
 
 /** 腾讯批量快照（一次请求多个代码，返回 map：normCode → 快照）。
  * 逐行容错：单只解析失败（字段不足/异常代码）只跳过该只，不拖垮整批（其余代码仍走批量结果）。 */
-async function fetchTencentBatch(parsedList: ParsedCode[]): Promise<Map<string, Partial<QuoteSnapshot>>> {
+function fetchTencentBatch(parsedList: ParsedCode[]): Effect.Effect<Map<string, Partial<QuoteSnapshot>>, FetchError> {
   const url = `https://qt.gtimg.cn/q=${parsedList.map((p) => `${p.market}${p.code}`).join(",")}`;
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`腾讯批量响应异常（HTTP ${res.status}）`);
-  const text = decodeGbk(await res.arrayBuffer());
-  const out = new Map<string, Partial<QuoteSnapshot>>();
-  for (const line of text.split(";")) {
-    const m = line.match(/v_(sh|sz|hk|bj)(\d+)="([^"]*)"/);
-    if (!m || !m[3]) continue;
-    const market = m[1] as "sh" | "sz" | "hk" | "bj";
-    const normCode = `${m[1]}${m[2]}`;
-    try {
-      out.set(normCode, parseTencent(m[3], market));
-    } catch {
-      // 单只解析失败（如退市/新上市字段不足）→ 跳过，调用方对该代码走单源降级
+  return Effect.gen(function* () {
+    const buf = yield* requestBuffer({ url, headers: UA_HEADERS, timeoutMs: SNAPSHOT_TIMEOUT_MS, retries: SNAPSHOT_RETRIES });
+    const out = new Map<string, Partial<QuoteSnapshot>>();
+    for (const line of decodeGbk(buf).split(";")) {
+      const m = line.match(/v_(sh|sz|hk|bj)(\d+)="([^"]*)"/);
+      if (!m || !m[3]) continue;
+      const market = m[1] as "sh" | "sz" | "hk" | "bj";
+      const normCode = `${m[1]}${m[2]}`;
+      // 单只解析失败（退市/新上市字段不足）→ 跳过，调用方对该代码走单源降级
+      const parsed = yield* Effect.either(
+        Effect.try({
+          try: () => parseTencent(m[3], market),
+          catch: (e) => new ParseError({ source: "tencent.batch", reason: e instanceof Error ? e.message : String(e) }),
+        }),
+      );
+      if (Either.isRight(parsed)) out.set(normCode, parsed.right);
     }
-  }
-  if (out.size === 0) throw new Error("腾讯批量未返回数据");
-  return out;
+    if (out.size === 0) return yield* Effect.fail(new ParseError({ source: "tencent.batch", reason: "腾讯批量未返回数据" }));
+    return out;
+  });
 }
 
 /** 腾讯批量单次请求的代码数上限（URL 长度与对端稳定性折中） */
@@ -450,75 +505,95 @@ const BATCH_SIZE = 60;
 /** 批量请求的并发度（多批之间；单批内部是一次 HTTP） */
 const BATCH_CONCURRENCY = 4;
 
-/** 分批并发调用腾讯批量（单批失败静默 → 该批代码后续走单源降级，不拖垮整批） */
-async function fetchTencentBatched(parsedList: ParsedCode[]): Promise<Map<string, Partial<QuoteSnapshot>>> {
+/**
+ * 分批并发调用腾讯批量。
+ * 与旧实现的差别：**单批失败不再静默**——失败批转成 notes 上抛（降级可见），
+ * 该批代码后续走单源补价，不拖垮整批。
+ */
+function fetchTencentBatched(parsedList: ParsedCode[]): Effect.Effect<{ batch: Map<string, Partial<QuoteSnapshot>>; notes: string[] }, never> {
   const chunks: ParsedCode[][] = [];
   for (let i = 0; i < parsedList.length; i += BATCH_SIZE) chunks.push(parsedList.slice(i, i + BATCH_SIZE));
-  const maps = await mapLimit(chunks, BATCH_CONCURRENCY, (c) =>
-    fetchTencentBatch(c).catch(() => new Map<string, Partial<QuoteSnapshot>>()),
+  return Effect.map(
+    allSettled(chunks, BATCH_CONCURRENCY, fetchTencentBatch, (chunk, e) => `${chunk.length} 个代码批量取数失败：${describeError(e)}`),
+    ({ ok, failed }) => {
+      const batch = new Map<string, Partial<QuoteSnapshot>>();
+      for (const m of ok) for (const [k, v] of m) batch.set(k, v);
+      return { batch, notes: failed.map((f) => f.note) };
+    },
   );
-  const out = new Map<string, Partial<QuoteSnapshot>>();
-  for (const m of maps) for (const [k, v] of m) out.set(k, v);
-  return out;
+}
+
+/** 批量取数结果：快照（与入参严格同序）+ 降级说明 */
+export interface SnapshotsBundle {
+  readonly snapshots: QuoteSnapshot[];
+  /** 批量取数过程中的降级说明（消费方写进 caveats） */
+  readonly notes: string[];
 }
 
 /**
- * 批量实时快照（一次拉取多只，个股列表/组合估值展示用）。
- * 策略：先查缓存（5 分钟内命中直接返回）→ 未命中代码走腾讯批量（每批一次请求）→
- * 批量未覆盖（无价/无名/批量失败）的走单代码 failover（东财→新浪）。
+ * 批量实时快照（Effect 版）。
+ * 链路：缓存命中 → 腾讯批量（每批一次 HTTP）→ 批量未覆盖的走单标的 failover。
  *
- * 性能要点（2026-09-03 仓位页首屏 15s→亚秒级修复）：
- *   - **保序返回**：out 与 codes 下标严格一一对应，调用方可按下标配对（原实现先推缓存命中、
- *     后推未命中，顺序与入参不一致）；
- *   - **批量结果落缓存**：原实现只缓存单源降级结果，批量命中的不写缓存 → 每次冷启都要重跑批量；
- *   - **降级走有界并发**：原实现串行 await，N 只未命中 = N 次串联 RTT（冷缓存长尾主因）。
+ * 性能要点（2026-09-03 仓位页首屏 15s→亚秒级；本次重构保留并强化）：
+ *   - **保序返回**：slots 与 codes 下标一一对应，调用方可按下标配对；
+ *   - **批量结果落缓存**：冷启后不再重跑批量；
+ *   - **降级走有界并发**（allOrdered）：N 只未命中是 N/并发度 轮 RTT，而非 N 轮串联；
+ *   - **结构化并发**：任一环节失败即中断兄弟任务，不留悬空请求。
  */
-export async function getQuoteSnapshots(codes: string[], opts: { force?: boolean } = {}): Promise<QuoteSnapshot[]> {
-  const now = Date.now();
-  // 占位数组 → 保序；未填位置用错误项兜底（不丢项）
-  const slots: (QuoteSnapshot | null)[] = codes.map(() => null);
-  const missing: { index: number; code: string; parsed: ParsedCode }[] = [];
+export function snapshotsEffect(codes: string[], opts: { force?: boolean } = {}): Effect.Effect<SnapshotsBundle, never> {
+  return Effect.gen(function* () {
+    // 占位数组 → 保序；未填位置用错误项兜底（不丢项）
+    const slots: (QuoteSnapshot | null)[] = codes.map(() => null);
+    const missing: { index: number; code: string; parsed: ParsedCode }[] = [];
 
-  codes.forEach((c, index) => {
-    const parsed = parseSecCode(c);
-    if (!parsed) {
-      slots[index] = { ok: false, code: c.trim(), message: "无法识别的代码格式" };
-      return;
-    }
-    if (!opts.force) {
-      const cached = kvGet<QuoteSnapshot>(`${SNAPSHOT_PREFIX}${parsed.normCode}`);
-      const at = cached?.ts ? Date.parse(cached.ts) : NaN;
-      if (cached && cached.ok && Number.isFinite(at) && now - at < SNAPSHOT_TTL_MS) {
-        slots[index] = { ...cached, source: `${cached.source ?? "cache"}` };
+    codes.forEach((c, index) => {
+      const parsed = parseSecCode(c);
+      if (!parsed) {
+        slots[index] = { ok: false, code: c.trim(), message: "无法识别的代码格式" };
         return;
       }
-    }
-    missing.push({ index, code: parsed.normCode, parsed });
-  });
+      const cached = readSnapshotCache(parsed.normCode, opts.force);
+      if (cached) {
+        slots[index] = cached;
+        return;
+      }
+      missing.push({ index, code: parsed.normCode, parsed });
+    });
 
-  if (missing.length > 0) {
-    const batch = await fetchTencentBatched(missing.map((m) => m.parsed));
-    const needFallback: { index: number; code: string }[] = [];
-    for (const m of missing) {
-      const part = batch.get(m.code);
-      // 无价（未开盘/停牌/字段缺失）或无名 → 降级单源补价
-      if (part && part.price && part.name) {
-        const snapshot: QuoteSnapshot = { ok: true, code: m.code, ...part, source: "tencent", ts: new Date().toISOString() };
-        kvSet(`${SNAPSHOT_PREFIX}${m.code}`, snapshot);
-        slots[m.index] = snapshot;
-      } else {
-        needFallback.push({ index: m.index, code: m.code });
+    const notes: string[] = [];
+    if (missing.length > 0) {
+      const { batch, notes: batchNotes } = yield* fetchTencentBatched(missing.map((m) => m.parsed));
+      notes.push(...batchNotes);
+      const needFallback: { index: number; code: string }[] = [];
+      for (const m of missing) {
+        const part = batch.get(m.code);
+        // 无价（未开盘/停牌/字段缺失）或无名 → 降级单源补价
+        if (part && part.price && part.name) {
+          const snapshot: QuoteSnapshot = { ok: true, code: m.code, ...part, source: "tencent", ts: new Date().toISOString() };
+          kvSet(`${SNAPSHOT_PREFIX}${m.code}`, snapshot);
+          slots[m.index] = snapshot;
+        } else {
+          needFallback.push({ index: m.index, code: m.code });
+        }
+      }
+      if (needFallback.length > 0) {
+        const resolved = yield* allOrdered(needFallback, NET_CONCURRENCY, (m) => snapshotEffect(m.code, { force: true }));
+        resolved.forEach((snapshot, k) => {
+          slots[needFallback[k]!.index] = snapshot;
+        });
       }
     }
-    if (needFallback.length > 0) {
-      const resolved = await mapLimit(needFallback, NET_CONCURRENCY, (m) => getQuoteSnapshot(m.code, { force: true }));
-      resolved.forEach((snapshot, k) => {
-        slots[needFallback[k]!.index] = snapshot;
-      });
-    }
-  }
 
-  return slots.map((s, i) => s ?? { ok: false, code: String(codes[i] ?? "").trim(), message: "行情不可得" });
+    return {
+      snapshots: slots.map((s, i) => s ?? { ok: false, code: String(codes[i] ?? "").trim(), message: "行情不可得" }),
+      notes,
+    };
+  });
+}
+
+/** 批量实时快照（Promise 门面，供非 Effect 调用方使用） */
+export async function getQuoteSnapshots(codes: string[], opts: { force?: boolean } = {}): Promise<QuoteSnapshot[]> {
+  return (await runEffect(snapshotsEffect(codes, opts))).snapshots;
 }
 // ============================================================
 // 行情数据源注册（血缘/目录：统一数据工程层）

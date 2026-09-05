@@ -11,7 +11,10 @@
 // ============================================================
 
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { Effect } from "effect";
 import { getIntraday, getKlineBars, supportedPeriods } from "../../core/kline.js";
+import { runEffect } from "../../core/effect/runtime.js";
 import {
   API_PREFIX,
   MINUTE_KLINE_PERIODS,
@@ -34,8 +37,6 @@ import { newTaskId, registerTask, startTask } from "../../core/data-infra/index.
 import { kvDelete, kvGet, kvSet } from "../../core/kvStore.js";
 import { registerDataSource } from "../../core/dataRegistry.js";
 import { searchStock } from "../../core/stockSearch.js";
-import { getQuoteSnapshots } from "../../core/quote.js";
-import { getFundSnapshots } from "../../core/fund.js";
 import {
   ALERT_HIT_PREFIX,
   ALERT_PREFIX,
@@ -73,6 +74,8 @@ import { loadTrack, toAlertContexts } from "./track.js";
 import { applyOnceFired, evaluateRules, mergeHits, sanitizeRule, validateRule } from "./alerts.js";
 import { loadNews } from "./news.js";
 import { loadLogic, reviewItem } from "./logic.js";
+import { rowsEffect, quoteSnapshots, fundSnapshots } from "./pipeline/index.js";
+import { quoteStream, requestRefresh, startAlertWatcher } from "./stream/index.js";
 
 // ---------- 数据源注册（本地数据管理页可见/可编辑/可删除） ----------
 registerDataSource({
@@ -157,102 +160,14 @@ const KLINE_COUNT = 500;
 /** Chat 分享链接格式校验 */
 const SHARE_URL_RE = /^https:\/\/chat\.deepseek\.com\/share\/[A-Za-z0-9_-]+$/;
 
-/** 单次行情批量上限（与公共行情接口一致） */
-const QUOTES_BATCH = 40;
-
-function chunk<T>(arr: T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-  return out;
-}
 
 /**
- * 标的列表装配：批量行情快照 + 待复核/已触发提醒计数。
+ * 标的列表装配（Promise 门面）：委托 pipeline/rows 的 Effect 实现。
  * 一次性批量取数（避免 N 次单标的请求）；取数失败的标的缺省处理（不静默置 0）。
  */
-async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; triggeredByCode: Map<string, number> }> {
-  if (items.length === 0) return { rows: [], triggeredByCode: new Map() };
-  const stockCodes = [...new Set(items.filter((i) => i.kind !== "fund").map((i) => i.code))];
-  const fundCodes = [...new Set(items.filter((i) => i.kind === "fund").map((i) => i.code))];
-  const [stockGroups, fundGroups] = await Promise.all([
-    Promise.all(chunk(stockCodes, QUOTES_BATCH).map((c) => getQuoteSnapshots(c))),
-    Promise.all(chunk(fundCodes, QUOTES_BATCH).map((c) => getFundSnapshots(c))),
-  ]);
-  // 索引：normCode（sh600519）+ 裸码（600519）双键 → 兼容用户输入的任意写法
-  const snapByCode = new Map<string, { pct?: number; price?: number; name?: string }>();
-  // 股票与基金分开装配：二者类型不同（FundSnapshot 用 nav 而非 price）
-  for (const q of stockGroups.flat()) {
-    if (!q.ok) continue;
-    const rec: { pct?: number; price?: number; name?: string } = {};
-    if (typeof q.pct === "number") rec.pct = q.pct;
-    if (typeof q.price === "number") rec.price = q.price;
-    if (typeof q.name === "string" && q.name) rec.name = q.name;
-    snapByCode.set(q.code, rec);
-    const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
-    if (bare !== q.code) snapByCode.set(bare, rec);
-  }
-  for (const q of fundGroups.flat()) {
-    if (!q.ok) continue;
-    const rec: { pct?: number; price?: number; name?: string } = {};
-    if (typeof q.pct === "number") rec.pct = q.pct;
-    if (typeof q.nav === "number") rec.price = q.nav;
-    if (typeof q.name === "string" && q.name) rec.name = q.name;
-    snapByCode.set(q.code, rec);
-    const bare = q.code.replace(/^(sh|sz|hk|bj)/, "");
-    if (bare !== q.code) snapByCode.set(bare, rec);
-  }
-
-  // 已触发提醒数：当前行情对该标的规则的命中条数（纯函数判定，不额外取数）
-  const triggeredByCode = new Map<string, number>();
-  for (const it of items) {
-    const snap = snapByCode.get(it.code);
-    const n = getAlertRules(it.code).filter((r) => {
-      if (!r.enabled) return false;
-      if (r.kind === "price") return typeof snap?.price === "number" && (r.dir === "up" ? snap.price >= r.threshold : snap.price <= r.threshold);
-      if (typeof snap?.pct !== "number") return false;
-      return r.dir === "up" ? snap.pct >= r.threshold : snap.pct <= -r.threshold;
-    }).length;
-    if (n > 0) triggeredByCode.set(it.code, n);
-  }
-
-  const rows: WatchItemRow[] = items.map((it) => {
-    const snap = snapByCode.get(it.code);
-    const history = getReviews(it.code);
-    const last = history.length > 0 ? history[history.length - 1] : null;
-    // 待复核：有理由/预期但从未复核，或最近一次结论非 hold
-    const needReview = (it.reason || it.expectation) && (!last || last.suggestion !== "hold");
-    // 缺名标的：先用本次已取的快照名回填（零额外成本），拿不到再走行情工具二次解析
-    const resolvedName = !it.name ? snap?.name || "" : it.name;
-    return {
-      code: it.code,
-      ...(resolvedName ? { name: resolvedName } : {}),
-      ...(it.kind ? { kind: it.kind } : {}),
-      reason: it.reason,
-      ...(it.expectation ? { expectation: it.expectation } : {}),
-      ...(typeof it.targetPrice === "number" ? { targetPrice: it.targetPrice } : {}),
-      addedAt: it.addedAt,
-      tags: it.tags,
-      ...(typeof snap?.price === "number" ? { price: snap.price } : {}),
-      // 平盘 pct=0 正常下发（0 是合法值，前端显示 0.00%；停牌股行情源同样返回 0 → 一并显示 0.00%）
-      ...(typeof snap?.pct === "number" ? { pct: snap.pct } : {}),
-      ...(needReview ? { reviewCount: 1 } : {}),
-      ...(triggeredByCode.has(it.code) ? { alertCount: triggeredByCode.get(it.code) as number } : {}),
-    };
-  });
-
-  // 持久化缺名标的的解析结果（快照名优先；缺失则异步行情工具补，写回 KV 避免下次仍显示代码）。
-  // 仅对确有名称可补的标的落库，避免空名覆盖/空写。
-  await Promise.all(
-    items
-      .filter((it) => !it.name)
-      .map(async (it) => {
-        const fromSnap = snapByCode.get(it.code)?.name;
-        const name = fromSnap || (await resolveStockName(it.code, it.kind));
-        if (name) updateItem(it.code, { name });
-      }),
-  );
-
-  return { rows, triggeredByCode };
+async function toRows(items: WatchItem[]): Promise<{ rows: WatchItemRow[]; triggeredByCode: Map<string, number>; meta: WatchDataMeta }> {
+  const bundle = await runEffect(rowsEffect(items));
+  return { rows: bundle.rows, triggeredByCode: bundle.triggeredByCode, meta: bundle.lineage.meta() };
 }
 
 /** tag 树（含标的数量统计） */
@@ -263,13 +178,13 @@ function tree(): WatchTagNode[] {
 /**
  * 给 tag 树注入「含后代的等权平均日涨跌幅」。
  * 放在路由层而非 store：平均涨跌幅依赖实时行情快照（store 是同步纯存储层，不取数）。
+ *
+ * 入参是**已取好的** pctByCode：重构前本函数内部再调一次 toRows，导致 `/tags`
+ * 接口把同一批快照取了两遍（首屏最重的开销被翻倍）。现在由调用方取一次、两处复用。
  */
-async function treeWithAvg(): Promise<WatchTagNode[]> {
+function treeWithAvg(pctByCode: Map<string, number>): WatchTagNode[] {
   const nodes = tagTree();
   const items = listItems();
-  const { rows } = await toRows(items);
-  const pctByCode = new Map<string, number>();
-  for (const r of rows) if (typeof r.pct === "number") pctByCode.set(r.code, r.pct);
 
   // 预计算每个 tag 的后代集合（避免对每个节点重复遍历树）
   const descCache = new Map<string, Set<string>>();
@@ -309,17 +224,35 @@ async function treeWithAvg(): Promise<WatchTagNode[]> {
   return nodes.map(fill);
 }
 
+/** 提醒消费者句柄（进程内单例；随 register 启动一次） */
+let alertWatcher: ReturnType<typeof startAlertWatcher> | null = null;
+
 export function register(app: Hono): void {
   // 任意读路径前确保：根 tag 存在 + 历史「分组」数据已升级为 tag/标的
   ensureReady();
 
+  // 启动提醒消费者：挂在行情流上，页面没开也能判定并落库（重构前只能靠打开页面触发）
+  if (!alertWatcher) {
+    alertWatcher = startAlertWatcher();
+    alertWatcher.hits$.subscribe({
+      next: (r) => console.log(`[watchlist] 提醒命中 ${r.hits.length} 条${r.disabledRuleIds.length > 0 ? `，停用 ${r.disabledRuleIds.length} 条 once 规则` : ""}`),
+      error: (e) => console.error("[watchlist] 提醒消费者异常", e),
+    });
+  }
+
   // ---------- tag 树 ----------
 
   // tag 树（含平均涨跌幅）+ 全量标的（首屏一次拿齐，之后局部刷新走 /items）
+  // 取数只做一次：rows 的 pctByCode 直接喂给 tag 树算等权平均（重构前是两次全量快照）
   app.get(`${API_PREFIX}/tools/watchlist/tags`, async (c) => {
     const items = listItems();
-    const [tags, { rows }] = await Promise.all([treeWithAvg(), toRows(items)]);
-    return c.json({ ok: true, tags, items: rows });
+    const bundle = await runEffect(rowsEffect(items));
+    return c.json({
+      ok: true,
+      tags: treeWithAvg(bundle.pctByCode),
+      items: bundle.rows,
+      meta: bundle.lineage.meta(),
+    });
   });
 
   // 新建 tag（parentId 缺省 →「全部」下）
@@ -377,8 +310,8 @@ export function register(app: Hono): void {
     const tagId = c.req.query("tag")?.trim() ?? "";
     if (tagId && !getTag(tagId)) return c.json({ ok: false, message: "tag 不存在" }, 404);
     const items = filterItemsByTag(tagId || null);
-    const { rows } = await toRows(items);
-    return c.json({ ok: true, items: rows, tagId: tagId || null });
+    const bundle = await runEffect(rowsEffect(items));
+    return c.json({ ok: true, items: bundle.rows, tagId: tagId || null, meta: bundle.lineage.meta() });
   });
 
   // 新增标的
@@ -401,7 +334,7 @@ export function register(app: Hono): void {
       ...(typeof raw?.targetPrice === "number" ? { targetPrice: raw.targetPrice } : {}),
       ...(Array.isArray(raw?.tags) ? { tags: raw!.tags!.filter((x): x is string => typeof x === "string") } : {}),
     });
-    const [row] = (await toRows([item])).rows;
+    const [row] = (await runEffect(rowsEffect([item]))).rows;
     return c.json({ ok: true, item: row, tags: tree() }, 201);
   });
 
@@ -426,7 +359,7 @@ export function register(app: Hono): void {
       ...(typeof raw.addedAt === "string" && raw.addedAt ? { addedAt: raw.addedAt } : {}),
     });
     if (!item) return c.json({ ok: false, message: "标的不存在" }, 404);
-    const [row] = (await toRows([item])).rows;
+    const [row] = (await runEffect(rowsEffect([item]))).rows;
     return c.json({ ok: true, item: row, tags: tree() });
   });
 
@@ -577,6 +510,54 @@ export function register(app: Hono): void {
     return c.json({ ok: true, code, rules: nextRules, hits: merged.slice(0, 50), triggered, meta: bundle.meta });
   });
 
+  // ---------- 实时行情流（SSE） ----------
+
+  /**
+   * 行情流：一次订阅，服务端按统一节奏推送（默认 15s）。
+   * 多个页面订阅同一批标的时**共用一条取数链路**（不再每个页面各轮询一次）。
+   * 客户端断开 → 引用计数归零 → 该代码停止轮询。
+   */
+  app.get(`${API_PREFIX}/tools/watchlist/stream`, (c) => {
+    const raw = c.req.query("codes")?.trim() ?? "";
+    const codes = raw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 40);
+    if (codes.length === 0) return c.json({ ok: false, message: "缺少 codes 参数（逗号分隔，最多 40 只）" }, 400);
+    return streamSSE(c, async (stream) => {
+      // 断开检测：客户端 abort 时让流结束（引用计数随之归零）
+      let closed = false;
+      stream.onAbort(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => {
+        const sub = quoteStream(codes).subscribe({
+          next: (tick) => {
+            if (closed) return;
+            void stream.writeSSE({
+              event: "tick",
+              data: JSON.stringify({
+                ts: tick.ts,
+                quotes: tick.quotes.filter((q) => q.ok),
+                ...(tick.notes.length > 0 ? { notes: tick.notes } : {}),
+              }),
+            });
+          },
+          error: () => resolve(),
+          complete: () => resolve(),
+        });
+        // 首帧不可用时不让连接空挂：客户端按自身节奏重连即可
+        stream.onAbort(() => {
+          sub.unsubscribe();
+          resolve();
+        });
+      });
+    });
+  });
+
+  /** 立即刷新一次行情（合并后由流统一执行，不绕过限速与单飞） */
+  app.post(`${API_PREFIX}/tools/watchlist/stream/refresh`, (c) => {
+    requestRefresh();
+    return c.json({ ok: true });
+  });
+
   // 提醒设置：全量覆盖保存规则（服务端权威校验）
   app.put(`${API_PREFIX}/tools/watchlist/items/:code/alerts`, async (c) => {
     const code = c.req.param("code");
@@ -681,11 +662,18 @@ export function register(app: Hono): void {
     const force = c.req.query("force") === "1";
     const fundCodes = raw.filter((x) => x.startsWith("fund:")).map((x) => x.slice(5));
     const stockCodes = raw.filter((x) => !x.startsWith("fund:"));
-    const [stockQuotes, fundQuotes] = await Promise.all([
-      stockCodes.length ? getQuoteSnapshots(stockCodes, { force }) : Promise.resolve([]),
-      fundCodes.length ? getFundSnapshots(fundCodes, { force }) : Promise.resolve([]),
-    ]);
-    return c.json({ ok: true, quotes: [...stockQuotes, ...fundQuotes] });
+    // 两路源并行（Effect.all 的并发语义），替代原先的裸 Promise.all
+    const [stockRes, fundQuotes] = await runEffect(
+      Effect.all([
+        stockCodes.length > 0 ? quoteSnapshots(stockCodes, { force }) : Effect.succeed({ snapshots: [], notes: [] as string[] }),
+        fundCodes.length > 0 ? fundSnapshots(fundCodes, { force }) : Effect.succeed([]),
+      ]),
+    );
+    return c.json({
+      ok: true,
+      quotes: [...stockRes.snapshots, ...fundQuotes],
+      ...(stockRes.notes.length > 0 ? { notes: stockRes.notes } : {}),
+    });
   });
 
   // 生成延续思路/扩展思考提示词（当前 tag 下的标的 → LLM；内容哈希版本化缓存）
@@ -766,7 +754,7 @@ export function register(app: Hono): void {
       else createItem({ ...s, tags });
     }
     kvDelete(`watchlist:importPreview:${taskId}`); // 用后即焚
-    const { rows } = await toRows(filterItemsByTag(tagId));
+    const { rows } = await runEffect(rowsEffect(filterItemsByTag(tagId)));
     return c.json({ ok: true, items: rows, tags: tree(), imported: selected.length });
   });
 }

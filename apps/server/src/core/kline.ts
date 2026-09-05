@@ -19,9 +19,18 @@
 //   - 无行情标的（基金/停牌/代码错误）→ 空映射，同样回退成本口径
 // ============================================================
 import type { WatchKlinePeriod } from "@toolbox/shared";
+import { Effect } from "effect";
 import { kvGet, kvSet } from "./kvStore.js";
 import { registerDataSource } from "./dataRegistry.js";
 import { mapLimit, NET_CONCURRENCY } from "./concurrency.js";
+import { requestJson } from "./effect/http.js";
+import { ParseError, type FetchError } from "./effect/errors.js";
+import { runEffect } from "./effect/runtime.js";
+
+/** K 线/分时取数档位：响应体较大，10s 超时、重试 1 次（失败即降级到缓存/空） */
+const KLINE_TIMEOUT_MS = 10000;
+const KLINE_RETRIES = 1;
+const QT_HEADERS = { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" };
 
 registerDataSource({
   kind: "kv",
@@ -145,58 +154,59 @@ function parseSecCode(input: string): { market: string; code: string; normCode: 
  * - 5/15/30/60 分 → mkline（**不复权**），行结构 `[YYYYMMDDHHmm, open, close, high, low, volume]`
  * 两种源的行结构一致（时间列格式不同），故归一化逻辑可共用。
  */
-async function fetchKlineRows(
+function fetchKlineRows(
   p: { market: string; code: string },
   period: Exclude<WatchKlinePeriod, "min">,
   count = DEFAULT_COUNT,
-): Promise<{ name: string; bars: KlineBar[] }> {
+): Effect.Effect<{ name: string; bars: KlineBar[] }, FetchError> {
   const paramKey = `${p.market}${p.code}`;
   const isMinute = MINUTE_PERIODS.has(period);
   const url = isMinute
     ? `https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=${paramKey},${period},,${count}`
     : `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${paramKey},${period},,,${count},qfq`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" },
-    signal: AbortSignal.timeout(10000),
+  return Effect.gen(function* () {
+    const json = yield* requestJson<{
+      code?: number;
+      data?: Record<string, Record<string, string[][] | Record<string, string[]> | undefined> | undefined>;
+    }>({ url, headers: QT_HEADERS, timeoutMs: KLINE_TIMEOUT_MS, retries: KLINE_RETRIES });
+    // mkline 对不支持的标的（如港股）返回 { code: -1 }，data 里没有对应周期数组
+    if (json.code !== undefined && json.code !== 0) {
+      return yield* Effect.fail(new ParseError({ source: "tencent.kline", reason: `行情源不支持该周期的 K 线（code ${json.code}）` }));
+    }
+    const data = json.data?.[paramKey];
+    // 前复权优先（qfq<period>），缺失回退不复权（<period>）——月 K 偶发无 qfq 列
+    const klines = isMinute ? data?.[period] : ((data?.[`qfq${period}`] ?? data?.[period]) as string[][] | undefined);
+    if (!Array.isArray(klines) || klines.length === 0) {
+      return yield* Effect.fail(new ParseError({ source: "tencent.kline", reason: "无 K 线数据" }));
+    }
+    const bars: KlineBar[] = [];
+    for (const row of klines) {
+      const raw = String(row[0] ?? "");
+      // 分钟 K：`202609021500`（12 位）→ 拆成 date + HH:mm；日/周/月：`2026-09-02`
+      const minute = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(raw);
+      const date = minute ? `${minute[1]}-${minute[2]}-${minute[3]}` : raw;
+      const open = Number(row[1]);
+      const close = Number(row[2]);
+      const high = Number(row[3]);
+      const low = Number(row[4]);
+      // row[5] = 成交量（手）；部分行情源缺省 → 容错省略，由消费方判断
+      const volume = row[5] === undefined ? Number.NaN : Number(row[5]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(close) || close <= 0) continue;
+      bars.push({
+        date,
+        close,
+        ...(minute ? { time: `${minute[4]}:${minute[5]}` } : {}),
+        ...(Number.isFinite(open) ? { open } : {}),
+        ...(Number.isFinite(high) ? { high } : {}),
+        ...(Number.isFinite(low) ? { low } : {}),
+        ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
+      });
+    }
+    if (bars.length === 0) return yield* Effect.fail(new ParseError({ source: "tencent.kline", reason: "无 K 线数据" }));
+    const qt = data?.qt as Record<string, string[]> | undefined;
+    const name = qt?.[paramKey]?.[1] ?? "";
+    return { name, bars };
   });
-  if (!res.ok) throw new Error(`K 线接口 HTTP ${res.status}`);
-  const json = (await res.json()) as {
-    code?: number;
-    data?: Record<string, Record<string, string[][] | Record<string, string[]> | undefined> | undefined>;
-  };
-  // mkline 对不支持的标的（如港股）返回 { code: -1 }，data 里没有对应周期数组
-  if (json.code !== undefined && json.code !== 0) throw new Error(`行情源不支持该周期的 K 线（code ${json.code}）`);
-  const data = json.data?.[paramKey];
-  // 前复权优先（qfq<period>），缺失回退不复权（<period>）——月 K 偶发无 qfq 列
-  const klines = isMinute ? data?.[period] : ((data?.[`qfq${period}`] ?? data?.[period]) as string[][] | undefined);
-  if (!Array.isArray(klines) || klines.length === 0) throw new Error("无 K 线数据");
-  const bars: KlineBar[] = [];
-  for (const row of klines) {
-    const raw = String(row[0] ?? "");
-    // 分钟 K：`202609021500`（12 位）→ 拆成 date + HH:mm；日/周/月：`2026-09-02`
-    const minute = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(raw);
-    const date = minute ? `${minute[1]}-${minute[2]}-${minute[3]}` : raw;
-    const open = Number(row[1]);
-    const close = Number(row[2]);
-    const high = Number(row[3]);
-    const low = Number(row[4]);
-    // row[5] = 成交量（手）；部分行情源缺省 → 容错省略，由消费方判断
-    const volume = row[5] === undefined ? Number.NaN : Number(row[5]);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(close) || close <= 0) continue;
-    bars.push({
-      date,
-      close,
-      ...(minute ? { time: `${minute[4]}:${minute[5]}` } : {}),
-      ...(Number.isFinite(open) ? { open } : {}),
-      ...(Number.isFinite(high) ? { high } : {}),
-      ...(Number.isFinite(low) ? { low } : {}),
-      ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
-    });
-  }
-  if (bars.length === 0) throw new Error("无 K 线数据");
-  const qt = data?.qt as Record<string, string[]> | undefined;
-  const name = qt?.[paramKey]?.[1] ?? "";
-  return { name, bars };
 }
 
 /**
@@ -206,56 +216,60 @@ async function fetchKlineRows(
  *   均价（券商黄线）= 累计成交额 / (累计成交量 × 100)——逐点推导，不另取接口
  * `data.<code>.data.date` 为交易日 YYYYMMDD；昨收取 `qt.<code>[4]`（腾讯快照固定位）
  */
-async function fetchIntraday(p: { market: string; code: string }): Promise<{
+function fetchIntraday(p: { market: string; code: string }): Effect.Effect<{
   name: string;
   date: string;
   prevClose: number;
   points: { time: string; price: number; avg: number; volume: number }[];
-}> {
+}, FetchError> {
   const paramKey = `${p.market}${p.code}`;
-  const res = await fetch(`https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${paramKey}`, {
-    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://gu.qq.com/" },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`分时接口 HTTP ${res.status}`);
-  const json = (await res.json()) as {
-    data?: Record<string, { data?: { data?: string[]; date?: string }; qt?: Record<string, string[]> }>;
-  };
-  const node = json.data?.[paramKey];
-  const rows = node?.data?.data;
-  const dateRaw = node?.data?.date ?? "";
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error("无分时数据");
-  const date = /^(\d{4})(\d{2})(\d{2})$/.exec(dateRaw);
-  const points: { time: string; price: number; avg: number; volume: number }[] = [];
-  let prevCumVol = 0;
-  for (const line of rows) {
-    const m = /^(\d{2})(\d{2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(String(line).trim());
-    if (!m) continue;
-    const price = Number(m[3]);
-    const cumVol = Number(m[4]); // 累计成交量（手）
-    const cumAmt = Number(m[5]); // 累计成交额（元）
-    if (!Number.isFinite(price) || price <= 0) continue;
-    // 分时第一分钟累计量为 0（快照时点未成交）→ 均价回退到价格本身
-    const avg = Number.isFinite(cumAmt) && Number.isFinite(cumVol) && cumVol > 0 ? cumAmt / (cumVol * 100) : price;
-    points.push({
-      time: `${m[1]}:${m[2]}`,
-      price,
-      avg,
-      // 接口给的是累计量 → 差分成每分钟量（与 K 线 volume 口径一致）
-      volume: Math.max(0, cumVol - prevCumVol),
+  return Effect.gen(function* () {
+    const json = yield* requestJson<{
+      data?: Record<string, { data?: { data?: string[]; date?: string }; qt?: Record<string, string[]> }>;
+    }>({
+      url: `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${paramKey}`,
+      headers: QT_HEADERS,
+      timeoutMs: KLINE_TIMEOUT_MS,
+      retries: KLINE_RETRIES,
     });
-    prevCumVol = cumVol;
-  }
-  if (points.length === 0) throw new Error("无分时数据");
-  const qt = node?.qt?.[paramKey];
-  const prevClose = Number(qt?.[4]);
-  const name = qt?.[1] ?? "";
-  return {
-    name,
-    date: date ? `${date[1]}-${date[2]}-${date[3]}` : "",
-    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : Number.NaN,
-    points,
-  };
+    const node = json.data?.[paramKey];
+    const rows = node?.data?.data;
+    const dateRaw = node?.data?.date ?? "";
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return yield* Effect.fail(new ParseError({ source: "tencent.intraday", reason: "无分时数据" }));
+    }
+    const date = /^(\d{4})(\d{2})(\d{2})$/.exec(dateRaw);
+    const points: { time: string; price: number; avg: number; volume: number }[] = [];
+    let prevCumVol = 0;
+    for (const line of rows) {
+      const m = /^(\d{2})(\d{2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(String(line).trim());
+      if (!m) continue;
+      const price = Number(m[3]);
+      const cumVol = Number(m[4]); // 累计成交量（手）
+      const cumAmt = Number(m[5]); // 累计成交额（元）
+      if (!Number.isFinite(price) || price <= 0) continue;
+      // 分时第一分钟累计量为 0（快照时点未成交）→ 均价回退到价格本身
+      const avg = Number.isFinite(cumAmt) && Number.isFinite(cumVol) && cumVol > 0 ? cumAmt / (cumVol * 100) : price;
+      points.push({
+        time: `${m[1]}:${m[2]}`,
+        price,
+        avg,
+        // 接口给的是累计量 → 差分成每分钟量（与 K 线 volume 口径一致）
+        volume: Math.max(0, cumVol - prevCumVol),
+      });
+      prevCumVol = cumVol;
+    }
+    if (points.length === 0) return yield* Effect.fail(new ParseError({ source: "tencent.intraday", reason: "无分时数据" }));
+    const qt = node?.qt?.[paramKey];
+    const prevClose = Number(qt?.[4]);
+    const name = qt?.[1] ?? "";
+    return {
+      name,
+      date: date ? `${date[1]}-${date[2]}-${date[3]}` : "",
+      prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : Number.NaN,
+      points,
+    };
+  });
 }
 
 /**
@@ -296,7 +310,7 @@ async function loadBars(
   const fresh = !!cached && Date.now() - cached.fetchedAt < KLINE_TTL_MS;
   if (hasCache && fresh && !opts.force) return cached!.bars;
   try {
-    const { name, bars } = await fetchKlineRows(parsed, period, opts.count ?? PERIOD_COUNT[period]);
+    const { name, bars } = await runEffect(fetchKlineRows(parsed, period, opts.count ?? PERIOD_COUNT[period]));
     const merged = mergeBars(cached?.bars, bars);
     kvSet(key, { ...(name ? { name } : { ...(cached?.name ? { name: cached.name } : {}) }), bars: merged, fetchedAt: Date.now() });
     return merged;
@@ -387,7 +401,7 @@ export async function getIntraday(
     return { date: cached.date, prevClose: cached.prevClose, points: cached.points, ...(cached.name ? { name: cached.name } : {}), fromCache: true };
   }
   try {
-    const { name, date, prevClose, points } = await fetchIntraday(parsed);
+    const { name, date, prevClose, points } = await runEffect(fetchIntraday(parsed));
     kvSet(key, { ...(name ? { name } : {}), date, prevClose, points, fetchedAt: Date.now() });
     return { date, prevClose, points, ...(name ? { name } : {}) };
   } catch {

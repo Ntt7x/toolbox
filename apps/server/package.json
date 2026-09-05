@@ -15,8 +15,10 @@
     "@hono/node-server": "^1",
     "@toolbox/shared": "workspace:*",
     "cron-parser": "^5.10.0",
+    "effect": "^3.22.1",
     "hono": "^4",
     "playwright-core": "^1.62.1",
+    "rxjs": "^7.8.2",
     "undici": "^8.10.0"
   },
   "devDependencies": {

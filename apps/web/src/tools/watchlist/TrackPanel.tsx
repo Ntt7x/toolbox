@@ -9,8 +9,9 @@
 //   场外基金  ：净值型，无 K 线 / 无分时（supported 为空数组）
 // ============================================================
 
-import { useEffect, useMemo, useState } from "react";
-import { api, errMsg } from "../../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../../api";
+import { useAsyncData } from "../../hooks/useAsyncData";
 import {
   WATCH_KLINE_PERIODS,
   WATCH_KLINE_PERIOD_LABEL,
@@ -63,45 +64,53 @@ function intradayToBars(result: WatchIntradayResult): ChartBar[] {
   return out;
 }
 
+/** 一次加载的结果：K 线或分时二选一（与 period 对应） */
+type TrackData =
+  | { kind: "kline"; data: WatchKlineResult }
+  | { kind: "intraday"; data: WatchIntradayResult };
+
 export function TrackPanel({ code, name, kind }: { code: string; name?: string; kind?: "stock" | "fund" }) {
   const [period, setPeriod] = useState<WatchKlinePeriod>("day");
-  const [kline, setKline] = useState<WatchKlineResult | null>(null);
-  const [intraday, setIntraday] = useState<WatchIntradayResult | null>(null);
+  const [result, setResult] = useState<TrackData | null>(null);
   /** 该标的支持的周期；null = 尚未加载（未加载时不禁用任何 Tab，避免首屏全灰） */
   const [supported, setSupported] = useState<WatchKlinePeriod[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  /** 强制刷新标记：立 flag + 换依赖 → 本次取数绕过服务端缓存（切标的/切周期仍走缓存） */
+  const forceRef = useRef(false);
+  const [forceNonce, setForceNonce] = useState(0);
+  const forceReload = useCallback(() => {
+    forceRef.current = true;
+    setForceNonce((n) => n + 1);
+  }, []);
 
-  const load = async (force = false) => {
-    setLoading(true);
-    setErr(null);
-    try {
-      if (period === "min") {
-        const d = await api.watchlistIntraday(code, force);
-        setIntraday(d);
-        setKline(null);
-        setSupported(d.supported);
-      } else {
-        const d = await api.watchlistKline(code, period, force);
-        setKline(d);
-        setIntraday(null);
-        setSupported(d.supported);
-      }
-    } catch (e) {
-      setErr(errMsg(e));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // switchMap 语义：快速切标的/切周期时，旧的在途响应自动作废（不会覆盖新结果）
+  const { data: loaded, loading, error } = useAsyncData<TrackData>(
+    () => {
+      const force = forceRef.current;
+      forceRef.current = false;
+      return period === "min"
+        ? api.watchlistIntraday(code, force).then((d): TrackData => ({ kind: "intraday", data: d }))
+        : api.watchlistKline(code, period, force).then((d): TrackData => ({ kind: "kline", data: d }));
+    },
+    [code, period, forceNonce],
+  );
 
+  // 落地：结果只来自「最新一次」请求（竞态由 useAsyncData 挡掉）
   useEffect(() => {
-    setKline(null);
-    setIntraday(null);
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setResult(null);
+    setSupported(null);
   }, [code, period]);
 
-  const data = period === "min" ? intraday : kline;
+  useEffect(() => {
+    if (!loaded) return;
+    setResult(loaded);
+    setSupported(loaded.data.supported);
+  }, [loaded]);
+
+  const kline = result?.kind === "kline" ? result.data : null;
+  const intraday = result?.kind === "intraday" ? result.data : null;
+  const err = error;
+  /** 当前展示的数据（K 线 / 分时二选一，与 period 对应） */
+  const view = period === "min" ? intraday : kline;
   const bars = useMemo(
     () => (period === "min" ? (intraday ? intradayToBars(intraday) : []) : kline ? klineToBars(kline) : []),
     [period, kline, intraday],
@@ -129,14 +138,14 @@ export function TrackPanel({ code, name, kind }: { code: string; name?: string; 
         </div>
         <span style={{ fontSize: "0.72rem", color: C.faintest }}>
           {name ? `${name}（${code}）· ` : `${code} · `}
-          {data?.note ?? "加载中…"}
+          {view?.note ?? "加载中…"}
           {kind === "fund" ? " · 场外基金为净值型" : ""}
         </span>
         <span style={{ flex: 1 }} />
         <button
           type="button"
           style={{ ...btnSmall, background: "#fff", color: C.faint, border: `1px solid ${C.border}` }}
-          onClick={() => void load(true)}
+          onClick={forceReload}
           disabled={loading}
         >
           {loading ? "刷新中…" : "🔄 刷新"}
@@ -147,7 +156,7 @@ export function TrackPanel({ code, name, kind }: { code: string; name?: string; 
         <SegTabs value={period} options={tabs} onChange={setPeriod} size="sm" />
       </div>
 
-      {!data ? (
+      {!view ? (
         <Loading text={isMin ? "加载分时行情…" : "加载 K 线行情…"} />
       ) : bars.length === 0 ? (
         <Empty>
@@ -171,8 +180,8 @@ export function TrackPanel({ code, name, kind }: { code: string; name?: string; 
         </div>
       )}
 
-      <MetaBar meta={data?.meta} />
-      <Caveats meta={data?.meta} />
+      <MetaBar meta={view?.meta} />
+      <Caveats meta={view?.meta} />
     </div>
   );
 }

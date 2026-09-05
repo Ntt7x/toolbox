@@ -7,6 +7,7 @@
 
 | 文件 | 主题 |
 |---|---|
+| `2026-09-06-01.md` | **自选股数据链路引入 Effect-TS + RxJS 重构**：core/effect 内核（类型化错误/超时重试/保序并发/单飞缓存）+ pipeline（源/列表装配/跟踪）+ stream（SSE 共享流/单飞/无人即停/提醒消费者）；前端 RxJS 订阅 + useAsyncData 消除面板竞态；修掉 `/tags` 二次取数；L0/L1/L2 全过 |
 | `2026-09-04-01.md` | **服务配置配置化 + 配置文件化**：配置内核 `packages/shared/config.mjs`（服务端 TS 与 scripts 共用）→ `toolbox.config.json`（部署基线，支持注释/本地覆盖/环境变量/绝对路径）；SQLite 库路径+端口+CORS+多环境端口段+supervisor 参数全配置化；新增 `toolbox config` CLI；随带修 `dev.mjs` 健康检查硬编码端口（dev 失效 bug）与 `proc.mjs` 重复声明（整个 proc CLI 不可用）；L3 prod 22 页 ALL-PASS |
 | `2026-09-03-02.md` | **仓位管理页首屏 15.8s → 0.8s**：根因 = N+1 逐代码行情（115 只 ≈ 124 次请求）+ 前端重复/瀑布请求；修复 = 批量行情（`getQuoteSnapshots` 保序+批量落缓存+有界并发降级）、总览一次读取多组复用、名称缓存持久化、前端去重复请求+竞态保护+渐进加载；L3 全量 22 页 ALL-PASS |
 | `2026-09-03-01.md` | **watchlist 标签树重构 + 券商式 K 线（无成交量）+ 历史分组残留键清理**：tag 取代 group 为顶层组织，KlineChart 用 lightweight-charts 日 K，迁移后清理 `watchlist:group` 残留键消除未标记数据源告警 |

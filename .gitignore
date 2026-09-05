@@ -1,6 +1,11 @@
 node_modules/
 dist/
+.extraenv
 .env
+.envstart.err
+.ssrsmoke.mjs
+apps/web/.mount*
+apps/web/.mount-dist/
 toolbox.config.local.json
 *.log
 .DS_Store

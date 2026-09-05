@@ -145,3 +145,45 @@ features/tradeV2          —— 专业组装：分析后批量附加 positions.
 ### 复用指引
 - 其他功能要"标的市场波动/波动环境"（网格计划/实验/新闻）→ 直接用 `getStockVolatility(code)`（行情日K 流水线，缓存命中即 O(1)）。
 - 新增行情派生指标（如 beta/相关性）→ 沿用此模式：纯函数（增量状态）+ store（KV+行情）+ feature 组装。
+
+## 9. Effect-TS + RxJS 重构行情数据链路 ——2026-09-06 沉淀
+
+背景：自选股原本是 `Promise + 手写 mapLimit + 裸 fetch + 各面板各自 setInterval 轮询`，带来三类问题——取数无统一超时/重试、并发实现双轨（既有 `mapLimit` 又有内联串行）、N 个面板 = N 条重复取数链路且刷新节奏不一致。引入 **Effect-TS（取数编排/类型化错误/结构化并发）** 与 **RxJS（事件流编排/多播/单飞）**，分工严格按"副作用归属"切：
+
+### 9.1 分工铁律（最重要，避免混用）
+| 关注点 | 用谁 | 理由 |
+|---|---|---|
+| 取数本身（超时/重试/错误/并发/缓存） | **Effect** | 结构化并发、类型化错误、可中断、可测试 |
+| 事件流编排（何时取、取完怎么分发、多播/退订/重连） | **RxJS** | Effect 不擅长"热流/多播/背压/生命周期"，强做反而绕 |
+
+落地：`core/effect/*`（runtime / errors / http / concurrency）是 Effect 内核；`features/watchlist/pipeline/*` 是取数编排；`features/watchlist/stream/*` 是 RxJS 流（只调 pipeline 的 Effect，自己不 fetch）。
+
+### 9.2 Effect 内核收口（core/effect）
+- `http.ts`：`requestText/Json/Buffer`，统一**超时真中断 + 指数退避重试**。重试**只覆盖可重试错误**（超时/网络/5xx/429），4xx 与解析失败不重试（放大延迟无意义）。
+- `errors.ts`：`FetchError` 类型化（`Timeout/Transport/HttpStatus/Parse/SourceUnavailable`），`describeError` **一处收口中文文案**——前端/日志不再散落 `e.message` 拼凑。
+- `concurrency.ts`：`allOrdered`（保序 + 有界并发 + 任一失败整体中断、兄弟任务被中断）/ `allSettled`（逐项容错、失败转 note）。批量场景用 `allSettled`，单标的场景用 `allOrdered`。
+- `runtime.ts`：`runEffect`（失败抛，带可读文案）/ `runEffectOrMessage`（失败降级为 `{ok,message}`，给旁路取数）。Promise 门面层统一经此落地，调用方零 Effect 知识也能用。
+- `interruptOn(signal)`：把 `AbortSignal` 桥进 Effect，请求随客户端断开而中断（避免悬空请求）。
+
+### 9.3 RxJS 流设计（features/watchlist/stream）
+- **多播共享**：`shareReplay({refCount:true})` + 引用计数（`acquire/release`）——相同代码集合的多个订阅者共用一条取数链路；最后一个退订 → 自动停轮询，不留后台定时器。
+- **单飞/防抖**：`exhaustMap`（取数进行中的触发被丢弃，不堆积成请求风暴）+ `throttleTime(leading+trailing)`（立即响应交互，窗口内合并为窗口末补一次）。
+- **节奏统一**：所有订阅者共用一个 `interval(15s)`——解决"各面板节奏不一致、数字对不上"。
+- **错误就地收敛**：流的 `fetchTick` 把取数异常转成 `notes` 返回，**不让流 error**（否则所有订阅者一起掉线）。
+- **消费者模式**（提醒判定）：`quoteStream(codes).pipe(map(consumeTick), distinctUntilChanged)`，把"被动触发"变"常驻消费"——页面没开也能按流节奏判定并落库（重构前只能靠打开页面触发）。
+
+### 9.4 前端 RxJS（面板加载竞态）
+- **问题**：旧写法 `useEffect(() => void load(), [code])` 直接 `setState`，快速切标的时旧请求后返回会覆盖新结果（只在网络抖动时复现，极难排查）。
+- **改法**：`useAsyncData(fetcher, deps)` 用 `switchMap` 建模"依赖变化→取数→落地"，**只有最后一次触发的结果会被应用**，旧请求自动作废。已覆盖 TrackPanel / AlertsPanel / DeepDivePanel（news 部分）。
+- **实时行情**：`useQuoteStream(codes)` 订阅 SSE，多面板共享一条连接；`mergeLiveQuotes(items, live)` 把实时价/涨跌合入列表（实时值优先，列表自带值兜底）。切 tag 自动换代码集合、旧集合随引用计数归零停推。
+
+### 9.5 实测收益（L2 已验证）
+- SSE `/stream?codes=sh600519` → `text/event-stream`，每 15s 一帧 `tick`，首帧即带真实快照（source:tencent）；多面板不重复取数。
+- `/tags` 接口从"两次全量快照"改为"单次取数，rows + pctByCode 复用"——首屏最重开销减半。
+- 结构化并发：批量取数任一源失败即中断兄弟任务，不残留悬空请求。
+
+### 9.6 迁移原则
+- **新取数一律经 Effect**（`core/effect/http` 的 `requestX`），禁止裸 `fetch` + `AbortSignal.timeout` 散落 feature。
+- **新"持续推送/多消费者"需求一律经 RxJS 流**，不要各组件自己 `setInterval`/`new EventSource`。
+- **失败语义先定**：批量场景逐项容错（标注而非中断）；单标的场景才整体失败。统一用 `describeError` 出文案。
+- 纯函数（加工/判定）与副作用（取数/存储）分离到不同文件，纯函数必须带单测。
